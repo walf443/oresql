@@ -211,6 +211,16 @@ type BetweenExpr struct {
 func (e *BetweenExpr) NodeType() string { return "Between" }
 func (e *BetweenExpr) exprNode()        {}
 
+// LikeExpr represents <expr> [NOT] LIKE <pattern>.
+type LikeExpr struct {
+	Left    Expr
+	Pattern Expr
+	Not     bool // true for NOT LIKE
+}
+
+func (e *LikeExpr) NodeType() string { return "Like" }
+func (e *LikeExpr) exprNode()        {}
+
 // CreateIndexStmt represents CREATE INDEX <name> ON <table>(<column>, ...).
 type CreateIndexStmt struct {
 	IndexName   string

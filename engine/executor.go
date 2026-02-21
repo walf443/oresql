@@ -1372,6 +1372,31 @@ func evalGroupExpr(expr ast.Expr, row Row, groupRows []Row, info *TableInfo) (Va
 	case *ast.CallExpr:
 		val, _, err := evalAggregate(e, groupRows, info)
 		return val, err
+	case *ast.LikeExpr:
+		left, err := evalGroupExpr(e.Left, row, groupRows, info)
+		if err != nil {
+			return nil, err
+		}
+		pattern, err := evalGroupExpr(e.Pattern, row, groupRows, info)
+		if err != nil {
+			return nil, err
+		}
+		if left == nil || pattern == nil {
+			return false, nil
+		}
+		leftStr, ok := left.(string)
+		if !ok {
+			return nil, fmt.Errorf("LIKE requires string operand, got %T", left)
+		}
+		patternStr, ok := pattern.(string)
+		if !ok {
+			return nil, fmt.Errorf("LIKE requires string pattern, got %T", pattern)
+		}
+		result := matchLike(leftStr, patternStr)
+		if e.Not {
+			return !result, nil
+		}
+		return result, nil
 	case *ast.BetweenExpr:
 		left, err := evalGroupExpr(e.Left, row, groupRows, info)
 		if err != nil {
@@ -1783,6 +1808,31 @@ func evalExpr(expr ast.Expr, row Row, info *TableInfo) (Value, error) {
 			return !result, nil
 		}
 		return result, nil
+	case *ast.LikeExpr:
+		left, err := evalExpr(e.Left, row, info)
+		if err != nil {
+			return nil, err
+		}
+		pattern, err := evalExpr(e.Pattern, row, info)
+		if err != nil {
+			return nil, err
+		}
+		if left == nil || pattern == nil {
+			return false, nil
+		}
+		leftStr, ok := left.(string)
+		if !ok {
+			return nil, fmt.Errorf("LIKE requires string operand, got %T", left)
+		}
+		patternStr, ok := pattern.(string)
+		if !ok {
+			return nil, fmt.Errorf("LIKE requires string pattern, got %T", pattern)
+		}
+		result := matchLike(leftStr, patternStr)
+		if e.Not {
+			return !result, nil
+		}
+		return result, nil
 	case *ast.ArithmeticExpr:
 		left, err := evalExpr(e.Left, row, info)
 		if err != nil {
@@ -2004,4 +2054,37 @@ func evalWhere(expr ast.Expr, row Row, info *TableInfo) (bool, error) {
 		return false, fmt.Errorf("WHERE expression must evaluate to boolean, got %T", val)
 	}
 	return b, nil
+}
+
+// matchLike matches a string against a SQL LIKE pattern.
+// '%' matches any sequence of zero or more characters.
+// '_' matches exactly one character.
+func matchLike(str, pattern string) bool {
+	si, pi := 0, 0
+	starPI, starSI := -1, -1
+
+	for si < len(str) {
+		if pi < len(pattern) && pattern[pi] == '_' {
+			si++
+			pi++
+		} else if pi < len(pattern) && pattern[pi] == '%' {
+			starPI = pi
+			starSI = si
+			pi++
+		} else if pi < len(pattern) && pattern[pi] == str[si] {
+			si++
+			pi++
+		} else if starPI >= 0 {
+			starSI++
+			si = starSI
+			pi = starPI + 1
+		} else {
+			return false
+		}
+	}
+
+	for pi < len(pattern) && pattern[pi] == '%' {
+		pi++
+	}
+	return pi == len(pattern)
 }

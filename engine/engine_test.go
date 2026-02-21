@@ -2987,3 +2987,87 @@ func TestSelectWithCompositeIndexRangeMiddleColumnWithPostFilter(t *testing.T) {
 		t.Errorf("expected c='x', got %v", result.Rows[0][2])
 	}
 }
+
+func TestSelectWhereLike(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO users VALUES (3, 'alice_smith')")
+
+	result := run(t, exec, "SELECT * FROM users WHERE name LIKE '%alice%'")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(1) {
+		t.Errorf("expected id=1, got %v", result.Rows[0][0])
+	}
+	if result.Rows[1][0] != int64(3) {
+		t.Errorf("expected id=3, got %v", result.Rows[1][0])
+	}
+}
+
+func TestSelectWhereNotLike(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO users VALUES (3, 'alice_smith')")
+
+	result := run(t, exec, "SELECT * FROM users WHERE name NOT LIKE '%alice%'")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(2) {
+		t.Errorf("expected id=2, got %v", result.Rows[0][0])
+	}
+}
+
+func TestSelectWhereLikeUnderscore(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'abc')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'aXc')")
+	run(t, exec, "INSERT INTO users VALUES (3, 'abbc')")
+
+	result := run(t, exec, "SELECT * FROM users WHERE name LIKE 'a_c'")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(1) {
+		t.Errorf("expected id=1, got %v", result.Rows[0][0])
+	}
+	if result.Rows[1][0] != int64(2) {
+		t.Errorf("expected id=2, got %v", result.Rows[1][0])
+	}
+}
+
+func TestSelectWhereLikeExact(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+
+	result := run(t, exec, "SELECT * FROM users WHERE name LIKE 'alice'")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(1) {
+		t.Errorf("expected id=1, got %v", result.Rows[0][0])
+	}
+}
+
+func TestSelectWhereLikeNull(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, NULL)")
+
+	result := run(t, exec, "SELECT * FROM users WHERE name LIKE '%ali%'")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(1) {
+		t.Errorf("expected id=1, got %v", result.Rows[0][0])
+	}
+}

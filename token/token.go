@@ -75,6 +75,7 @@ const (
 	PRIMARY  // PRIMARY keyword
 	KEY      // KEY keyword
 	BETWEEN  // BETWEEN keyword
+	LIKE     // LIKE keyword
 	INDEX    // INDEX keyword
 	ON       // ON keyword
 )
@@ -143,6 +144,7 @@ var tokenNames = map[TokenType]string{
 	PRIMARY:      "PRIMARY",
 	KEY:          "KEY",
 	BETWEEN:      "BETWEEN",
+	LIKE:         "LIKE",
 	INDEX:        "INDEX",
 	ON:           "ON",
 }
@@ -201,6 +203,7 @@ var keywords = map[string]TokenType{
 	"PRIMARY":  PRIMARY,
 	"KEY":      KEY,
 	"BETWEEN":  BETWEEN,
+	"LIKE":     LIKE,
 	"INDEX":    INDEX,
 	"ON":       ON,
 }

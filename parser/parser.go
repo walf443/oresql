@@ -837,6 +837,25 @@ func (p *Parser) parseComparison() (ast.Expr, error) {
 		return &ast.BetweenExpr{Left: left, Low: low, High: high, Not: true}, nil
 	}
 
+	// Handle [NOT] LIKE <pattern>
+	if p.curToken.Type == token.LIKE {
+		p.nextToken() // skip LIKE
+		pattern, err := p.parseAdditive()
+		if err != nil {
+			return nil, err
+		}
+		return &ast.LikeExpr{Left: left, Pattern: pattern, Not: false}, nil
+	}
+	if p.curToken.Type == token.NOT && p.peekToken.Type == token.LIKE {
+		p.nextToken() // skip NOT
+		p.nextToken() // skip LIKE
+		pattern, err := p.parseAdditive()
+		if err != nil {
+			return nil, err
+		}
+		return &ast.LikeExpr{Left: left, Pattern: pattern, Not: true}, nil
+	}
+
 	// Handle IS [NOT] NULL
 	if p.curToken.Type == token.IS {
 		p.nextToken() // skip IS

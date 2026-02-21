@@ -1249,6 +1249,46 @@ func TestParseSelectWhereNotBetween(t *testing.T) {
 	}
 }
 
+func TestParseSelectWhereLike(t *testing.T) {
+	stmt := parse(t, "SELECT * FROM t WHERE name LIKE '%alice%'")
+	sel := stmt.(*ast.SelectStmt)
+	likeExpr, ok := sel.Where.(*ast.LikeExpr)
+	if !ok {
+		t.Fatalf("expected LikeExpr, got %T", sel.Where)
+	}
+	if likeExpr.Not {
+		t.Errorf("expected Not=false, got true")
+	}
+	ident := likeExpr.Left.(*ast.IdentExpr)
+	if ident.Name != "name" {
+		t.Errorf("expected column 'name', got %q", ident.Name)
+	}
+	pattern := likeExpr.Pattern.(*ast.StringLitExpr)
+	if pattern.Value != "%alice%" {
+		t.Errorf("expected pattern '%%alice%%', got %q", pattern.Value)
+	}
+}
+
+func TestParseSelectWhereNotLike(t *testing.T) {
+	stmt := parse(t, "SELECT * FROM t WHERE name NOT LIKE 'bob%'")
+	sel := stmt.(*ast.SelectStmt)
+	likeExpr, ok := sel.Where.(*ast.LikeExpr)
+	if !ok {
+		t.Fatalf("expected LikeExpr, got %T", sel.Where)
+	}
+	if !likeExpr.Not {
+		t.Errorf("expected Not=true, got false")
+	}
+	ident := likeExpr.Left.(*ast.IdentExpr)
+	if ident.Name != "name" {
+		t.Errorf("expected column 'name', got %q", ident.Name)
+	}
+	pattern := likeExpr.Pattern.(*ast.StringLitExpr)
+	if pattern.Value != "bob%" {
+		t.Errorf("expected pattern 'bob%%', got %q", pattern.Value)
+	}
+}
+
 func TestParseCreateIndex(t *testing.T) {
 	stmt := parse(t, "CREATE INDEX idx_name ON users(name)")
 	ci, ok := stmt.(*ast.CreateIndexStmt)

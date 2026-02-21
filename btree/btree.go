@@ -1,52 +1,54 @@
 package btree
 
-// BTree is a B-tree with int64 keys and any values.
-type BTree struct {
-	root   *node
+import "cmp"
+
+// BTree is a B-tree with ordered keys and any values.
+type BTree[K cmp.Ordered] struct {
+	root   *node[K]
 	degree int // minimum degree (t): each node has at most 2t-1 keys
 	length int
 }
 
-type entry struct {
-	key   int64
+type entry[K cmp.Ordered] struct {
+	key   K
 	value any
 }
 
-type node struct {
-	entries  []entry
-	children []*node
+type node[K cmp.Ordered] struct {
+	entries  []entry[K]
+	children []*node[K]
 	leaf     bool
 }
 
 // New creates a new BTree with the given degree (minimum degree t).
 // Each node can hold at most 2*degree-1 keys.
-func New(degree int) *BTree {
+func New[K cmp.Ordered](degree int) *BTree[K] {
 	if degree < 2 {
 		degree = 2
 	}
-	return &BTree{
-		root:   &node{leaf: true},
+	return &BTree[K]{
+		root:   &node[K]{leaf: true},
 		degree: degree,
 	}
 }
 
 // Len returns the number of entries in the tree.
-func (t *BTree) Len() int {
+func (t *BTree[K]) Len() int {
 	return t.length
 }
 
 // Has returns true if the key exists in the tree.
-func (t *BTree) Has(key int64) bool {
+func (t *BTree[K]) Has(key K) bool {
 	_, ok := t.Get(key)
 	return ok
 }
 
 // Get retrieves the value for the given key.
-func (t *BTree) Get(key int64) (any, bool) {
+func (t *BTree[K]) Get(key K) (any, bool) {
 	return t.root.get(key)
 }
 
-func (n *node) get(key int64) (any, bool) {
+func (n *node[K]) get(key K) (any, bool) {
 	i := n.search(key)
 	if i < len(n.entries) && n.entries[i].key == key {
 		return n.entries[i].value, true
@@ -58,7 +60,7 @@ func (n *node) get(key int64) (any, bool) {
 }
 
 // search returns the index of the first entry with key >= the given key.
-func (n *node) search(key int64) int {
+func (n *node[K]) search(key K) int {
 	lo, hi := 0, len(n.entries)
 	for lo < hi {
 		mid := (lo + hi) / 2
@@ -72,7 +74,7 @@ func (n *node) search(key int64) int {
 }
 
 // Insert inserts a key-value pair. Returns false if the key already exists.
-func (t *BTree) Insert(key int64, value any) bool {
+func (t *BTree[K]) Insert(key K, value any) bool {
 	if t.root.has(key) {
 		return false
 	}
@@ -80,7 +82,7 @@ func (t *BTree) Insert(key int64, value any) bool {
 	return true
 }
 
-func (n *node) has(key int64) bool {
+func (n *node[K]) has(key K) bool {
 	i := n.search(key)
 	if i < len(n.entries) && n.entries[i].key == key {
 		return true
@@ -92,14 +94,14 @@ func (n *node) has(key int64) bool {
 }
 
 // Put inserts or updates a key-value pair (upsert).
-func (t *BTree) Put(key int64, value any) {
+func (t *BTree[K]) Put(key K, value any) {
 	if t.root.put(key, value) {
 		return
 	}
 	t.insert(key, value)
 }
 
-func (n *node) put(key int64, value any) bool {
+func (n *node[K]) put(key K, value any) bool {
 	i := n.search(key)
 	if i < len(n.entries) && n.entries[i].key == key {
 		n.entries[i].value = value
@@ -111,24 +113,24 @@ func (n *node) put(key int64, value any) bool {
 	return n.children[i].put(key, value)
 }
 
-func (t *BTree) insert(key int64, value any) {
+func (t *BTree[K]) insert(key K, value any) {
 	root := t.root
 	if len(root.entries) == 2*t.degree-1 {
 		// Root is full, split it
-		newRoot := &node{leaf: false}
+		newRoot := &node[K]{leaf: false}
 		newRoot.children = append(newRoot.children, root)
 		t.splitChild(newRoot, 0)
 		t.root = newRoot
 	}
-	t.insertNonFull(t.root, entry{key: key, value: value})
+	t.insertNonFull(t.root, entry[K]{key: key, value: value})
 	t.length++
 }
 
-func (t *BTree) insertNonFull(n *node, e entry) {
+func (t *BTree[K]) insertNonFull(n *node[K], e entry[K]) {
 	i := n.search(e.key)
 	if n.leaf {
 		// Insert entry at position i
-		n.entries = append(n.entries, entry{})
+		n.entries = append(n.entries, entry[K]{})
 		copy(n.entries[i+1:], n.entries[i:])
 		n.entries[i] = e
 		return
@@ -142,18 +144,18 @@ func (t *BTree) insertNonFull(n *node, e entry) {
 	t.insertNonFull(n.children[i], e)
 }
 
-func (t *BTree) splitChild(parent *node, i int) {
+func (t *BTree[K]) splitChild(parent *node[K], i int) {
 	deg := t.degree
 	child := parent.children[i]
 	mid := deg - 1
 
 	// New node gets the right half
-	sibling := &node{leaf: child.leaf}
-	sibling.entries = make([]entry, len(child.entries[mid+1:]))
+	sibling := &node[K]{leaf: child.leaf}
+	sibling.entries = make([]entry[K], len(child.entries[mid+1:]))
 	copy(sibling.entries, child.entries[mid+1:])
 
 	if !child.leaf {
-		sibling.children = make([]*node, len(child.children[mid+1:]))
+		sibling.children = make([]*node[K], len(child.children[mid+1:]))
 		copy(sibling.children, child.children[mid+1:])
 	}
 
@@ -172,13 +174,13 @@ func (t *BTree) splitChild(parent *node, i int) {
 	parent.children[i+1] = sibling
 
 	// Insert median into parent's entries
-	parent.entries = append(parent.entries, entry{})
+	parent.entries = append(parent.entries, entry[K]{})
 	copy(parent.entries[i+1:], parent.entries[i:])
 	parent.entries[i] = medianEntry
 }
 
 // Delete removes a key from the tree. Returns false if the key was not found.
-func (t *BTree) Delete(key int64) bool {
+func (t *BTree[K]) Delete(key K) bool {
 	if t.root == nil {
 		return false
 	}
@@ -193,7 +195,7 @@ func (t *BTree) Delete(key int64) bool {
 	return deleted
 }
 
-func (t *BTree) delete(n *node, key int64) bool {
+func (t *BTree[K]) delete(n *node[K], key K) bool {
 	i := n.search(key)
 
 	if i < len(n.entries) && n.entries[i].key == key {
@@ -215,7 +217,7 @@ func (t *BTree) delete(n *node, key int64) bool {
 	return t.deleteFromChild(n, i, key)
 }
 
-func (t *BTree) deleteInternal(n *node, i int) bool {
+func (t *BTree[K]) deleteInternal(n *node[K], i int) bool {
 	key := n.entries[i].key
 	// Case 2a: Left child has enough entries
 	if len(n.children[i].entries) >= t.degree {
@@ -234,7 +236,7 @@ func (t *BTree) deleteInternal(n *node, i int) bool {
 	return t.delete(n.children[i], key)
 }
 
-func (t *BTree) deleteFromChild(n *node, i int, key int64) bool {
+func (t *BTree[K]) deleteFromChild(n *node[K], i int, key K) bool {
 	child := n.children[i]
 	if len(child.entries) < t.degree {
 		t.fill(n, i)
@@ -245,21 +247,21 @@ func (t *BTree) deleteFromChild(n *node, i int, key int64) bool {
 	return t.delete(child, key)
 }
 
-func (t *BTree) predecessor(n *node) entry {
+func (t *BTree[K]) predecessor(n *node[K]) entry[K] {
 	for !n.leaf {
 		n = n.children[len(n.children)-1]
 	}
 	return n.entries[len(n.entries)-1]
 }
 
-func (t *BTree) successor(n *node) entry {
+func (t *BTree[K]) successor(n *node[K]) entry[K] {
 	for !n.leaf {
 		n = n.children[0]
 	}
 	return n.entries[0]
 }
 
-func (t *BTree) fill(parent *node, i int) {
+func (t *BTree[K]) fill(parent *node[K], i int) {
 	if i > 0 && len(parent.children[i-1].entries) >= t.degree {
 		t.borrowFromLeft(parent, i)
 	} else if i < len(parent.children)-1 && len(parent.children[i+1].entries) >= t.degree {
@@ -273,14 +275,14 @@ func (t *BTree) fill(parent *node, i int) {
 	}
 }
 
-func (t *BTree) borrowFromLeft(parent *node, i int) {
+func (t *BTree[K]) borrowFromLeft(parent *node[K], i int) {
 	child := parent.children[i]
 	left := parent.children[i-1]
 
 	// Shift child entries/children right
-	child.entries = append([]entry{parent.entries[i-1]}, child.entries...)
+	child.entries = append([]entry[K]{parent.entries[i-1]}, child.entries...)
 	if !child.leaf {
-		child.children = append([]*node{left.children[len(left.children)-1]}, child.children...)
+		child.children = append([]*node[K]{left.children[len(left.children)-1]}, child.children...)
 		left.children = left.children[:len(left.children)-1]
 	}
 
@@ -288,7 +290,7 @@ func (t *BTree) borrowFromLeft(parent *node, i int) {
 	left.entries = left.entries[:len(left.entries)-1]
 }
 
-func (t *BTree) borrowFromRight(parent *node, i int) {
+func (t *BTree[K]) borrowFromRight(parent *node[K], i int) {
 	child := parent.children[i]
 	right := parent.children[i+1]
 
@@ -302,7 +304,7 @@ func (t *BTree) borrowFromRight(parent *node, i int) {
 	right.entries = right.entries[1:]
 }
 
-func (t *BTree) merge(parent *node, i int) {
+func (t *BTree[K]) merge(parent *node[K], i int) {
 	left := parent.children[i]
 	right := parent.children[i+1]
 
@@ -320,13 +322,13 @@ func (t *BTree) merge(parent *node, i int) {
 
 // ForEach iterates over all entries in key order.
 // The callback should return true to continue, false to stop.
-func (t *BTree) ForEach(fn func(key int64, value any) bool) {
+func (t *BTree[K]) ForEach(fn func(key K, value any) bool) {
 	if t.root != nil {
 		t.root.forEach(fn)
 	}
 }
 
-func (n *node) forEach(fn func(key int64, value any) bool) bool {
+func (n *node[K]) forEach(fn func(key K, value any) bool) bool {
 	for i, e := range n.entries {
 		if !n.leaf {
 			if !n.children[i].forEach(fn) {

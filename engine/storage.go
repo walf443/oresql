@@ -22,7 +22,7 @@ type KeyRow struct {
 // SecondaryIndex is a BTree-based secondary index on one or more columns.
 type SecondaryIndex struct {
 	Info *IndexInfo
-	tree *btree.StringBTree // encoded value -> map[int64]struct{} (set of BTree keys)
+	tree *btree.BTree[string] // encoded value -> map[int64]struct{} (set of BTree keys)
 }
 
 // encodeCompositeKey encodes multiple column values into a single string key.
@@ -95,7 +95,7 @@ func (si *SecondaryIndex) removeRow(key int64, row Row) {
 // Table stores rows for a single table using a BTree.
 type Table struct {
 	Info      *TableInfo
-	tree      *btree.BTree
+	tree      *btree.BTree[int64]
 	nextRowID int64 // auto-increment for non-PK tables
 	indexes   map[string]*SecondaryIndex
 }
@@ -116,7 +116,7 @@ func NewStorage() *Storage {
 func (s *Storage) CreateTable(info *TableInfo) {
 	s.tables[info.Name] = &Table{
 		Info:      info,
-		tree:      btree.New(32),
+		tree:      btree.New[int64](32),
 		nextRowID: 1,
 		indexes:   make(map[string]*SecondaryIndex),
 	}
@@ -208,11 +208,11 @@ func (s *Storage) UpdateRow(tableName string, key int64, row Row) error {
 func (s *Storage) TruncateTable(name string) {
 	lower := strings.ToLower(name)
 	if tbl, ok := s.tables[lower]; ok {
-		tbl.tree = btree.New(32)
+		tbl.tree = btree.New[int64](32)
 		tbl.nextRowID = 1
 		// Clear index entries but keep index structure
 		for _, idx := range tbl.indexes {
-			idx.tree = btree.NewStringBTree(32)
+			idx.tree = btree.New[string](32)
 		}
 	}
 }
@@ -238,7 +238,7 @@ func (s *Storage) CreateIndex(info *IndexInfo) error {
 
 	idx := &SecondaryIndex{
 		Info: info,
-		tree: btree.NewStringBTree(32),
+		tree: btree.New[string](32),
 	}
 
 	// Build index from existing data

@@ -2470,3 +2470,227 @@ func TestSelectWithIndexIsNull(t *testing.T) {
 		t.Errorf("expected id=1, got %v", result.Rows[0][0])
 	}
 }
+
+// --- Index range scan tests ---
+
+func TestSelectWithIndexRangeGt(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, name TEXT)")
+	run(t, exec, "CREATE INDEX idx_id ON t(id)")
+	run(t, exec, "INSERT INTO t VALUES (1, 'a')")
+	run(t, exec, "INSERT INTO t VALUES (2, 'b')")
+	run(t, exec, "INSERT INTO t VALUES (3, 'c')")
+	run(t, exec, "INSERT INTO t VALUES (4, 'd')")
+	run(t, exec, "INSERT INTO t VALUES (5, 'e')")
+
+	result := run(t, exec, "SELECT * FROM t WHERE id > 3")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	ids := map[int64]bool{}
+	for _, row := range result.Rows {
+		ids[row[0].(int64)] = true
+	}
+	if !ids[4] || !ids[5] {
+		t.Errorf("expected ids 4 and 5, got %v", ids)
+	}
+}
+
+func TestSelectWithIndexRangeGte(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, name TEXT)")
+	run(t, exec, "CREATE INDEX idx_id ON t(id)")
+	run(t, exec, "INSERT INTO t VALUES (1, 'a')")
+	run(t, exec, "INSERT INTO t VALUES (2, 'b')")
+	run(t, exec, "INSERT INTO t VALUES (3, 'c')")
+	run(t, exec, "INSERT INTO t VALUES (4, 'd')")
+	run(t, exec, "INSERT INTO t VALUES (5, 'e')")
+
+	result := run(t, exec, "SELECT * FROM t WHERE id >= 3")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	ids := map[int64]bool{}
+	for _, row := range result.Rows {
+		ids[row[0].(int64)] = true
+	}
+	if !ids[3] || !ids[4] || !ids[5] {
+		t.Errorf("expected ids 3,4,5, got %v", ids)
+	}
+}
+
+func TestSelectWithIndexRangeLt(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, name TEXT)")
+	run(t, exec, "CREATE INDEX idx_id ON t(id)")
+	run(t, exec, "INSERT INTO t VALUES (1, 'a')")
+	run(t, exec, "INSERT INTO t VALUES (2, 'b')")
+	run(t, exec, "INSERT INTO t VALUES (3, 'c')")
+	run(t, exec, "INSERT INTO t VALUES (4, 'd')")
+	run(t, exec, "INSERT INTO t VALUES (5, 'e')")
+
+	result := run(t, exec, "SELECT * FROM t WHERE id < 3")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	ids := map[int64]bool{}
+	for _, row := range result.Rows {
+		ids[row[0].(int64)] = true
+	}
+	if !ids[1] || !ids[2] {
+		t.Errorf("expected ids 1 and 2, got %v", ids)
+	}
+}
+
+func TestSelectWithIndexRangeLte(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, name TEXT)")
+	run(t, exec, "CREATE INDEX idx_id ON t(id)")
+	run(t, exec, "INSERT INTO t VALUES (1, 'a')")
+	run(t, exec, "INSERT INTO t VALUES (2, 'b')")
+	run(t, exec, "INSERT INTO t VALUES (3, 'c')")
+	run(t, exec, "INSERT INTO t VALUES (4, 'd')")
+	run(t, exec, "INSERT INTO t VALUES (5, 'e')")
+
+	result := run(t, exec, "SELECT * FROM t WHERE id <= 3")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	ids := map[int64]bool{}
+	for _, row := range result.Rows {
+		ids[row[0].(int64)] = true
+	}
+	if !ids[1] || !ids[2] || !ids[3] {
+		t.Errorf("expected ids 1,2,3, got %v", ids)
+	}
+}
+
+func TestSelectWithIndexRangeBetween(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, name TEXT)")
+	run(t, exec, "CREATE INDEX idx_id ON t(id)")
+	run(t, exec, "INSERT INTO t VALUES (1, 'a')")
+	run(t, exec, "INSERT INTO t VALUES (2, 'b')")
+	run(t, exec, "INSERT INTO t VALUES (3, 'c')")
+	run(t, exec, "INSERT INTO t VALUES (4, 'd')")
+	run(t, exec, "INSERT INTO t VALUES (5, 'e')")
+
+	result := run(t, exec, "SELECT * FROM t WHERE id BETWEEN 2 AND 4")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	ids := map[int64]bool{}
+	for _, row := range result.Rows {
+		ids[row[0].(int64)] = true
+	}
+	if !ids[2] || !ids[3] || !ids[4] {
+		t.Errorf("expected ids 2,3,4, got %v", ids)
+	}
+}
+
+func TestSelectWithIndexRangeCombined(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, name TEXT)")
+	run(t, exec, "CREATE INDEX idx_id ON t(id)")
+	run(t, exec, "INSERT INTO t VALUES (1, 'a')")
+	run(t, exec, "INSERT INTO t VALUES (2, 'b')")
+	run(t, exec, "INSERT INTO t VALUES (3, 'c')")
+	run(t, exec, "INSERT INTO t VALUES (4, 'd')")
+	run(t, exec, "INSERT INTO t VALUES (5, 'e')")
+
+	result := run(t, exec, "SELECT * FROM t WHERE id >= 2 AND id < 5")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	ids := map[int64]bool{}
+	for _, row := range result.Rows {
+		ids[row[0].(int64)] = true
+	}
+	if !ids[2] || !ids[3] || !ids[4] {
+		t.Errorf("expected ids 2,3,4, got %v", ids)
+	}
+}
+
+func TestSelectWithIndexRangeNoMatchRange(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, name TEXT)")
+	run(t, exec, "CREATE INDEX idx_id ON t(id)")
+	run(t, exec, "INSERT INTO t VALUES (1, 'a')")
+	run(t, exec, "INSERT INTO t VALUES (2, 'b')")
+	run(t, exec, "INSERT INTO t VALUES (3, 'c')")
+
+	result := run(t, exec, "SELECT * FROM t WHERE id > 10")
+	if len(result.Rows) != 0 {
+		t.Fatalf("expected 0 rows, got %d", len(result.Rows))
+	}
+}
+
+func TestSelectWithIndexRangeText(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, name TEXT)")
+	run(t, exec, "CREATE INDEX idx_name ON t(name)")
+	run(t, exec, "INSERT INTO t VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO t VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO t VALUES (3, 'charlie')")
+	run(t, exec, "INSERT INTO t VALUES (4, 'dave')")
+
+	result := run(t, exec, "SELECT * FROM t WHERE name > 'b'")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	names := map[string]bool{}
+	for _, row := range result.Rows {
+		names[row[1].(string)] = true
+	}
+	if !names["bob"] || !names["charlie"] || !names["dave"] {
+		t.Errorf("expected bob, charlie, dave, got %v", names)
+	}
+}
+
+func TestSelectWithIndexRangeNegativeInt(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, name TEXT)")
+	run(t, exec, "CREATE INDEX idx_id ON t(id)")
+	run(t, exec, "INSERT INTO t VALUES (-5, 'a')")
+	run(t, exec, "INSERT INTO t VALUES (-2, 'b')")
+	run(t, exec, "INSERT INTO t VALUES (0, 'c')")
+	run(t, exec, "INSERT INTO t VALUES (3, 'd')")
+	run(t, exec, "INSERT INTO t VALUES (7, 'e')")
+
+	// Range: id >= -2 AND id <= 3
+	result := run(t, exec, "SELECT * FROM t WHERE id >= -2 AND id <= 3")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	ids := map[int64]bool{}
+	for _, row := range result.Rows {
+		ids[row[0].(int64)] = true
+	}
+	if !ids[-2] || !ids[0] || !ids[3] {
+		t.Errorf("expected ids -2,0,3, got %v", ids)
+	}
+}
+
+func TestSelectWithIndexRangeAndFilter(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, name TEXT)")
+	run(t, exec, "CREATE INDEX idx_id ON t(id)")
+	run(t, exec, "INSERT INTO t VALUES (1, 'x')")
+	run(t, exec, "INSERT INTO t VALUES (2, 'y')")
+	run(t, exec, "INSERT INTO t VALUES (3, 'x')")
+	run(t, exec, "INSERT INTO t VALUES (4, 'y')")
+	run(t, exec, "INSERT INTO t VALUES (5, 'x')")
+
+	// Range scan on id, then filter by name
+	result := run(t, exec, "SELECT * FROM t WHERE id > 2 AND name = 'x'")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	ids := map[int64]bool{}
+	for _, row := range result.Rows {
+		ids[row[0].(int64)] = true
+	}
+	if !ids[3] || !ids[5] {
+		t.Errorf("expected ids 3 and 5, got %v", ids)
+	}
+}

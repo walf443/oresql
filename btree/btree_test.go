@@ -414,6 +414,163 @@ func TestStringBTreeDeleteAndReinsert(t *testing.T) {
 	}
 }
 
+// --- ForEachRange tests ---
+
+func TestForEachRange(t *testing.T) {
+	tree := New[int64](4)
+	for i := int64(1); i <= 10; i++ {
+		tree.Insert(i, i*10)
+	}
+
+	tests := []struct {
+		name          string
+		from          *int64
+		fromInclusive bool
+		to            *int64
+		toInclusive   bool
+		wantKeys      []int64
+	}{
+		{
+			name:          "closed interval [3,7]",
+			from:          ptr(int64(3)),
+			fromInclusive: true,
+			to:            ptr(int64(7)),
+			toInclusive:   true,
+			wantKeys:      []int64{3, 4, 5, 6, 7},
+		},
+		{
+			name:          "open interval (3,7)",
+			from:          ptr(int64(3)),
+			fromInclusive: false,
+			to:            ptr(int64(7)),
+			toInclusive:   false,
+			wantKeys:      []int64{4, 5, 6},
+		},
+		{
+			name:          "half-open [3,7)",
+			from:          ptr(int64(3)),
+			fromInclusive: true,
+			to:            ptr(int64(7)),
+			toInclusive:   false,
+			wantKeys:      []int64{3, 4, 5, 6},
+		},
+		{
+			name:          "half-open (3,7]",
+			from:          ptr(int64(3)),
+			fromInclusive: false,
+			to:            ptr(int64(7)),
+			toInclusive:   true,
+			wantKeys:      []int64{4, 5, 6, 7},
+		},
+		{
+			name:          "no lower bound (,5]",
+			from:          nil,
+			fromInclusive: false,
+			to:            ptr(int64(5)),
+			toInclusive:   true,
+			wantKeys:      []int64{1, 2, 3, 4, 5},
+		},
+		{
+			name:          "no upper bound [5,)",
+			from:          ptr(int64(5)),
+			fromInclusive: true,
+			to:            nil,
+			toInclusive:   false,
+			wantKeys:      []int64{5, 6, 7, 8, 9, 10},
+		},
+		{
+			name:          "no bounds (all)",
+			from:          nil,
+			fromInclusive: false,
+			to:            nil,
+			toInclusive:   false,
+			wantKeys:      []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got []int64
+			tree.ForEachRange(tt.from, tt.fromInclusive, tt.to, tt.toInclusive, func(key int64, value any) bool {
+				got = append(got, key)
+				return true
+			})
+			if len(got) != len(tt.wantKeys) {
+				t.Fatalf("expected %d keys, got %d: %v", len(tt.wantKeys), len(got), got)
+			}
+			for i := range tt.wantKeys {
+				if got[i] != tt.wantKeys[i] {
+					t.Errorf("position %d: expected %d, got %d", i, tt.wantKeys[i], got[i])
+				}
+			}
+		})
+	}
+}
+
+func TestForEachRangeNoMatch(t *testing.T) {
+	tree := New[int64](4)
+	for i := int64(1); i <= 5; i++ {
+		tree.Insert(i, nil)
+	}
+
+	var got []int64
+	from := int64(10)
+	to := int64(20)
+	tree.ForEachRange(&from, true, &to, true, func(key int64, value any) bool {
+		got = append(got, key)
+		return true
+	})
+	if len(got) != 0 {
+		t.Errorf("expected 0 keys, got %d: %v", len(got), got)
+	}
+}
+
+func TestForEachRangeEarlyTermination(t *testing.T) {
+	tree := New[int64](4)
+	for i := int64(1); i <= 100; i++ {
+		tree.Insert(i, nil)
+	}
+
+	count := 0
+	from := int64(10)
+	tree.ForEachRange(&from, true, nil, false, func(key int64, value any) bool {
+		count++
+		return count < 3
+	})
+	if count != 3 {
+		t.Errorf("expected 3 items before early termination, got %d", count)
+	}
+}
+
+func TestForEachRangeStringKeys(t *testing.T) {
+	tree := New[string](4)
+	words := []string{"apple", "banana", "cherry", "date", "elderberry", "fig", "grape"}
+	for _, w := range words {
+		tree.Put(w, nil)
+	}
+
+	var got []string
+	from := "cherry"
+	to := "fig"
+	tree.ForEachRange(&from, true, &to, true, func(key string, value any) bool {
+		got = append(got, key)
+		return true
+	})
+	expected := []string{"cherry", "date", "elderberry", "fig"}
+	if len(got) != len(expected) {
+		t.Fatalf("expected %d keys, got %d: %v", len(expected), len(got), got)
+	}
+	for i := range expected {
+		if got[i] != expected[i] {
+			t.Errorf("position %d: expected %s, got %s", i, expected[i], got[i])
+		}
+	}
+}
+
+func ptr[T any](v T) *T {
+	return &v
+}
+
 func TestStringBTreeSortedKeys(t *testing.T) {
 	tree := New[string](4)
 	input := []string{"z", "m", "a", "f", "x", "b"}

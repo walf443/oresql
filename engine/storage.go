@@ -33,7 +33,11 @@ type SecondaryIndex struct {
 }
 
 // encodeValue encodes a single value with a type prefix into the builder.
-// NULL=0x00, INT=0x01+8-byte big-endian, FLOAT=0x02+8-byte IEEE754, TEXT=0x03+4-byte length+bytes.
+// The encoding preserves sort order for byte-wise comparison:
+//   - NULL: 0x00 (sorts before all other types)
+//   - INT:  0x01 + 8-byte big-endian with sign bit flipped (so negative < positive)
+//   - FLOAT: 0x02 + 8-byte order-preserving IEEE754 (positive: flip sign bit; negative: flip all bits)
+//   - TEXT: 0x03 + raw bytes + 0x00 (null-terminated, preserves lexicographic order)
 func encodeValue(buf *strings.Builder, val Value) {
 	switch v := val.(type) {
 	case nil:
@@ -41,19 +45,26 @@ func encodeValue(buf *strings.Builder, val Value) {
 	case int64:
 		buf.WriteByte(0x01)
 		var b [8]byte
-		binary.BigEndian.PutUint64(b[:], uint64(v))
+		// Flip the sign bit so that negative values sort before positive values
+		binary.BigEndian.PutUint64(b[:], uint64(v)^0x8000000000000000)
 		buf.Write(b[:])
 	case float64:
 		buf.WriteByte(0x02)
+		bits := math.Float64bits(v)
+		if v >= 0 {
+			// Positive (and +0): flip sign bit
+			bits ^= 0x8000000000000000
+		} else {
+			// Negative: flip all bits
+			bits = ^bits
+		}
 		var b [8]byte
-		binary.BigEndian.PutUint64(b[:], math.Float64bits(v))
+		binary.BigEndian.PutUint64(b[:], bits)
 		buf.Write(b[:])
 	case string:
 		buf.WriteByte(0x03)
-		var b [4]byte
-		binary.BigEndian.PutUint32(b[:], uint32(len(v)))
-		buf.Write(b[:])
 		buf.WriteString(v)
+		buf.WriteByte(0x00) // null terminator
 	}
 }
 
@@ -65,6 +76,42 @@ func encodeCompositeKey(row Row, columnIdxs []int) KeyEncoding {
 		encodeValue(&buf, row[idx])
 	}
 	return KeyEncoding(buf.String())
+}
+
+// encodeSingleValue encodes a single value into a KeyEncoding.
+func encodeSingleValue(val Value) KeyEncoding {
+	var buf strings.Builder
+	encodeValue(&buf, val)
+	return KeyEncoding(buf.String())
+}
+
+// RangeScan returns BTree keys for rows whose indexed value falls within the given range.
+// Only works for single-column indexes; returns nil for composite indexes.
+func (si *SecondaryIndex) RangeScan(fromVal *Value, fromInclusive bool, toVal *Value, toInclusive bool) []int64 {
+	if len(si.Info.ColumnIdxs) != 1 {
+		return nil
+	}
+
+	var fromKey *KeyEncoding
+	var toKey *KeyEncoding
+	if fromVal != nil {
+		k := encodeSingleValue(*fromVal)
+		fromKey = &k
+	}
+	if toVal != nil {
+		k := encodeSingleValue(*toVal)
+		toKey = &k
+	}
+
+	var keys []int64
+	si.tree.ForEachRange(fromKey, fromInclusive, toKey, toInclusive, func(key KeyEncoding, value any) bool {
+		keySet := value.(map[int64]struct{})
+		for k := range keySet {
+			keys = append(keys, k)
+		}
+		return true
+	})
+	return keys
 }
 
 // Lookup returns the BTree keys matching the given composite values.
@@ -302,6 +349,21 @@ func (s *Storage) LookupIndex(tableName string, columnIdxs []int) *SecondaryInde
 			}
 		}
 		if match {
+			return idx
+		}
+	}
+	return nil
+}
+
+// LookupSingleColumnIndex finds a single-column index for the given table and column index.
+func (s *Storage) LookupSingleColumnIndex(tableName string, colIdx int) *SecondaryIndex {
+	lower := strings.ToLower(tableName)
+	tbl, ok := s.tables[lower]
+	if !ok {
+		return nil
+	}
+	for _, idx := range tbl.indexes {
+		if len(idx.Info.ColumnIdxs) == 1 && idx.Info.ColumnIdxs[0] == colIdx {
 			return idx
 		}
 	}

@@ -256,6 +256,151 @@ func collectEqualities(expr ast.Expr, result map[string]Value) {
 	}
 }
 
+// rangeCondition represents a range condition on a single column.
+type rangeCondition struct {
+	colName       string
+	fromVal       *Value
+	fromInclusive bool
+	toVal         *Value
+	toInclusive   bool
+}
+
+// extractRangeConditions extracts range conditions from a WHERE expression.
+// It collects >, >=, <, <= comparisons and BETWEEN expressions, merging conditions
+// on the same column.
+func extractRangeConditions(expr ast.Expr) map[string]*rangeCondition {
+	result := make(map[string]*rangeCondition)
+	collectRangeConditions(expr, result)
+	return result
+}
+
+func collectRangeConditions(expr ast.Expr, result map[string]*rangeCondition) {
+	switch e := expr.(type) {
+	case *ast.BinaryExpr:
+		// Check for col > val, col >= val, col < val, col <= val
+		ident, ok := e.Left.(*ast.IdentExpr)
+		if !ok {
+			return
+		}
+		var val Value
+		switch lit := e.Right.(type) {
+		case *ast.IntLitExpr:
+			val = lit.Value
+		case *ast.FloatLitExpr:
+			val = lit.Value
+		case *ast.StringLitExpr:
+			val = lit.Value
+		default:
+			return
+		}
+
+		colName := strings.ToLower(ident.Name)
+		rc, exists := result[colName]
+		if !exists {
+			rc = &rangeCondition{colName: colName}
+			result[colName] = rc
+		}
+
+		switch e.Op {
+		case ">":
+			rc.fromVal = &val
+			rc.fromInclusive = false
+		case ">=":
+			rc.fromVal = &val
+			rc.fromInclusive = true
+		case "<":
+			rc.toVal = &val
+			rc.toInclusive = false
+		case "<=":
+			rc.toVal = &val
+			rc.toInclusive = true
+		}
+
+	case *ast.BetweenExpr:
+		if e.Not {
+			return
+		}
+		ident, ok := e.Left.(*ast.IdentExpr)
+		if !ok {
+			return
+		}
+		var lowVal, highVal Value
+		switch lit := e.Low.(type) {
+		case *ast.IntLitExpr:
+			lowVal = lit.Value
+		case *ast.FloatLitExpr:
+			lowVal = lit.Value
+		case *ast.StringLitExpr:
+			lowVal = lit.Value
+		default:
+			return
+		}
+		switch lit := e.High.(type) {
+		case *ast.IntLitExpr:
+			highVal = lit.Value
+		case *ast.FloatLitExpr:
+			highVal = lit.Value
+		case *ast.StringLitExpr:
+			highVal = lit.Value
+		default:
+			return
+		}
+
+		colName := strings.ToLower(ident.Name)
+		result[colName] = &rangeCondition{
+			colName:       colName,
+			fromVal:       &lowVal,
+			fromInclusive: true,
+			toVal:         &highVal,
+			toInclusive:   true,
+		}
+
+	case *ast.LogicalExpr:
+		if e.Op == "AND" {
+			collectRangeConditions(e.Left, result)
+			collectRangeConditions(e.Right, result)
+		}
+	}
+}
+
+// tryIndexRangeScan attempts to use an index for range conditions in WHERE.
+func (e *Executor) tryIndexRangeScan(stmt *ast.SelectStmt, info *TableInfo) ([]Row, bool) {
+	if stmt.Where == nil {
+		return nil, false
+	}
+
+	rangeConds := extractRangeConditions(stmt.Where)
+	if len(rangeConds) == 0 {
+		return nil, false
+	}
+
+	// Try each range condition to find a matching single-column index
+	for _, rc := range rangeConds {
+		if rc.fromVal == nil && rc.toVal == nil {
+			continue
+		}
+		col, err := info.FindColumn(rc.colName)
+		if err != nil {
+			continue
+		}
+		idx := e.storage.LookupSingleColumnIndex(info.Name, col.Index)
+		if idx == nil {
+			continue
+		}
+
+		keys := idx.RangeScan(rc.fromVal, rc.fromInclusive, rc.toVal, rc.toInclusive)
+		if keys == nil {
+			return []Row{}, true
+		}
+		rows, err := e.storage.GetByKeys(info.Name, keys)
+		if err != nil {
+			return nil, false
+		}
+		return rows, true
+	}
+	return nil, false
+}
+
 // validateAndCoerceValue validates a value against a column definition, coercing types as needed.
 func validateAndCoerceValue(val Value, col ColumnInfo) (Value, error) {
 	if val == nil {
@@ -544,9 +689,11 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 		}
 	}
 
-	// Try index lookup, fall back to full scan
+	// Try index lookup, then range scan, fall back to full scan
 	var allRows []Row
 	if indexedRows, indexUsed := e.tryIndexLookup(stmt, info); indexUsed {
+		allRows = indexedRows
+	} else if indexedRows, indexUsed := e.tryIndexRangeScan(stmt, info); indexUsed {
 		allRows = indexedRows
 	} else {
 		allRows, err = e.storage.Scan(stmt.TableName)

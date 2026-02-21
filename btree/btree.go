@@ -328,6 +328,71 @@ func (t *BTree[K]) ForEach(fn func(key K, value any) bool) {
 	}
 }
 
+// ForEachRange iterates over entries whose keys fall within the specified range.
+// from == nil means no lower bound; to == nil means no upper bound.
+// fromInclusive/toInclusive control whether the boundaries are included.
+// The callback should return true to continue, false to stop.
+func (t *BTree[K]) ForEachRange(from *K, fromInclusive bool, to *K, toInclusive bool, fn func(key K, value any) bool) {
+	if t.root != nil {
+		t.root.forEachRange(from, fromInclusive, to, toInclusive, fn)
+	}
+}
+
+func (n *node[K]) forEachRange(from *K, fromInclusive bool, to *K, toInclusive bool, fn func(key K, value any) bool) bool {
+	// Find the starting index: first entry with key >= from (or > from if not inclusive)
+	startIdx := 0
+	if from != nil {
+		startIdx = n.search(*from)
+	}
+
+	for i := startIdx; i < len(n.entries); i++ {
+		// Visit left child first (if not leaf)
+		if !n.leaf {
+			if !n.children[i].forEachRange(from, fromInclusive, to, toInclusive, fn) {
+				return false
+			}
+		}
+
+		key := n.entries[i].key
+
+		// Check lower bound
+		if from != nil {
+			if fromInclusive {
+				if key < *from {
+					continue
+				}
+			} else {
+				if key <= *from {
+					continue
+				}
+			}
+		}
+
+		// Check upper bound
+		if to != nil {
+			if toInclusive {
+				if key > *to {
+					return false
+				}
+			} else {
+				if key >= *to {
+					return false
+				}
+			}
+		}
+
+		if !fn(key, n.entries[i].value) {
+			return false
+		}
+	}
+
+	// Visit the last child
+	if !n.leaf {
+		return n.children[len(n.entries)].forEachRange(from, fromInclusive, to, toInclusive, fn)
+	}
+	return true
+}
+
 func (n *node[K]) forEach(fn func(key K, value any) bool) bool {
 	for i, e := range n.entries {
 		if !n.leaf {

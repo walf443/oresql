@@ -3,6 +3,7 @@ package repl
 import (
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/walf443/oresql/engine"
@@ -35,11 +36,26 @@ func (w *Writer) PrintResult(r *engine.Result) {
 	for _, row := range r.Rows {
 		vals := make([]string, len(row))
 		for i, v := range row {
-			vals[i] = fmt.Sprintf("%v", v)
+			vals[i] = formatValue(v)
 		}
 		fmt.Fprintln(w.out, strings.Join(vals, "\t"))
 	}
 	fmt.Fprintf(w.out, "(%d rows)\n", len(r.Rows))
+}
+
+// formatValue formats a single value for display.
+// float64 values always include a decimal point (e.g. 20.0 instead of 20).
+func formatValue(v interface{}) string {
+	switch fv := v.(type) {
+	case float64:
+		s := strconv.FormatFloat(fv, 'f', -1, 64)
+		if !strings.Contains(s, ".") {
+			s += ".0"
+		}
+		return s
+	default:
+		return fmt.Sprintf("%v", v)
+	}
 }
 
 // PrintError writes an error message prefixed with "Error: ".

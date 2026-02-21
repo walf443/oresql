@@ -100,6 +100,11 @@ func (e *Executor) executeInsert(stmt *ast.InsertStmt) (*Result, error) {
 }
 
 func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
+	// SELECT without FROM: evaluate expressions directly
+	if stmt.TableName == "" {
+		return e.executeSelectWithoutTable(stmt)
+	}
+
 	info, err := e.catalog.GetTable(stmt.TableName)
 	if err != nil {
 		return nil, err
@@ -170,6 +175,42 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 	}
 
 	return &Result{Columns: colNames, Rows: resultRows}, nil
+}
+
+// executeSelectWithoutTable handles SELECT without FROM (e.g. SELECT 1, 'hello').
+func (e *Executor) executeSelectWithoutTable(stmt *ast.SelectStmt) (*Result, error) {
+	var colNames []string
+	var row Row
+
+	for _, colExpr := range stmt.Columns {
+		val, err := evalLiteral(colExpr)
+		if err != nil {
+			return nil, err
+		}
+		colNames = append(colNames, formatExpr(colExpr))
+		row = append(row, val)
+	}
+
+	return &Result{Columns: colNames, Rows: []Row{row}}, nil
+}
+
+// formatExpr returns a display name for an expression.
+func formatExpr(expr ast.Expr) string {
+	switch e := expr.(type) {
+	case *ast.IntLitExpr:
+		return fmt.Sprintf("%d", e.Value)
+	case *ast.StringLitExpr:
+		return "'" + e.Value + "'"
+	case *ast.NullLitExpr:
+		return "NULL"
+	case *ast.IdentExpr:
+		if e.Table != "" {
+			return e.Table + "." + e.Name
+		}
+		return e.Name
+	default:
+		return "?"
+	}
 }
 
 // hasAggregate returns true if any column expression is a function call.

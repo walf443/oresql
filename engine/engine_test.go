@@ -266,6 +266,31 @@ func TestSelectCountLiteral(t *testing.T) {
 	}
 }
 
+func TestSelectWithoutFrom(t *testing.T) {
+	exec := NewExecutor()
+
+	// SELECT 1
+	result := run(t, exec, "SELECT 1")
+	if len(result.Columns) != 1 || result.Columns[0] != "1" {
+		t.Errorf("expected columns [1], got %v", result.Columns)
+	}
+	if len(result.Rows) != 1 || result.Rows[0][0] != int64(1) {
+		t.Errorf("expected row [1], got %v", result.Rows)
+	}
+
+	// SELECT 1, 'hello'
+	result = run(t, exec, "SELECT 1, 'hello'")
+	if len(result.Columns) != 2 || result.Columns[0] != "1" || result.Columns[1] != "'hello'" {
+		t.Errorf("expected columns [1, 'hello'], got %v", result.Columns)
+	}
+	if result.Rows[0][0] != int64(1) {
+		t.Errorf("expected first column 1, got %v", result.Rows[0][0])
+	}
+	if result.Rows[0][1] != "hello" {
+		t.Errorf("expected second column 'hello', got %v", result.Rows[0][1])
+	}
+}
+
 func TestInsertMultipleRows(t *testing.T) {
 	exec := NewExecutor()
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")

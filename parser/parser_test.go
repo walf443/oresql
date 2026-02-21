@@ -264,6 +264,24 @@ func TestParseSelectCountStarLowerCase(t *testing.T) {
 	}
 }
 
+func TestParseSelectLiteral(t *testing.T) {
+	stmt := parse(t, "SELECT 1")
+	sel := stmt.(*ast.SelectStmt)
+	if sel.TableName != "" {
+		t.Errorf("expected empty table name, got %q", sel.TableName)
+	}
+	if len(sel.Columns) != 1 {
+		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
+	}
+	lit, ok := sel.Columns[0].(*ast.IntLitExpr)
+	if !ok {
+		t.Fatalf("expected IntLitExpr, got %T", sel.Columns[0])
+	}
+	if lit.Value != 1 {
+		t.Errorf("expected value 1, got %d", lit.Value)
+	}
+}
+
 func TestParseIsNull(t *testing.T) {
 	stmt := parse(t, "SELECT * FROM users WHERE name IS NULL")
 	sel := stmt.(*ast.SelectStmt)

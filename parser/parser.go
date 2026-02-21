@@ -226,22 +226,24 @@ func (p *Parser) parseSelect() (*ast.SelectStmt, error) {
 		return nil, err
 	}
 
-	if err := p.expectToken(token.FROM); err != nil {
-		return nil, err
-	}
-
-	if p.curToken.Type != token.IDENT {
-		return nil, fmt.Errorf("expected table name, got %s (%q)", p.curToken.Type, p.curToken.Literal)
-	}
-	tableName := p.curToken.Literal
-	p.nextToken()
-
+	var tableName string
 	var where ast.Expr
-	if p.curToken.Type == token.WHERE {
-		p.nextToken() // skip WHERE
-		where, err = p.parseExpr()
-		if err != nil {
-			return nil, err
+
+	if p.curToken.Type == token.FROM {
+		p.nextToken() // skip FROM
+
+		if p.curToken.Type != token.IDENT {
+			return nil, fmt.Errorf("expected table name, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+		}
+		tableName = p.curToken.Literal
+		p.nextToken()
+
+		if p.curToken.Type == token.WHERE {
+			p.nextToken() // skip WHERE
+			where, err = p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -278,10 +280,13 @@ func (p *Parser) parseSelectList() ([]ast.Expr, error) {
 	return columns, nil
 }
 
-// parseSelectItem parses a single item in a SELECT list: column, table.column, or function call.
+// parseSelectItem parses a single item in a SELECT list: column, table.column, function call, or literal.
 func (p *Parser) parseSelectItem() (ast.Expr, error) {
 	if p.curToken.Type == token.COUNT {
 		return p.parseCallExpr()
+	}
+	if p.curToken.Type == token.INT_LIT || p.curToken.Type == token.STRING_LIT || p.curToken.Type == token.NULL {
+		return p.parsePrimary()
 	}
 	return p.parseColumnIdent()
 }

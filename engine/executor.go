@@ -536,43 +536,44 @@ func (e *Executor) tryIndexRangeScan(stmt *ast.SelectStmt, info *TableInfo) ([]R
 		return rows, true
 	}
 
-	// Try composite indexes: prefix equality + last column range
+	// Try composite indexes: prefix equality + next column range
 	eqConds := extractEqualityConditions(stmt.Where)
 	indexes := e.storage.GetIndexes(info.Name)
 	for _, idx := range indexes {
 		if len(idx.Info.ColumnNames) < 2 {
 			continue
 		}
-		// Check if first N-1 columns have equality conditions
-		prefixLen := len(idx.Info.ColumnNames) - 1
-		prefixVals := make([]Value, 0, prefixLen)
-		allPrefixFound := true
-		for i := 0; i < prefixLen; i++ {
-			val, ok := eqConds[strings.ToLower(idx.Info.ColumnNames[i])]
-			if !ok {
-				allPrefixFound = false
-				break
+		// Try from longest prefix to shortest, pick the most selective match
+		for prefixLen := len(idx.Info.ColumnNames) - 1; prefixLen >= 1; prefixLen-- {
+			prefixVals := make([]Value, 0, prefixLen)
+			allPrefixFound := true
+			for i := 0; i < prefixLen; i++ {
+				val, ok := eqConds[strings.ToLower(idx.Info.ColumnNames[i])]
+				if !ok {
+					allPrefixFound = false
+					break
+				}
+				prefixVals = append(prefixVals, val)
 			}
-			prefixVals = append(prefixVals, val)
+			if !allPrefixFound {
+				continue
+			}
+			// Check if the next column has a range condition
+			rangeCol := strings.ToLower(idx.Info.ColumnNames[prefixLen])
+			rc, ok := rangeConds[rangeCol]
+			if !ok || (rc.fromVal == nil && rc.toVal == nil) {
+				continue
+			}
+			keys := idx.CompositeRangeScan(prefixVals, rc.fromVal, rc.fromInclusive, rc.toVal, rc.toInclusive)
+			if keys == nil {
+				return []Row{}, true
+			}
+			rows, err := e.storage.GetByKeys(info.Name, keys)
+			if err != nil {
+				return nil, false
+			}
+			return rows, true
 		}
-		if !allPrefixFound {
-			continue
-		}
-		// Check if the last column has a range condition
-		lastCol := strings.ToLower(idx.Info.ColumnNames[prefixLen])
-		rc, ok := rangeConds[lastCol]
-		if !ok || (rc.fromVal == nil && rc.toVal == nil) {
-			continue
-		}
-		keys := idx.CompositeRangeScan(prefixVals, rc.fromVal, rc.fromInclusive, rc.toVal, rc.toInclusive)
-		if keys == nil {
-			return []Row{}, true
-		}
-		rows, err := e.storage.GetByKeys(info.Name, keys)
-		if err != nil {
-			return nil, false
-		}
-		return rows, true
 	}
 
 	return nil, false

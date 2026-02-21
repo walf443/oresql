@@ -95,17 +95,27 @@ func encodeValues(vals []Value) KeyEncoding {
 }
 
 // CompositeRangeScan returns BTree keys for rows matching a composite index prefix
-// with a range condition on the last column.
-// prefixVals are the equality values for the first N-1 columns;
-// the range condition applies to the Nth column.
+// with a range condition on a subsequent column.
+// prefixVals are the equality values for the leading columns;
+// the range condition applies to the next column after the prefix.
+// When the range column is not the last index column (partial prefix),
+// boundary keys are adjusted to account for trailing column suffixes.
 func (si *SecondaryIndex) CompositeRangeScan(
 	prefixVals []Value,
 	fromVal *Value, fromInclusive bool,
 	toVal *Value, toInclusive bool,
 ) []int64 {
-	if len(prefixVals)+1 != len(si.Info.ColumnIdxs) {
+	if len(prefixVals)+1 > len(si.Info.ColumnIdxs) || len(prefixVals) < 1 {
 		return nil
 	}
+
+	// When the range column is not the last column in the index, stored keys
+	// have additional encoded bytes after the range column value.
+	// This means encode(prefix, rangeVal, suffix) > encode(prefix, rangeVal),
+	// so we must adjust boundaries:
+	//   - fromInclusive=false: append \xff to skip past all suffix variants
+	//   - toInclusive=true: append \xff and switch to exclusive
+	isPartialPrefix := len(prefixVals)+1 < len(si.Info.ColumnIdxs)
 
 	var fromKey *KeyEncoding
 	var toKey *KeyEncoding
@@ -113,6 +123,9 @@ func (si *SecondaryIndex) CompositeRangeScan(
 	if fromVal != nil {
 		vals := append(append([]Value{}, prefixVals...), *fromVal)
 		k := encodeValues(vals)
+		if isPartialPrefix && !fromInclusive {
+			k = k + "\xff"
+		}
 		fromKey = &k
 	} else {
 		// No lower bound: start right after the prefix itself
@@ -124,6 +137,10 @@ func (si *SecondaryIndex) CompositeRangeScan(
 	if toVal != nil {
 		vals := append(append([]Value{}, prefixVals...), *toVal)
 		k := encodeValues(vals)
+		if isPartialPrefix && toInclusive {
+			k = k + "\xff"
+			toInclusive = false
+		}
 		toKey = &k
 	} else {
 		// No upper bound: stop at prefix + \xff (exclusive)

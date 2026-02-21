@@ -2918,3 +2918,72 @@ func TestSelectWithIndexInAndFilter(t *testing.T) {
 		}
 	}
 }
+
+func TestSelectWithCompositeIndexRangeMiddleColumn(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (a INT, b INT, c TEXT)")
+	run(t, exec, "CREATE INDEX idx ON t(a, b, c)")
+	run(t, exec, "INSERT INTO t VALUES (1, 2, 'x')")
+	run(t, exec, "INSERT INTO t VALUES (1, 5, 'y')")
+	run(t, exec, "INSERT INTO t VALUES (1, 8, 'z')")
+	run(t, exec, "INSERT INTO t VALUES (2, 3, 'w')")
+
+	// a=1 AND b>3 should use composite index with prefix a=1 and range on b
+	result := run(t, exec, "SELECT * FROM t WHERE a = 1 AND b > 3")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	bs := map[int64]bool{}
+	for _, row := range result.Rows {
+		bs[row[1].(int64)] = true
+	}
+	if !bs[5] || !bs[8] {
+		t.Errorf("expected b 5,8, got %v", bs)
+	}
+}
+
+func TestSelectWithCompositeIndexRangeMiddleColumnBetween(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (a INT, b INT, c TEXT)")
+	run(t, exec, "CREATE INDEX idx ON t(a, b, c)")
+	run(t, exec, "INSERT INTO t VALUES (1, 1, 'a')")
+	run(t, exec, "INSERT INTO t VALUES (1, 3, 'b')")
+	run(t, exec, "INSERT INTO t VALUES (1, 5, 'c')")
+	run(t, exec, "INSERT INTO t VALUES (1, 7, 'd')")
+	run(t, exec, "INSERT INTO t VALUES (2, 4, 'e')")
+
+	// a=1 AND b BETWEEN 2 AND 5 should use composite index
+	result := run(t, exec, "SELECT * FROM t WHERE a = 1 AND b BETWEEN 2 AND 5")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	bs := map[int64]bool{}
+	for _, row := range result.Rows {
+		bs[row[1].(int64)] = true
+	}
+	if !bs[3] || !bs[5] {
+		t.Errorf("expected b 3,5, got %v", bs)
+	}
+}
+
+func TestSelectWithCompositeIndexRangeMiddleColumnWithPostFilter(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (a INT, b INT, c TEXT)")
+	run(t, exec, "CREATE INDEX idx ON t(a, b, c)")
+	run(t, exec, "INSERT INTO t VALUES (1, 2, 'x')")
+	run(t, exec, "INSERT INTO t VALUES (1, 5, 'x')")
+	run(t, exec, "INSERT INTO t VALUES (1, 8, 'y')")
+	run(t, exec, "INSERT INTO t VALUES (2, 3, 'x')")
+
+	// a=1 AND b>3 AND c='x' — index handles a=1 + b>3, post-filter handles c='x'
+	result := run(t, exec, "SELECT * FROM t WHERE a = 1 AND b > 3 AND c = 'x'")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][1] != int64(5) {
+		t.Errorf("expected b=5, got %v", result.Rows[0][1])
+	}
+	if result.Rows[0][2] != "x" {
+		t.Errorf("expected c='x', got %v", result.Rows[0][2])
+	}
+}

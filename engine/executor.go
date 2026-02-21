@@ -95,6 +95,11 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 		return nil, err
 	}
 
+	// Check if this is an aggregate query
+	if hasAggregate(stmt.Columns) {
+		return e.executeAggregateSelect(stmt, info)
+	}
+
 	// Resolve columns
 	var colIndices []int
 	var colNames []string
@@ -155,6 +160,88 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 	}
 
 	return &Result{Columns: colNames, Rows: resultRows}, nil
+}
+
+// hasAggregate returns true if any column expression is a function call.
+func hasAggregate(columns []ast.Expr) bool {
+	for _, col := range columns {
+		if _, ok := col.(*ast.CallExpr); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// executeAggregateSelect handles SELECT with aggregate functions like COUNT(*).
+func (e *Executor) executeAggregateSelect(stmt *ast.SelectStmt, info *TableInfo) (*Result, error) {
+	// Scan and filter rows
+	allRows, err := e.storage.Scan(stmt.TableName)
+	if err != nil {
+		return nil, err
+	}
+
+	var filtered []Row
+	for _, row := range allRows {
+		if stmt.Where != nil {
+			match, err := evalWhere(stmt.Where, row, info)
+			if err != nil {
+				return nil, err
+			}
+			if !match {
+				continue
+			}
+		}
+		filtered = append(filtered, row)
+	}
+
+	// Evaluate each aggregate expression
+	var colNames []string
+	resultRow := make(Row, len(stmt.Columns))
+	for i, colExpr := range stmt.Columns {
+		call, ok := colExpr.(*ast.CallExpr)
+		if !ok {
+			return nil, fmt.Errorf("mixed aggregate and non-aggregate columns are not supported")
+		}
+		val, colName, err := evalAggregate(call, filtered)
+		if err != nil {
+			return nil, err
+		}
+		resultRow[i] = val
+		colNames = append(colNames, colName)
+	}
+
+	return &Result{Columns: colNames, Rows: []Row{resultRow}}, nil
+}
+
+// evalAggregate evaluates a single aggregate function call against a set of rows.
+func evalAggregate(call *ast.CallExpr, rows []Row) (Value, string, error) {
+	switch call.Name {
+	case "COUNT":
+		colName := formatCallExpr(call)
+		return int64(len(rows)), colName, nil
+	default:
+		return nil, "", fmt.Errorf("unknown aggregate function: %s", call.Name)
+	}
+}
+
+// formatCallExpr returns a display name for a function call (e.g. "COUNT(*)").
+func formatCallExpr(call *ast.CallExpr) string {
+	args := make([]string, len(call.Args))
+	for i, arg := range call.Args {
+		switch a := arg.(type) {
+		case *ast.StarExpr:
+			args[i] = "*"
+		case *ast.IdentExpr:
+			if a.Table != "" {
+				args[i] = a.Table + "." + a.Name
+			} else {
+				args[i] = a.Name
+			}
+		default:
+			args[i] = "?"
+		}
+	}
+	return call.Name + "(" + strings.Join(args, ", ") + ")"
 }
 
 // evalLiteral evaluates a literal expression (for INSERT VALUES).

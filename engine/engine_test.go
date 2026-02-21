@@ -183,6 +183,48 @@ func TestErrorWhereWrongTableQualifier(t *testing.T) {
 	runExpectError(t, exec, "SELECT * FROM users WHERE other.id = 1")
 }
 
+func TestSelectCountStar(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
+
+	result := run(t, exec, "SELECT COUNT(*) FROM users")
+	if len(result.Columns) != 1 || result.Columns[0] != "COUNT(*)" {
+		t.Errorf("expected columns [COUNT(*)], got %v", result.Columns)
+	}
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(3) {
+		t.Errorf("expected COUNT(*)=3, got %v", result.Rows[0][0])
+	}
+}
+
+func TestSelectCountStarWithWhere(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
+
+	result := run(t, exec, "SELECT COUNT(*) FROM users WHERE id > 1")
+	if result.Rows[0][0] != int64(2) {
+		t.Errorf("expected COUNT(*)=2, got %v", result.Rows[0][0])
+	}
+}
+
+func TestSelectCountStarEmpty(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT)")
+
+	result := run(t, exec, "SELECT COUNT(*) FROM users")
+	if result.Rows[0][0] != int64(0) {
+		t.Errorf("expected COUNT(*)=0, got %v", result.Rows[0][0])
+	}
+}
+
 func TestErrorDuplicateTable(t *testing.T) {
 	exec := NewExecutor()
 	run(t, exec, "CREATE TABLE users (id INT)")

@@ -3,6 +3,7 @@ package parser
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/walf443/oresql/ast"
 	"github.com/walf443/oresql/lexer"
@@ -238,7 +239,7 @@ func (p *Parser) parseSelectList() ([]ast.Expr, error) {
 
 	var columns []ast.Expr
 
-	col, err := p.parseColumnIdent()
+	col, err := p.parseSelectItem()
 	if err != nil {
 		return nil, err
 	}
@@ -246,7 +247,7 @@ func (p *Parser) parseSelectList() ([]ast.Expr, error) {
 
 	for p.curToken.Type == token.COMMA {
 		p.nextToken() // skip comma
-		col, err := p.parseColumnIdent()
+		col, err := p.parseSelectItem()
 		if err != nil {
 			return nil, err
 		}
@@ -254,6 +255,42 @@ func (p *Parser) parseSelectList() ([]ast.Expr, error) {
 	}
 
 	return columns, nil
+}
+
+// parseSelectItem parses a single item in a SELECT list: column, table.column, or function call.
+func (p *Parser) parseSelectItem() (ast.Expr, error) {
+	if p.curToken.Type == token.COUNT {
+		return p.parseCallExpr()
+	}
+	return p.parseColumnIdent()
+}
+
+// parseCallExpr parses a function call: NAME(args...).
+func (p *Parser) parseCallExpr() (ast.Expr, error) {
+	name := p.curToken.Literal
+	p.nextToken() // skip function name
+
+	if err := p.expectToken(token.LPAREN); err != nil {
+		return nil, err
+	}
+
+	var args []ast.Expr
+	if p.curToken.Type == token.ASTERISK {
+		args = append(args, &ast.StarExpr{})
+		p.nextToken()
+	} else if p.curToken.Type != token.RPAREN {
+		exprList, err := p.parseExprList()
+		if err != nil {
+			return nil, err
+		}
+		args = exprList
+	}
+
+	if err := p.expectToken(token.RPAREN); err != nil {
+		return nil, err
+	}
+
+	return &ast.CallExpr{Name: strings.ToUpper(name), Args: args}, nil
 }
 
 // parseColumnIdent parses a column reference: ident or ident.ident

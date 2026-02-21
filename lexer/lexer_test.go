@@ -116,6 +116,18 @@ func TestEscapedQuote(t *testing.T) {
 	}
 }
 
+func TestCountToken(t *testing.T) {
+	input := `COUNT(*)`
+	expected := []token.Token{
+		{token.COUNT, "COUNT"},
+		{token.LPAREN, "("},
+		{token.ASTERISK, "*"},
+		{token.RPAREN, ")"},
+		{token.EOF, ""},
+	}
+	testTokens(t, input, expected)
+}
+
 func TestDotToken(t *testing.T) {
 	input := `users.id`
 	expected := []token.Token{

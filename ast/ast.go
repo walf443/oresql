@@ -82,6 +82,15 @@ type StarExpr struct{}
 func (e *StarExpr) NodeType() string { return "Star" }
 func (e *StarExpr) exprNode()       {}
 
+// CallExpr represents a function call like COUNT(*), SUM(col), etc.
+type CallExpr struct {
+	Name string // function name (e.g. "COUNT")
+	Args []Expr // arguments
+}
+
+func (e *CallExpr) NodeType() string { return "Call" }
+func (e *CallExpr) exprNode()       {}
+
 // BinaryExpr represents a comparison: left <op> right.
 type BinaryExpr struct {
 	Left  Expr

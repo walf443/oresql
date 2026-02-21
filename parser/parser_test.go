@@ -201,6 +201,36 @@ func TestParseSelectMixedColumns(t *testing.T) {
 	}
 }
 
+func TestParseSelectCountStar(t *testing.T) {
+	stmt := parse(t, "SELECT COUNT(*) FROM users")
+	sel := stmt.(*ast.SelectStmt)
+	if len(sel.Columns) != 1 {
+		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
+	}
+	call, ok := sel.Columns[0].(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr, got %T", sel.Columns[0])
+	}
+	if call.Name != "COUNT" {
+		t.Errorf("expected function name COUNT, got %s", call.Name)
+	}
+	if len(call.Args) != 1 {
+		t.Fatalf("expected 1 arg, got %d", len(call.Args))
+	}
+	if _, ok := call.Args[0].(*ast.StarExpr); !ok {
+		t.Errorf("expected StarExpr arg, got %T", call.Args[0])
+	}
+}
+
+func TestParseSelectCountStarLowerCase(t *testing.T) {
+	stmt := parse(t, "select count(*) from users")
+	sel := stmt.(*ast.SelectStmt)
+	call := sel.Columns[0].(*ast.CallExpr)
+	if call.Name != "COUNT" {
+		t.Errorf("expected function name COUNT, got %s", call.Name)
+	}
+}
+
 func TestParseError(t *testing.T) {
 	inputs := []string{
 		"CREATE",

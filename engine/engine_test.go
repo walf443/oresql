@@ -1225,8 +1225,8 @@ func TestSelectAvgBasic(t *testing.T) {
 	if len(result.Columns) != 1 || result.Columns[0] != "AVG(amount)" {
 		t.Errorf("expected columns [AVG(amount)], got %v", result.Columns)
 	}
-	if result.Rows[0][0] != int64(20) {
-		t.Errorf("expected AVG(amount)=20, got %v", result.Rows[0][0])
+	if result.Rows[0][0] != float64(20) {
+		t.Errorf("expected AVG(amount)=20.0, got %v (%T)", result.Rows[0][0], result.Rows[0][0])
 	}
 }
 
@@ -1284,8 +1284,8 @@ func TestSelectAggregatesWithNull(t *testing.T) {
 
 	// AVG should skip NULLs (40 / 2 = 20)
 	result = run(t, exec, "SELECT AVG(value) FROM scores")
-	if result.Rows[0][0] != int64(20) {
-		t.Errorf("expected AVG(value)=20, got %v", result.Rows[0][0])
+	if result.Rows[0][0] != float64(20) {
+		t.Errorf("expected AVG(value)=20.0, got %v (%T)", result.Rows[0][0], result.Rows[0][0])
 	}
 
 	// MIN should skip NULLs
@@ -1366,6 +1366,172 @@ func TestSelectSumEmpty(t *testing.T) {
 	result := run(t, exec, "SELECT SUM(amount) FROM orders")
 	if result.Rows[0][0] != nil {
 		t.Errorf("expected SUM(amount)=NULL for empty table, got %v", result.Rows[0][0])
+	}
+}
+
+func TestFloatColumnInsertSelect(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (val FLOAT)")
+	run(t, exec, "INSERT INTO t VALUES (3.14)")
+
+	result := run(t, exec, "SELECT val FROM t")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != float64(3.14) {
+		t.Errorf("expected 3.14, got %v", result.Rows[0][0])
+	}
+}
+
+func TestFloatColumnInsertIntAutoConvert(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (val FLOAT)")
+	run(t, exec, "INSERT INTO t VALUES (42)")
+
+	result := run(t, exec, "SELECT val FROM t")
+	if result.Rows[0][0] != float64(42) {
+		t.Errorf("expected 42.0, got %v (%T)", result.Rows[0][0], result.Rows[0][0])
+	}
+}
+
+func TestErrorIntColumnInsertFloat(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (val INT)")
+	runExpectError(t, exec, "INSERT INTO t VALUES (3.14)")
+}
+
+func TestFloatArithmetic(t *testing.T) {
+	exec := NewExecutor()
+
+	// SELECT 1.5 + 2.5
+	result := run(t, exec, "SELECT 1.5 + 2.5")
+	if result.Rows[0][0] != float64(4.0) {
+		t.Errorf("expected 1.5+2.5=4.0, got %v", result.Rows[0][0])
+	}
+}
+
+func TestFloatIntMixedArithmetic(t *testing.T) {
+	exec := NewExecutor()
+
+	// SELECT 1 + 0.5
+	result := run(t, exec, "SELECT 1 + 0.5")
+	if result.Rows[0][0] != float64(1.5) {
+		t.Errorf("expected 1+0.5=1.5, got %v", result.Rows[0][0])
+	}
+}
+
+func TestAvgReturnsFloat(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE scores (id INT, value INT)")
+	run(t, exec, "INSERT INTO scores VALUES (1, 10)")
+	run(t, exec, "INSERT INTO scores VALUES (2, 20)")
+	run(t, exec, "INSERT INTO scores VALUES (3, 20)")
+
+	result := run(t, exec, "SELECT AVG(value) FROM scores")
+	avg, ok := result.Rows[0][0].(float64)
+	if !ok {
+		t.Fatalf("expected AVG to return float64, got %T (%v)", result.Rows[0][0], result.Rows[0][0])
+	}
+	// AVG(10, 20, 20) = 50/3 ≈ 16.666...
+	if avg < 16.66 || avg > 16.67 {
+		t.Errorf("expected AVG(value)≈16.666, got %v", avg)
+	}
+}
+
+func TestSumFloatColumn(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (val FLOAT)")
+	run(t, exec, "INSERT INTO t VALUES (1.5)")
+	run(t, exec, "INSERT INTO t VALUES (2.5)")
+	run(t, exec, "INSERT INTO t VALUES (3.0)")
+
+	result := run(t, exec, "SELECT SUM(val) FROM t")
+	if result.Rows[0][0] != float64(7.0) {
+		t.Errorf("expected SUM(val)=7.0, got %v", result.Rows[0][0])
+	}
+}
+
+func TestFloatComparison(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (val FLOAT)")
+	run(t, exec, "INSERT INTO t VALUES (1.5)")
+	run(t, exec, "INSERT INTO t VALUES (2.5)")
+	run(t, exec, "INSERT INTO t VALUES (3.5)")
+
+	result := run(t, exec, "SELECT val FROM t WHERE val > 2.0")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != float64(2.5) {
+		t.Errorf("row 0: expected 2.5, got %v", result.Rows[0][0])
+	}
+	if result.Rows[1][0] != float64(3.5) {
+		t.Errorf("row 1: expected 3.5, got %v", result.Rows[1][0])
+	}
+}
+
+func TestFloatOrderBy(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (val FLOAT)")
+	run(t, exec, "INSERT INTO t VALUES (3.5)")
+	run(t, exec, "INSERT INTO t VALUES (1.5)")
+	run(t, exec, "INSERT INTO t VALUES (2.5)")
+
+	result := run(t, exec, "SELECT val FROM t ORDER BY val ASC")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != float64(1.5) {
+		t.Errorf("row 0: expected 1.5, got %v", result.Rows[0][0])
+	}
+	if result.Rows[1][0] != float64(2.5) {
+		t.Errorf("row 1: expected 2.5, got %v", result.Rows[1][0])
+	}
+	if result.Rows[2][0] != float64(3.5) {
+		t.Errorf("row 2: expected 3.5, got %v", result.Rows[2][0])
+	}
+}
+
+func TestFloatMinMax(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (val FLOAT)")
+	run(t, exec, "INSERT INTO t VALUES (3.5)")
+	run(t, exec, "INSERT INTO t VALUES (1.5)")
+	run(t, exec, "INSERT INTO t VALUES (2.5)")
+
+	result := run(t, exec, "SELECT MIN(val), MAX(val) FROM t")
+	if result.Rows[0][0] != float64(1.5) {
+		t.Errorf("expected MIN(val)=1.5, got %v", result.Rows[0][0])
+	}
+	if result.Rows[0][1] != float64(3.5) {
+		t.Errorf("expected MAX(val)=3.5, got %v", result.Rows[0][1])
+	}
+}
+
+func TestFloatIntMixedComparison(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, val FLOAT)")
+	run(t, exec, "INSERT INTO t VALUES (1, 1.5)")
+	run(t, exec, "INSERT INTO t VALUES (2, 2.5)")
+
+	result := run(t, exec, "SELECT id FROM t WHERE val > 2")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(2) {
+		t.Errorf("expected id=2, got %v", result.Rows[0][0])
+	}
+}
+
+func TestFloatUpdateSet(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (val FLOAT)")
+	run(t, exec, "INSERT INTO t VALUES (1.0)")
+
+	run(t, exec, "UPDATE t SET val = 9.99")
+	result := run(t, exec, "SELECT val FROM t")
+	if result.Rows[0][0] != float64(9.99) {
+		t.Errorf("expected 9.99, got %v", result.Rows[0][0])
 	}
 }
 

@@ -67,7 +67,7 @@
 ## データ型
 
 - [ ] BOOLEAN
-- [ ] FLOAT / REAL / DOUBLE
+- [x] FLOAT / REAL / DOUBLE
 - [ ] DECIMAL / NUMERIC
 - [ ] DATE / TIME / TIMESTAMP
 - [ ] VARCHAR(n)（長さ制限付き文字列）

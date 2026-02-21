@@ -174,6 +174,33 @@ func TestArithmeticOperators(t *testing.T) {
 	testTokens(t, input, expected)
 }
 
+func TestFloatLiteral(t *testing.T) {
+	input := `3.14`
+	expected := []token.Token{
+		{token.FLOAT_LIT, "3.14"},
+		{token.EOF, ""},
+	}
+	testTokens(t, input, expected)
+}
+
+func TestFloatLiteralZeroPrefix(t *testing.T) {
+	input := `0.5`
+	expected := []token.Token{
+		{token.FLOAT_LIT, "0.5"},
+		{token.EOF, ""},
+	}
+	testTokens(t, input, expected)
+}
+
+func TestIntLiteralStillWorks(t *testing.T) {
+	input := `42`
+	expected := []token.Token{
+		{token.INT_LIT, "42"},
+		{token.EOF, ""},
+	}
+	testTokens(t, input, expected)
+}
+
 func testTokens(t *testing.T, input string, expected []token.Token) {
 	t.Helper()
 	l := New(input)

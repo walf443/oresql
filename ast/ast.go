@@ -80,6 +80,14 @@ type IntLitExpr struct {
 func (e *IntLitExpr) NodeType() string { return "IntLit" }
 func (e *IntLitExpr) exprNode()        {}
 
+// FloatLitExpr represents a floating-point literal.
+type FloatLitExpr struct {
+	Value float64
+}
+
+func (e *FloatLitExpr) NodeType() string { return "FloatLit" }
+func (e *FloatLitExpr) exprNode()        {}
+
 // StringLitExpr represents a string literal.
 type StringLitExpr struct {
 	Value string

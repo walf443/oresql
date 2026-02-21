@@ -140,8 +140,8 @@ func (p *Parser) parseColumnDef() (ast.ColumnDef, error) {
 	name := p.curToken.Literal
 	p.nextToken()
 
-	if p.curToken.Type != token.INT && p.curToken.Type != token.TEXT {
-		return ast.ColumnDef{}, fmt.Errorf("expected data type (INT or TEXT), got %s (%q)", p.curToken.Type, p.curToken.Literal)
+	if p.curToken.Type != token.INT && p.curToken.Type != token.FLOAT && p.curToken.Type != token.TEXT {
+		return ast.ColumnDef{}, fmt.Errorf("expected data type (INT, FLOAT or TEXT), got %s (%q)", p.curToken.Type, p.curToken.Literal)
 	}
 	dataType := p.curToken.Type.String()
 	p.nextToken()
@@ -803,6 +803,14 @@ func (p *Parser) parsePrimary() (ast.Expr, error) {
 			return nil, fmt.Errorf("invalid integer: %s", p.curToken.Literal)
 		}
 		expr := &ast.IntLitExpr{Value: val}
+		p.nextToken()
+		return expr, nil
+	case token.FLOAT_LIT:
+		val, err := strconv.ParseFloat(p.curToken.Literal, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid float: %s", p.curToken.Literal)
+		}
+		expr := &ast.FloatLitExpr{Value: val}
 		p.nextToken()
 		return expr, nil
 	case token.STRING_LIT:

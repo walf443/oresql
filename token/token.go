@@ -13,6 +13,7 @@ const (
 	IDENT        // column names, table names
 	QUOTED_IDENT // backtick-quoted identifiers like `count`
 	INT_LIT      // integer literals like 42
+	FLOAT_LIT    // float literals like 3.14
 	STRING_LIT   // string literals like 'hello'
 
 	// Operators and delimiters
@@ -45,6 +46,7 @@ const (
 	OR
 	NOT
 	INT      // INT type keyword
+	FLOAT    // FLOAT type keyword
 	TEXT     // TEXT type keyword
 	COUNT    // COUNT aggregate function
 	SUM      // SUM aggregate function
@@ -75,6 +77,7 @@ var tokenNames = map[TokenType]string{
 	IDENT:        "IDENT",
 	QUOTED_IDENT: "QUOTED_IDENT",
 	INT_LIT:      "INT_LIT",
+	FLOAT_LIT:    "FLOAT_LIT",
 	STRING_LIT:   "STRING_LIT",
 	ASTERISK:     "ASTERISK",
 	PLUS:         "PLUS",
@@ -103,6 +106,7 @@ var tokenNames = map[TokenType]string{
 	OR:           "OR",
 	NOT:          "NOT",
 	INT:          "INT",
+	FLOAT:        "FLOAT",
 	TEXT:         "TEXT",
 	COUNT:        "COUNT",
 	SUM:          "SUM",
@@ -152,6 +156,7 @@ var keywords = map[string]TokenType{
 	"OR":       OR,
 	"NOT":      NOT,
 	"INT":      INT,
+	"FLOAT":    FLOAT,
 	"TEXT":     TEXT,
 	"COUNT":    COUNT,
 	"SUM":      SUM,

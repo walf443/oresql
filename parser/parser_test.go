@@ -939,6 +939,35 @@ func TestParseSelectGroupBySumHaving(t *testing.T) {
 	}
 }
 
+func TestParseSelectFloatLiteral(t *testing.T) {
+	stmt := parse(t, "SELECT 3.14")
+	sel := stmt.(*ast.SelectStmt)
+	if len(sel.Columns) != 1 {
+		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
+	}
+	lit, ok := sel.Columns[0].(*ast.FloatLitExpr)
+	if !ok {
+		t.Fatalf("expected FloatLitExpr, got %T", sel.Columns[0])
+	}
+	if lit.Value != 3.14 {
+		t.Errorf("expected value 3.14, got %f", lit.Value)
+	}
+}
+
+func TestParseCreateTableFloat(t *testing.T) {
+	stmt := parse(t, "CREATE TABLE t (val FLOAT)")
+	ct, ok := stmt.(*ast.CreateTableStmt)
+	if !ok {
+		t.Fatalf("expected CreateTableStmt, got %T", stmt)
+	}
+	if len(ct.Columns) != 1 {
+		t.Fatalf("expected 1 column, got %d", len(ct.Columns))
+	}
+	if ct.Columns[0].Name != "val" || ct.Columns[0].DataType != "FLOAT" {
+		t.Errorf("column 0: expected (val, FLOAT), got (%s, %s)", ct.Columns[0].Name, ct.Columns[0].DataType)
+	}
+}
+
 func TestParseError(t *testing.T) {
 	inputs := []string{
 		"CREATE",

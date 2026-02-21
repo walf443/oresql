@@ -157,6 +157,15 @@ func (e *Executor) executeInsert(stmt *ast.InsertStmt) (*Result, error) {
 					if _, ok := val.(int64); !ok {
 						return nil, fmt.Errorf("column %q expects INT, got %T", col.Name, val)
 					}
+				case "FLOAT":
+					switch v := val.(type) {
+					case float64:
+						// ok
+					case int64:
+						val = float64(v)
+					default:
+						return nil, fmt.Errorf("column %q expects FLOAT, got %T", col.Name, val)
+					}
 				case "TEXT":
 					if _, ok := val.(string); !ok {
 						return nil, fmt.Errorf("column %q expects TEXT, got %T", col.Name, val)
@@ -224,6 +233,15 @@ func (e *Executor) executeUpdate(stmt *ast.UpdateStmt) (*Result, error) {
 				case "INT":
 					if _, ok := val.(int64); !ok {
 						return nil, fmt.Errorf("column %q expects INT, got %T", col.Name, val)
+					}
+				case "FLOAT":
+					switch v := val.(type) {
+					case float64:
+						// ok
+					case int64:
+						val = float64(v)
+					default:
+						return nil, fmt.Errorf("column %q expects FLOAT, got %T", col.Name, val)
 					}
 				case "TEXT":
 					if _, ok := val.(string); !ok {
@@ -469,17 +487,45 @@ func compareValues(a, b Value) int {
 
 	switch av := a.(type) {
 	case int64:
-		bv, ok := b.(int64)
-		if !ok {
+		switch bv := b.(type) {
+		case int64:
+			if av < bv {
+				return -1
+			}
+			if av > bv {
+				return 1
+			}
+			return 0
+		case float64:
+			af := float64(av)
+			if af < bv {
+				return -1
+			}
+			if af > bv {
+				return 1
+			}
 			return 0
 		}
-		if av < bv {
-			return -1
+	case float64:
+		switch bv := b.(type) {
+		case float64:
+			if av < bv {
+				return -1
+			}
+			if av > bv {
+				return 1
+			}
+			return 0
+		case int64:
+			bf := float64(bv)
+			if av < bf {
+				return -1
+			}
+			if av > bf {
+				return 1
+			}
+			return 0
 		}
-		if av > bv {
-			return 1
-		}
-		return 0
 	case string:
 		bv, ok := b.(string)
 		if !ok {
@@ -528,6 +574,8 @@ func formatExpr(expr ast.Expr) string {
 	switch e := expr.(type) {
 	case *ast.IntLitExpr:
 		return fmt.Sprintf("%d", e.Value)
+	case *ast.FloatLitExpr:
+		return fmt.Sprintf("%g", e.Value)
 	case *ast.StringLitExpr:
 		return "'" + e.Value + "'"
 	case *ast.NullLitExpr:
@@ -914,24 +962,33 @@ func evalAggregate(call *ast.CallExpr, rows []Row, info *TableInfo) (Value, stri
 		if err != nil {
 			return nil, "", err
 		}
-		var sum int64
+		var sumInt int64
+		var sumFloat float64
 		hasValue := false
+		isFloat := false
 		for _, row := range rows {
 			v := row[col.Index]
 			if v == nil {
 				continue
 			}
-			iv, ok := v.(int64)
-			if !ok {
-				return nil, "", fmt.Errorf("SUM requires INT values, got %T", v)
+			switch tv := v.(type) {
+			case int64:
+				sumInt += tv
+			case float64:
+				isFloat = true
+				sumFloat += tv
+			default:
+				return nil, "", fmt.Errorf("SUM requires numeric values, got %T", v)
 			}
-			sum += iv
 			hasValue = true
 		}
 		if !hasValue {
 			return nil, colName, nil
 		}
-		return sum, colName, nil
+		if isFloat {
+			return sumFloat + float64(sumInt), colName, nil
+		}
+		return sumInt, colName, nil
 	case "AVG":
 		colName := formatCallExpr(call)
 		if len(call.Args) != 1 {
@@ -948,24 +1005,27 @@ func evalAggregate(call *ast.CallExpr, rows []Row, info *TableInfo) (Value, stri
 		if err != nil {
 			return nil, "", err
 		}
-		var sum int64
+		var sum float64
 		var count int64
 		for _, row := range rows {
 			v := row[col.Index]
 			if v == nil {
 				continue
 			}
-			iv, ok := v.(int64)
-			if !ok {
-				return nil, "", fmt.Errorf("AVG requires INT values, got %T", v)
+			switch tv := v.(type) {
+			case int64:
+				sum += float64(tv)
+			case float64:
+				sum += tv
+			default:
+				return nil, "", fmt.Errorf("AVG requires numeric values, got %T", v)
 			}
-			sum += iv
 			count++
 		}
 		if count == 0 {
 			return nil, colName, nil
 		}
-		return sum / count, colName, nil
+		return sum / float64(count), colName, nil
 	case "MIN":
 		colName := formatCallExpr(call)
 		if len(call.Args) != 1 {
@@ -1040,6 +1100,8 @@ func formatCallExpr(call *ast.CallExpr) string {
 			}
 		case *ast.IntLitExpr:
 			args[i] = fmt.Sprintf("%d", a.Value)
+		case *ast.FloatLitExpr:
+			args[i] = fmt.Sprintf("%g", a.Value)
 		case *ast.StringLitExpr:
 			args[i] = "'" + a.Value + "'"
 		default:
@@ -1053,6 +1115,8 @@ func formatCallExpr(call *ast.CallExpr) string {
 func evalLiteral(expr ast.Expr) (Value, error) {
 	switch e := expr.(type) {
 	case *ast.IntLitExpr:
+		return e.Value, nil
+	case *ast.FloatLitExpr:
 		return e.Value, nil
 	case *ast.StringLitExpr:
 		return e.Value, nil
@@ -1086,6 +1150,8 @@ func evalExpr(expr ast.Expr, row Row, info *TableInfo) (Value, error) {
 		}
 		return row[col.Index], nil
 	case *ast.IntLitExpr:
+		return e.Value, nil
+	case *ast.FloatLitExpr:
 		return e.Value, nil
 	case *ast.StringLitExpr:
 		return e.Value, nil
@@ -1150,33 +1216,66 @@ func evalExpr(expr ast.Expr, row Row, info *TableInfo) (Value, error) {
 	}
 }
 
+// toFloat64 converts a numeric value to float64 for mixed-type arithmetic.
+func toFloat64(v Value) (float64, bool) {
+	switch tv := v.(type) {
+	case int64:
+		return float64(tv), true
+	case float64:
+		return tv, true
+	default:
+		return 0, false
+	}
+}
+
 func evalArithmetic(left Value, op string, right Value) (Value, error) {
 	if left == nil || right == nil {
 		return nil, nil
 	}
-	lv, ok := left.(int64)
-	if !ok {
-		return nil, fmt.Errorf("arithmetic requires INT operands, got %T", left)
-	}
-	rv, ok := right.(int64)
-	if !ok {
-		return nil, fmt.Errorf("arithmetic requires INT operands, got %T", right)
-	}
-	switch op {
-	case "+":
-		return lv + rv, nil
-	case "-":
-		return lv - rv, nil
-	case "*":
-		return lv * rv, nil
-	case "/":
-		if rv == 0 {
-			return nil, fmt.Errorf("division by zero")
+
+	// Both int64: integer arithmetic
+	if lv, ok := left.(int64); ok {
+		if rv, ok := right.(int64); ok {
+			switch op {
+			case "+":
+				return lv + rv, nil
+			case "-":
+				return lv - rv, nil
+			case "*":
+				return lv * rv, nil
+			case "/":
+				if rv == 0 {
+					return nil, fmt.Errorf("division by zero")
+				}
+				return lv / rv, nil
+			default:
+				return nil, fmt.Errorf("unknown arithmetic operator: %s", op)
+			}
 		}
-		return lv / rv, nil
-	default:
-		return nil, fmt.Errorf("unknown arithmetic operator: %s", op)
 	}
+
+	// Mixed or both float64: float arithmetic
+	lf, lok := toFloat64(left)
+	rf, rok := toFloat64(right)
+	if lok && rok {
+		switch op {
+		case "+":
+			return lf + rf, nil
+		case "-":
+			return lf - rf, nil
+		case "*":
+			return lf * rf, nil
+		case "/":
+			if rf == 0 {
+				return nil, fmt.Errorf("division by zero")
+			}
+			return lf / rf, nil
+		default:
+			return nil, fmt.Errorf("unknown arithmetic operator: %s", op)
+		}
+	}
+
+	return nil, fmt.Errorf("arithmetic requires numeric operands, got %T and %T", left, right)
 }
 
 func evalComparison(left Value, op string, right Value) (bool, error) {
@@ -1202,6 +1301,46 @@ func evalComparison(left Value, op string, right Value) (bool, error) {
 			case ">=":
 				return lv >= rv, nil
 			}
+		}
+	}
+
+	// Both float64
+	if lv, ok := left.(float64); ok {
+		if rv, ok := right.(float64); ok {
+			switch op {
+			case "=":
+				return lv == rv, nil
+			case "!=":
+				return lv != rv, nil
+			case "<":
+				return lv < rv, nil
+			case ">":
+				return lv > rv, nil
+			case "<=":
+				return lv <= rv, nil
+			case ">=":
+				return lv >= rv, nil
+			}
+		}
+	}
+
+	// Mixed int64 and float64: promote to float64
+	lf, lok := toFloat64(left)
+	rf, rok := toFloat64(right)
+	if lok && rok {
+		switch op {
+		case "=":
+			return lf == rf, nil
+		case "!=":
+			return lf != rf, nil
+		case "<":
+			return lf < rf, nil
+		case ">":
+			return lf > rf, nil
+		case "<=":
+			return lf <= rf, nil
+		case ">=":
+			return lf >= rf, nil
 		}
 	}
 

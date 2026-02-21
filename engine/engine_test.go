@@ -249,6 +249,23 @@ func TestSelectCountColumnExcludesNull(t *testing.T) {
 	}
 }
 
+func TestSelectCountLiteral(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO users VALUES (3, NULL)")
+
+	// COUNT(1) should count all rows (same as COUNT(*))
+	result := run(t, exec, "SELECT COUNT(1) FROM users")
+	if result.Columns[0] != "COUNT(1)" {
+		t.Errorf("expected column name COUNT(1), got %s", result.Columns[0])
+	}
+	if result.Rows[0][0] != int64(3) {
+		t.Errorf("expected COUNT(1)=3, got %v", result.Rows[0][0])
+	}
+}
+
 func TestInsertMultipleRows(t *testing.T) {
 	exec := NewExecutor()
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")

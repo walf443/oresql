@@ -228,9 +228,16 @@ func evalAggregate(call *ast.CallExpr, rows []Row, info *TableInfo) (Value, stri
 	switch call.Name {
 	case "COUNT":
 		colName := formatCallExpr(call)
-		// COUNT(*) counts all rows; COUNT(column) excludes NULLs
+		// COUNT(*) counts all rows; COUNT(literal) counts all rows; COUNT(column) excludes NULLs
 		if len(call.Args) == 1 {
 			if _, ok := call.Args[0].(*ast.StarExpr); !ok {
+				// Literal values (e.g. COUNT(1)) count all rows like COUNT(*)
+				if _, ok := call.Args[0].(*ast.IntLitExpr); ok {
+					return int64(len(rows)), colName, nil
+				}
+				if _, ok := call.Args[0].(*ast.StringLitExpr); ok {
+					return int64(len(rows)), colName, nil
+				}
 				ident, ok := call.Args[0].(*ast.IdentExpr)
 				if !ok {
 					return nil, "", fmt.Errorf("COUNT expects * or column name, got %T", call.Args[0])
@@ -267,6 +274,10 @@ func formatCallExpr(call *ast.CallExpr) string {
 			} else {
 				args[i] = a.Name
 			}
+		case *ast.IntLitExpr:
+			args[i] = fmt.Sprintf("%d", a.Value)
+		case *ast.StringLitExpr:
+			args[i] = "'" + a.Value + "'"
 		default:
 			args[i] = "?"
 		}

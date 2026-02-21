@@ -58,7 +58,7 @@ type IdentExpr struct {
 }
 
 func (e *IdentExpr) NodeType() string { return "Ident" }
-func (e *IdentExpr) exprNode()       {}
+func (e *IdentExpr) exprNode()        {}
 
 // IntLitExpr represents an integer literal.
 type IntLitExpr struct {
@@ -66,7 +66,7 @@ type IntLitExpr struct {
 }
 
 func (e *IntLitExpr) NodeType() string { return "IntLit" }
-func (e *IntLitExpr) exprNode()       {}
+func (e *IntLitExpr) exprNode()        {}
 
 // StringLitExpr represents a string literal.
 type StringLitExpr struct {
@@ -74,13 +74,13 @@ type StringLitExpr struct {
 }
 
 func (e *StringLitExpr) NodeType() string { return "StringLit" }
-func (e *StringLitExpr) exprNode()       {}
+func (e *StringLitExpr) exprNode()        {}
 
 // StarExpr represents * in SELECT *.
 type StarExpr struct{}
 
 func (e *StarExpr) NodeType() string { return "Star" }
-func (e *StarExpr) exprNode()       {}
+func (e *StarExpr) exprNode()        {}
 
 // CallExpr represents a function call like COUNT(*), SUM(col), etc.
 type CallExpr struct {
@@ -89,13 +89,13 @@ type CallExpr struct {
 }
 
 func (e *CallExpr) NodeType() string { return "Call" }
-func (e *CallExpr) exprNode()       {}
+func (e *CallExpr) exprNode()        {}
 
 // NullLitExpr represents the NULL literal.
 type NullLitExpr struct{}
 
 func (e *NullLitExpr) NodeType() string { return "NullLit" }
-func (e *NullLitExpr) exprNode()       {}
+func (e *NullLitExpr) exprNode()        {}
 
 // IsNullExpr represents <expr> IS [NOT] NULL.
 type IsNullExpr struct {
@@ -104,7 +104,7 @@ type IsNullExpr struct {
 }
 
 func (e *IsNullExpr) NodeType() string { return "IsNull" }
-func (e *IsNullExpr) exprNode()       {}
+func (e *IsNullExpr) exprNode()        {}
 
 // BinaryExpr represents a comparison: left <op> right.
 type BinaryExpr struct {
@@ -114,7 +114,7 @@ type BinaryExpr struct {
 }
 
 func (e *BinaryExpr) NodeType() string { return "Binary" }
-func (e *BinaryExpr) exprNode()       {}
+func (e *BinaryExpr) exprNode()        {}
 
 // LogicalExpr represents a logical operation: left AND/OR right.
 type LogicalExpr struct {
@@ -124,4 +124,4 @@ type LogicalExpr struct {
 }
 
 func (e *LogicalExpr) NodeType() string { return "Logical" }
-func (e *LogicalExpr) exprNode()       {}
+func (e *LogicalExpr) exprNode()        {}

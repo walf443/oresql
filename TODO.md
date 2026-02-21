@@ -27,8 +27,8 @@
 - [ ] DISTINCT
 - [x] ORDER BY (ASC / DESC)
 - [x] LIMIT / OFFSET
-- [ ] GROUP BY
-- [ ] HAVING
+- [x] GROUP BY
+- [x] HAVING
 
 ## JOIN
 

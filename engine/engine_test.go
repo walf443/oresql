@@ -1054,6 +1054,134 @@ func TestDropTableRecreate(t *testing.T) {
 	}
 }
 
+func TestSelectGroupByBasic(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO users VALUES (3, 'alice')")
+
+	result := run(t, exec, "SELECT name, COUNT(*) FROM users GROUP BY name")
+	if len(result.Columns) != 2 {
+		t.Fatalf("expected 2 columns, got %d", len(result.Columns))
+	}
+	if result.Columns[0] != "name" || result.Columns[1] != "COUNT(*)" {
+		t.Errorf("expected columns [name, COUNT(*)], got %v", result.Columns)
+	}
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	// alice group first (insertion order), then bob
+	if result.Rows[0][0] != "alice" {
+		t.Errorf("row 0: expected name='alice', got %v", result.Rows[0][0])
+	}
+	if result.Rows[0][1] != int64(2) {
+		t.Errorf("row 0: expected COUNT(*)=2, got %v", result.Rows[0][1])
+	}
+	if result.Rows[1][0] != "bob" {
+		t.Errorf("row 1: expected name='bob', got %v", result.Rows[1][0])
+	}
+	if result.Rows[1][1] != int64(1) {
+		t.Errorf("row 1: expected COUNT(*)=1, got %v", result.Rows[1][1])
+	}
+}
+
+func TestSelectGroupByWithWhere(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO users VALUES (3, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (4, 'bob')")
+
+	result := run(t, exec, "SELECT name, COUNT(*) FROM users WHERE id > 1 GROUP BY name")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	// bob appears first because id=2 is the first row after WHERE filter with name='bob'
+	if result.Rows[0][0] != "bob" {
+		t.Errorf("row 0: expected name='bob', got %v", result.Rows[0][0])
+	}
+	if result.Rows[0][1] != int64(2) {
+		t.Errorf("row 0: expected COUNT(*)=2, got %v", result.Rows[0][1])
+	}
+	if result.Rows[1][0] != "alice" {
+		t.Errorf("row 1: expected name='alice', got %v", result.Rows[1][0])
+	}
+	if result.Rows[1][1] != int64(1) {
+		t.Errorf("row 1: expected COUNT(*)=1, got %v", result.Rows[1][1])
+	}
+}
+
+func TestSelectGroupByOrderBy(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'bob')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (3, 'bob')")
+
+	result := run(t, exec, "SELECT name, COUNT(*) FROM users GROUP BY name ORDER BY name ASC")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != "alice" {
+		t.Errorf("row 0: expected name='alice', got %v", result.Rows[0][0])
+	}
+	if result.Rows[1][0] != "bob" {
+		t.Errorf("row 1: expected name='bob', got %v", result.Rows[1][0])
+	}
+}
+
+func TestSelectGroupByHaving(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO users VALUES (3, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (4, 'charlie')")
+
+	result := run(t, exec, "SELECT name, COUNT(*) FROM users GROUP BY name HAVING COUNT(*) > 1")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != "alice" {
+		t.Errorf("row 0: expected name='alice', got %v", result.Rows[0][0])
+	}
+	if result.Rows[0][1] != int64(2) {
+		t.Errorf("row 0: expected COUNT(*)=2, got %v", result.Rows[0][1])
+	}
+}
+
+func TestSelectGroupByMultipleColumns(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE orders (product TEXT, region TEXT, amount INT)")
+	run(t, exec, "INSERT INTO orders VALUES ('A', 'east', 10)")
+	run(t, exec, "INSERT INTO orders VALUES ('A', 'east', 20)")
+	run(t, exec, "INSERT INTO orders VALUES ('A', 'west', 30)")
+	run(t, exec, "INSERT INTO orders VALUES ('B', 'east', 40)")
+
+	result := run(t, exec, "SELECT product, region, COUNT(*) FROM orders GROUP BY product, region")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	// Order by first appearance: (A, east), (A, west), (B, east)
+	if result.Rows[0][0] != "A" || result.Rows[0][1] != "east" {
+		t.Errorf("row 0: expected (A, east), got (%v, %v)", result.Rows[0][0], result.Rows[0][1])
+	}
+	if result.Rows[0][2] != int64(2) {
+		t.Errorf("row 0: expected COUNT(*)=2, got %v", result.Rows[0][2])
+	}
+	if result.Rows[1][0] != "A" || result.Rows[1][1] != "west" {
+		t.Errorf("row 1: expected (A, west), got (%v, %v)", result.Rows[1][0], result.Rows[1][1])
+	}
+	if result.Rows[1][2] != int64(1) {
+		t.Errorf("row 1: expected COUNT(*)=1, got %v", result.Rows[1][2])
+	}
+	if result.Rows[2][0] != "B" || result.Rows[2][1] != "east" {
+		t.Errorf("row 2: expected (B, east), got (%v, %v)", result.Rows[2][0], result.Rows[2][1])
+	}
+}
+
 func TestErrorSelectNonexistentColumn(t *testing.T) {
 	exec := NewExecutor()
 	run(t, exec, "CREATE TABLE users (id INT)")

@@ -61,6 +61,8 @@ const (
 	OFFSET   // OFFSET keyword
 	DROP     // DROP keyword
 	TRUNCATE // TRUNCATE keyword
+	GROUP    // GROUP keyword
+	HAVING   // HAVING keyword
 )
 
 var tokenNames = map[TokenType]string{
@@ -113,6 +115,8 @@ var tokenNames = map[TokenType]string{
 	OFFSET:       "OFFSET",
 	DROP:         "DROP",
 	TRUNCATE:     "TRUNCATE",
+	GROUP:        "GROUP",
+	HAVING:       "HAVING",
 }
 
 func (t TokenType) String() string {
@@ -156,6 +160,8 @@ var keywords = map[string]TokenType{
 	"OFFSET":   OFFSET,
 	"DROP":     DROP,
 	"TRUNCATE": TRUNCATE,
+	"GROUP":    GROUP,
+	"HAVING":   HAVING,
 }
 
 // LookupIdent returns the keyword TokenType if the identifier is a keyword,

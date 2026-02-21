@@ -416,6 +416,27 @@ func (p *Parser) parseSelect() (*ast.SelectStmt, error) {
 		}
 	}
 
+	var groupBy []ast.Expr
+	if p.curToken.Type == token.GROUP {
+		p.nextToken() // skip GROUP
+		if err := p.expectToken(token.BY); err != nil {
+			return nil, err
+		}
+		groupBy, err = p.parseGroupByList()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	var having ast.Expr
+	if p.curToken.Type == token.HAVING {
+		p.nextToken() // skip HAVING
+		having, err = p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	var orderBy []ast.OrderByClause
 	if p.curToken.Type == token.ORDER {
 		p.nextToken() // skip ORDER
@@ -460,10 +481,34 @@ func (p *Parser) parseSelect() (*ast.SelectStmt, error) {
 		Columns:   columns,
 		TableName: tableName,
 		Where:     where,
+		GroupBy:   groupBy,
+		Having:    having,
 		OrderBy:   orderBy,
 		Limit:     limit,
 		Offset:    offset,
 	}, nil
+}
+
+// parseGroupByList parses: <expr> [, <expr> ...]
+func (p *Parser) parseGroupByList() ([]ast.Expr, error) {
+	var exprs []ast.Expr
+
+	expr, err := p.parseAdditive()
+	if err != nil {
+		return nil, err
+	}
+	exprs = append(exprs, expr)
+
+	for p.curToken.Type == token.COMMA {
+		p.nextToken() // skip comma
+		expr, err := p.parseAdditive()
+		if err != nil {
+			return nil, err
+		}
+		exprs = append(exprs, expr)
+	}
+
+	return exprs, nil
 }
 
 // parseOrderByList parses: <expr> [ASC|DESC] [, <expr> [ASC|DESC] ...]
@@ -777,6 +822,8 @@ func (p *Parser) parsePrimary() (ast.Expr, error) {
 	case token.PLUS:
 		p.nextToken() // skip +
 		return p.parsePrimary()
+	case token.COUNT:
+		return p.parseCallExpr()
 	case token.LPAREN:
 		p.nextToken() // skip (
 		expr, err := p.parseExpr()

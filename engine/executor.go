@@ -295,6 +295,11 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 		return nil, err
 	}
 
+	// Check if this is a GROUP BY query
+	if len(stmt.GroupBy) > 0 {
+		return e.executeGroupBySelect(stmt, info)
+	}
+
 	// Check if this is an aggregate query
 	if hasAggregate(stmt.Columns) {
 		return e.executeAggregateSelect(stmt, info)
@@ -602,6 +607,262 @@ func (e *Executor) executeAggregateSelect(stmt *ast.SelectStmt, info *TableInfo)
 	}
 
 	return &Result{Columns: colNames, Rows: []Row{resultRow}}, nil
+}
+
+// executeGroupBySelect handles SELECT with GROUP BY clause.
+func (e *Executor) executeGroupBySelect(stmt *ast.SelectStmt, info *TableInfo) (*Result, error) {
+	// Scan and filter rows
+	allRows, err := e.storage.Scan(stmt.TableName)
+	if err != nil {
+		return nil, err
+	}
+
+	var filtered []Row
+	for _, row := range allRows {
+		if stmt.Where != nil {
+			match, err := evalWhere(stmt.Where, row, info)
+			if err != nil {
+				return nil, err
+			}
+			if !match {
+				continue
+			}
+		}
+		filtered = append(filtered, row)
+	}
+
+	// Group rows by GROUP BY expressions
+	type group struct {
+		key  string
+		rows []Row
+	}
+	groupMap := make(map[string]*group)
+	var groupOrder []string
+
+	for _, row := range filtered {
+		keyParts := make([]string, len(stmt.GroupBy))
+		for i, gbExpr := range stmt.GroupBy {
+			val, err := evalExpr(gbExpr, row, info)
+			if err != nil {
+				return nil, err
+			}
+			keyParts[i] = fmt.Sprintf("%v", val)
+		}
+		key := strings.Join(keyParts, "\x00")
+		if _, ok := groupMap[key]; !ok {
+			groupMap[key] = &group{key: key}
+			groupOrder = append(groupOrder, key)
+		}
+		groupMap[key].rows = append(groupMap[key].rows, row)
+	}
+
+	// Resolve column names
+	var colNames []string
+	for _, colExpr := range stmt.Columns {
+		alias := ""
+		inner := colExpr
+		if a, ok := colExpr.(*ast.AliasExpr); ok {
+			alias = a.Alias
+			inner = a.Expr
+		}
+		if alias != "" {
+			colNames = append(colNames, alias)
+		} else if call, ok := inner.(*ast.CallExpr); ok {
+			colNames = append(colNames, formatCallExpr(call))
+		} else if ident, ok := inner.(*ast.IdentExpr); ok {
+			if err := validateTableRef(ident.Table, stmt.TableName); err != nil {
+				return nil, err
+			}
+			col, err := info.FindColumn(ident.Name)
+			if err != nil {
+				return nil, err
+			}
+			colNames = append(colNames, col.Name)
+		} else {
+			colNames = append(colNames, formatExpr(inner))
+		}
+	}
+
+	// Evaluate each group
+	var resultRows []Row
+	for _, key := range groupOrder {
+		grp := groupMap[key]
+		representativeRow := grp.rows[0]
+
+		row := make(Row, len(stmt.Columns))
+		for i, colExpr := range stmt.Columns {
+			inner := colExpr
+			if a, ok := colExpr.(*ast.AliasExpr); ok {
+				inner = a.Expr
+			}
+			val, err := evalGroupExpr(inner, representativeRow, grp.rows, info)
+			if err != nil {
+				return nil, err
+			}
+			row[i] = val
+		}
+
+		// Apply HAVING filter
+		if stmt.Having != nil {
+			havingVal, err := evalGroupExpr(stmt.Having, representativeRow, grp.rows, info)
+			if err != nil {
+				return nil, err
+			}
+			b, ok := havingVal.(bool)
+			if !ok {
+				return nil, fmt.Errorf("HAVING expression must evaluate to boolean, got %T", havingVal)
+			}
+			if !b {
+				continue
+			}
+		}
+
+		resultRows = append(resultRows, row)
+	}
+
+	// Sort by ORDER BY
+	if len(stmt.OrderBy) > 0 {
+		var sortErr error
+		sort.SliceStable(resultRows, func(i, j int) bool {
+			if sortErr != nil {
+				return false
+			}
+			for _, ob := range stmt.OrderBy {
+				// Evaluate ORDER BY expressions against the result rows
+				// For GROUP BY results, we need to find the value from the result row
+				vi := resolveOrderByValue(ob.Expr, stmt.Columns, resultRows[i])
+				vj := resolveOrderByValue(ob.Expr, stmt.Columns, resultRows[j])
+
+				if vi == nil && vj == nil {
+					continue
+				}
+				if vi == nil {
+					return false
+				}
+				if vj == nil {
+					return true
+				}
+				cmp := compareValues(vi, vj)
+				if cmp == 0 {
+					continue
+				}
+				if ob.Desc {
+					return cmp > 0
+				}
+				return cmp < 0
+			}
+			return false
+		})
+		if sortErr != nil {
+			return nil, sortErr
+		}
+	}
+
+	// Apply OFFSET
+	if stmt.Offset != nil {
+		off := int(*stmt.Offset)
+		if off >= len(resultRows) {
+			resultRows = nil
+		} else {
+			resultRows = resultRows[off:]
+		}
+	}
+
+	// Apply LIMIT
+	if stmt.Limit != nil {
+		lim := int(*stmt.Limit)
+		if lim < len(resultRows) {
+			resultRows = resultRows[:lim]
+		}
+	}
+
+	return &Result{Columns: colNames, Rows: resultRows}, nil
+}
+
+// evalGroupExpr evaluates an expression in the context of a group.
+// For aggregate functions (CallExpr), it evaluates against the group rows.
+// For other expressions, it evaluates against the representative row.
+func evalGroupExpr(expr ast.Expr, row Row, groupRows []Row, info *TableInfo) (Value, error) {
+	switch e := expr.(type) {
+	case *ast.CallExpr:
+		val, _, err := evalAggregate(e, groupRows, info)
+		return val, err
+	case *ast.BinaryExpr:
+		left, err := evalGroupExpr(e.Left, row, groupRows, info)
+		if err != nil {
+			return nil, err
+		}
+		right, err := evalGroupExpr(e.Right, row, groupRows, info)
+		if err != nil {
+			return nil, err
+		}
+		return evalComparison(left, e.Op, right)
+	case *ast.LogicalExpr:
+		left, err := evalGroupExpr(e.Left, row, groupRows, info)
+		if err != nil {
+			return nil, err
+		}
+		leftBool, ok := left.(bool)
+		if !ok {
+			return nil, fmt.Errorf("expected boolean in %s expression, got %T", e.Op, left)
+		}
+		right, err := evalGroupExpr(e.Right, row, groupRows, info)
+		if err != nil {
+			return nil, err
+		}
+		rightBool, ok := right.(bool)
+		if !ok {
+			return nil, fmt.Errorf("expected boolean in %s expression, got %T", e.Op, right)
+		}
+		switch e.Op {
+		case "AND":
+			return leftBool && rightBool, nil
+		case "OR":
+			return leftBool || rightBool, nil
+		default:
+			return nil, fmt.Errorf("unknown logical operator: %s", e.Op)
+		}
+	default:
+		return evalExpr(expr, row, info)
+	}
+}
+
+// resolveOrderByValue finds the value for an ORDER BY expression from a GROUP BY result row.
+// It matches the ORDER BY expression to a column in the SELECT list and returns the corresponding value.
+func resolveOrderByValue(orderExpr ast.Expr, selectCols []ast.Expr, resultRow Row) Value {
+	// Try to match ORDER BY expression to a SELECT column
+	if ident, ok := orderExpr.(*ast.IdentExpr); ok {
+		for i, col := range selectCols {
+			inner := col
+			if a, ok := col.(*ast.AliasExpr); ok {
+				// Match by alias name
+				if strings.ToLower(a.Alias) == strings.ToLower(ident.Name) {
+					return resultRow[i]
+				}
+				inner = a.Expr
+			}
+			if selIdent, ok := inner.(*ast.IdentExpr); ok {
+				if strings.ToLower(selIdent.Name) == strings.ToLower(ident.Name) {
+					return resultRow[i]
+				}
+			}
+		}
+	}
+	// Fallback: try to match by position for aggregate expressions
+	if call, ok := orderExpr.(*ast.CallExpr); ok {
+		for i, col := range selectCols {
+			inner := col
+			if a, ok := col.(*ast.AliasExpr); ok {
+				inner = a.Expr
+			}
+			if selCall, ok := inner.(*ast.CallExpr); ok {
+				if selCall.Name == call.Name {
+					return resultRow[i]
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // evalAggregate evaluates a single aggregate function call against a set of rows.

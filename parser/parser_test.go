@@ -760,6 +760,94 @@ func TestParseDropTable(t *testing.T) {
 	}
 }
 
+func TestParseSelectGroupBy(t *testing.T) {
+	stmt := parse(t, "SELECT name, COUNT(*) FROM users GROUP BY name")
+	sel := stmt.(*ast.SelectStmt)
+	if len(sel.Columns) != 2 {
+		t.Fatalf("expected 2 columns, got %d", len(sel.Columns))
+	}
+	ident, ok := sel.Columns[0].(*ast.IdentExpr)
+	if !ok {
+		t.Fatalf("expected IdentExpr, got %T", sel.Columns[0])
+	}
+	if ident.Name != "name" {
+		t.Errorf("expected column 'name', got %q", ident.Name)
+	}
+	call, ok := sel.Columns[1].(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr, got %T", sel.Columns[1])
+	}
+	if call.Name != "COUNT" {
+		t.Errorf("expected function name COUNT, got %s", call.Name)
+	}
+	if len(sel.GroupBy) != 1 {
+		t.Fatalf("expected 1 GROUP BY expr, got %d", len(sel.GroupBy))
+	}
+	gbIdent, ok := sel.GroupBy[0].(*ast.IdentExpr)
+	if !ok {
+		t.Fatalf("expected IdentExpr in GROUP BY, got %T", sel.GroupBy[0])
+	}
+	if gbIdent.Name != "name" {
+		t.Errorf("expected GROUP BY 'name', got %q", gbIdent.Name)
+	}
+	if sel.Having != nil {
+		t.Errorf("expected no HAVING, got %v", sel.Having)
+	}
+}
+
+func TestParseSelectGroupByHaving(t *testing.T) {
+	stmt := parse(t, "SELECT name FROM users GROUP BY name HAVING COUNT(*) > 1")
+	sel := stmt.(*ast.SelectStmt)
+	if len(sel.GroupBy) != 1 {
+		t.Fatalf("expected 1 GROUP BY expr, got %d", len(sel.GroupBy))
+	}
+	if sel.Having == nil {
+		t.Fatal("expected HAVING clause")
+	}
+	bin, ok := sel.Having.(*ast.BinaryExpr)
+	if !ok {
+		t.Fatalf("expected BinaryExpr in HAVING, got %T", sel.Having)
+	}
+	if bin.Op != ">" {
+		t.Errorf("expected op '>', got %q", bin.Op)
+	}
+	call, ok := bin.Left.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr on left of HAVING, got %T", bin.Left)
+	}
+	if call.Name != "COUNT" {
+		t.Errorf("expected COUNT, got %s", call.Name)
+	}
+	if bin.Right.(*ast.IntLitExpr).Value != 1 {
+		t.Errorf("expected right=1")
+	}
+}
+
+func TestParseSelectGroupByMultiple(t *testing.T) {
+	stmt := parse(t, "SELECT col1, col2, COUNT(*) FROM t GROUP BY col1, col2")
+	sel := stmt.(*ast.SelectStmt)
+	if len(sel.GroupBy) != 2 {
+		t.Fatalf("expected 2 GROUP BY exprs, got %d", len(sel.GroupBy))
+	}
+	if sel.GroupBy[0].(*ast.IdentExpr).Name != "col1" {
+		t.Errorf("expected GROUP BY 'col1'")
+	}
+	if sel.GroupBy[1].(*ast.IdentExpr).Name != "col2" {
+		t.Errorf("expected GROUP BY 'col2'")
+	}
+}
+
+func TestParseSelectGroupByOrderBy(t *testing.T) {
+	stmt := parse(t, "SELECT name, COUNT(*) FROM users GROUP BY name ORDER BY name ASC")
+	sel := stmt.(*ast.SelectStmt)
+	if len(sel.GroupBy) != 1 {
+		t.Fatalf("expected 1 GROUP BY expr, got %d", len(sel.GroupBy))
+	}
+	if len(sel.OrderBy) != 1 {
+		t.Fatalf("expected 1 ORDER BY clause, got %d", len(sel.OrderBy))
+	}
+}
+
 func TestParseError(t *testing.T) {
 	inputs := []string{
 		"CREATE",

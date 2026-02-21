@@ -51,10 +51,10 @@
 
 ## 集約関数
 
-- [ ] SUM
-- [ ] AVG
-- [ ] MIN
-- [ ] MAX
+- [x] SUM
+- [x] AVG
+- [x] MIN
+- [x] MAX
 
 ## 演算子・条件式
 

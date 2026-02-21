@@ -1182,6 +1182,193 @@ func TestSelectGroupByMultipleColumns(t *testing.T) {
 	}
 }
 
+func TestSelectSumBasic(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE orders (id INT, amount INT)")
+	run(t, exec, "INSERT INTO orders VALUES (1, 100)")
+	run(t, exec, "INSERT INTO orders VALUES (2, 200)")
+	run(t, exec, "INSERT INTO orders VALUES (3, 300)")
+
+	result := run(t, exec, "SELECT SUM(amount) FROM orders")
+	if len(result.Columns) != 1 || result.Columns[0] != "SUM(amount)" {
+		t.Errorf("expected columns [SUM(amount)], got %v", result.Columns)
+	}
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(600) {
+		t.Errorf("expected SUM(amount)=600, got %v", result.Rows[0][0])
+	}
+}
+
+func TestSelectSumWithWhere(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE orders (id INT, region TEXT, amount INT)")
+	run(t, exec, "INSERT INTO orders VALUES (1, 'east', 100)")
+	run(t, exec, "INSERT INTO orders VALUES (2, 'west', 200)")
+	run(t, exec, "INSERT INTO orders VALUES (3, 'east', 300)")
+
+	result := run(t, exec, "SELECT SUM(amount) FROM orders WHERE region = 'east'")
+	if result.Rows[0][0] != int64(400) {
+		t.Errorf("expected SUM(amount)=400, got %v", result.Rows[0][0])
+	}
+}
+
+func TestSelectAvgBasic(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE orders (id INT, amount INT)")
+	run(t, exec, "INSERT INTO orders VALUES (1, 10)")
+	run(t, exec, "INSERT INTO orders VALUES (2, 20)")
+	run(t, exec, "INSERT INTO orders VALUES (3, 30)")
+
+	result := run(t, exec, "SELECT AVG(amount) FROM orders")
+	if len(result.Columns) != 1 || result.Columns[0] != "AVG(amount)" {
+		t.Errorf("expected columns [AVG(amount)], got %v", result.Columns)
+	}
+	if result.Rows[0][0] != int64(20) {
+		t.Errorf("expected AVG(amount)=20, got %v", result.Rows[0][0])
+	}
+}
+
+func TestSelectMinMaxInt(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+
+	result := run(t, exec, "SELECT MIN(id), MAX(id) FROM users")
+	if len(result.Columns) != 2 {
+		t.Fatalf("expected 2 columns, got %d", len(result.Columns))
+	}
+	if result.Columns[0] != "MIN(id)" || result.Columns[1] != "MAX(id)" {
+		t.Errorf("expected columns [MIN(id), MAX(id)], got %v", result.Columns)
+	}
+	if result.Rows[0][0] != int64(1) {
+		t.Errorf("expected MIN(id)=1, got %v", result.Rows[0][0])
+	}
+	if result.Rows[0][1] != int64(3) {
+		t.Errorf("expected MAX(id)=3, got %v", result.Rows[0][1])
+	}
+}
+
+func TestSelectMinMaxText(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'charlie')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (3, 'bob')")
+
+	result := run(t, exec, "SELECT MIN(name), MAX(name) FROM users")
+	if result.Rows[0][0] != "alice" {
+		t.Errorf("expected MIN(name)='alice', got %v", result.Rows[0][0])
+	}
+	if result.Rows[0][1] != "charlie" {
+		t.Errorf("expected MAX(name)='charlie', got %v", result.Rows[0][1])
+	}
+}
+
+func TestSelectAggregatesWithNull(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE scores (id INT, value INT)")
+	run(t, exec, "INSERT INTO scores VALUES (1, 10)")
+	run(t, exec, "INSERT INTO scores VALUES (2, NULL)")
+	run(t, exec, "INSERT INTO scores VALUES (3, 30)")
+	run(t, exec, "INSERT INTO scores VALUES (4, NULL)")
+
+	// SUM should skip NULLs
+	result := run(t, exec, "SELECT SUM(value) FROM scores")
+	if result.Rows[0][0] != int64(40) {
+		t.Errorf("expected SUM(value)=40, got %v", result.Rows[0][0])
+	}
+
+	// AVG should skip NULLs (40 / 2 = 20)
+	result = run(t, exec, "SELECT AVG(value) FROM scores")
+	if result.Rows[0][0] != int64(20) {
+		t.Errorf("expected AVG(value)=20, got %v", result.Rows[0][0])
+	}
+
+	// MIN should skip NULLs
+	result = run(t, exec, "SELECT MIN(value) FROM scores")
+	if result.Rows[0][0] != int64(10) {
+		t.Errorf("expected MIN(value)=10, got %v", result.Rows[0][0])
+	}
+
+	// MAX should skip NULLs
+	result = run(t, exec, "SELECT MAX(value) FROM scores")
+	if result.Rows[0][0] != int64(30) {
+		t.Errorf("expected MAX(value)=30, got %v", result.Rows[0][0])
+	}
+}
+
+func TestSelectAggregatesAllNull(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE scores (id INT, value INT)")
+	run(t, exec, "INSERT INTO scores VALUES (1, NULL)")
+	run(t, exec, "INSERT INTO scores VALUES (2, NULL)")
+
+	// SUM of all NULLs should return NULL
+	result := run(t, exec, "SELECT SUM(value) FROM scores")
+	if result.Rows[0][0] != nil {
+		t.Errorf("expected SUM(value)=NULL, got %v", result.Rows[0][0])
+	}
+
+	// AVG of all NULLs should return NULL
+	result = run(t, exec, "SELECT AVG(value) FROM scores")
+	if result.Rows[0][0] != nil {
+		t.Errorf("expected AVG(value)=NULL, got %v", result.Rows[0][0])
+	}
+
+	// MIN of all NULLs should return NULL
+	result = run(t, exec, "SELECT MIN(value) FROM scores")
+	if result.Rows[0][0] != nil {
+		t.Errorf("expected MIN(value)=NULL, got %v", result.Rows[0][0])
+	}
+
+	// MAX of all NULLs should return NULL
+	result = run(t, exec, "SELECT MAX(value) FROM scores")
+	if result.Rows[0][0] != nil {
+		t.Errorf("expected MAX(value)=NULL, got %v", result.Rows[0][0])
+	}
+}
+
+func TestSelectGroupBySumBasic(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE orders (id INT, name TEXT, amount INT)")
+	run(t, exec, "INSERT INTO orders VALUES (1, 'alice', 100)")
+	run(t, exec, "INSERT INTO orders VALUES (2, 'bob', 200)")
+	run(t, exec, "INSERT INTO orders VALUES (3, 'alice', 300)")
+
+	result := run(t, exec, "SELECT name, SUM(amount) FROM orders GROUP BY name")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	// alice first (insertion order)
+	if result.Rows[0][0] != "alice" {
+		t.Errorf("row 0: expected name='alice', got %v", result.Rows[0][0])
+	}
+	if result.Rows[0][1] != int64(400) {
+		t.Errorf("row 0: expected SUM(amount)=400, got %v", result.Rows[0][1])
+	}
+	if result.Rows[1][0] != "bob" {
+		t.Errorf("row 1: expected name='bob', got %v", result.Rows[1][0])
+	}
+	if result.Rows[1][1] != int64(200) {
+		t.Errorf("row 1: expected SUM(amount)=200, got %v", result.Rows[1][1])
+	}
+}
+
+func TestSelectSumEmpty(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE orders (id INT, amount INT)")
+
+	// SUM on empty table should return NULL
+	result := run(t, exec, "SELECT SUM(amount) FROM orders")
+	if result.Rows[0][0] != nil {
+		t.Errorf("expected SUM(amount)=NULL for empty table, got %v", result.Rows[0][0])
+	}
+}
+
 func TestErrorSelectNonexistentColumn(t *testing.T) {
 	exec := NewExecutor()
 	run(t, exec, "CREATE TABLE users (id INT)")

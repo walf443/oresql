@@ -848,6 +848,97 @@ func TestParseSelectGroupByOrderBy(t *testing.T) {
 	}
 }
 
+func TestParseSelectSumAmount(t *testing.T) {
+	stmt := parse(t, "SELECT SUM(amount) FROM orders")
+	sel := stmt.(*ast.SelectStmt)
+	if len(sel.Columns) != 1 {
+		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
+	}
+	call, ok := sel.Columns[0].(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr, got %T", sel.Columns[0])
+	}
+	if call.Name != "SUM" {
+		t.Errorf("expected function name SUM, got %s", call.Name)
+	}
+	if len(call.Args) != 1 {
+		t.Fatalf("expected 1 arg, got %d", len(call.Args))
+	}
+	ident, ok := call.Args[0].(*ast.IdentExpr)
+	if !ok {
+		t.Fatalf("expected IdentExpr arg, got %T", call.Args[0])
+	}
+	if ident.Name != "amount" {
+		t.Errorf("expected arg 'amount', got %q", ident.Name)
+	}
+}
+
+func TestParseSelectMinMaxId(t *testing.T) {
+	stmt := parse(t, "SELECT MIN(id), MAX(id) FROM users")
+	sel := stmt.(*ast.SelectStmt)
+	if len(sel.Columns) != 2 {
+		t.Fatalf("expected 2 columns, got %d", len(sel.Columns))
+	}
+	minCall, ok := sel.Columns[0].(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr for MIN, got %T", sel.Columns[0])
+	}
+	if minCall.Name != "MIN" {
+		t.Errorf("expected function name MIN, got %s", minCall.Name)
+	}
+	maxCall, ok := sel.Columns[1].(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr for MAX, got %T", sel.Columns[1])
+	}
+	if maxCall.Name != "MAX" {
+		t.Errorf("expected function name MAX, got %s", maxCall.Name)
+	}
+}
+
+func TestParseSelectAvgAge(t *testing.T) {
+	stmt := parse(t, "SELECT AVG(age) FROM users")
+	sel := stmt.(*ast.SelectStmt)
+	if len(sel.Columns) != 1 {
+		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
+	}
+	call, ok := sel.Columns[0].(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr, got %T", sel.Columns[0])
+	}
+	if call.Name != "AVG" {
+		t.Errorf("expected function name AVG, got %s", call.Name)
+	}
+}
+
+func TestParseSelectGroupBySumHaving(t *testing.T) {
+	stmt := parse(t, "SELECT name, SUM(amount) FROM orders GROUP BY name HAVING SUM(amount) > 100")
+	sel := stmt.(*ast.SelectStmt)
+	if len(sel.Columns) != 2 {
+		t.Fatalf("expected 2 columns, got %d", len(sel.Columns))
+	}
+	call, ok := sel.Columns[1].(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr, got %T", sel.Columns[1])
+	}
+	if call.Name != "SUM" {
+		t.Errorf("expected function name SUM, got %s", call.Name)
+	}
+	if sel.Having == nil {
+		t.Fatal("expected HAVING clause")
+	}
+	bin, ok := sel.Having.(*ast.BinaryExpr)
+	if !ok {
+		t.Fatalf("expected BinaryExpr in HAVING, got %T", sel.Having)
+	}
+	havingCall, ok := bin.Left.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr on left of HAVING, got %T", bin.Left)
+	}
+	if havingCall.Name != "SUM" {
+		t.Errorf("expected SUM in HAVING, got %s", havingCall.Name)
+	}
+}
+
 func TestParseError(t *testing.T) {
 	inputs := []string{
 		"CREATE",

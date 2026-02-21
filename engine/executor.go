@@ -898,6 +898,128 @@ func evalAggregate(call *ast.CallExpr, rows []Row, info *TableInfo) (Value, stri
 			}
 		}
 		return int64(len(rows)), colName, nil
+	case "SUM":
+		colName := formatCallExpr(call)
+		if len(call.Args) != 1 {
+			return nil, "", fmt.Errorf("SUM expects 1 argument, got %d", len(call.Args))
+		}
+		if _, ok := call.Args[0].(*ast.StarExpr); ok {
+			return nil, "", fmt.Errorf("SUM(*) is not supported")
+		}
+		ident, ok := call.Args[0].(*ast.IdentExpr)
+		if !ok {
+			return nil, "", fmt.Errorf("SUM expects column name, got %T", call.Args[0])
+		}
+		col, err := info.FindColumn(ident.Name)
+		if err != nil {
+			return nil, "", err
+		}
+		var sum int64
+		hasValue := false
+		for _, row := range rows {
+			v := row[col.Index]
+			if v == nil {
+				continue
+			}
+			iv, ok := v.(int64)
+			if !ok {
+				return nil, "", fmt.Errorf("SUM requires INT values, got %T", v)
+			}
+			sum += iv
+			hasValue = true
+		}
+		if !hasValue {
+			return nil, colName, nil
+		}
+		return sum, colName, nil
+	case "AVG":
+		colName := formatCallExpr(call)
+		if len(call.Args) != 1 {
+			return nil, "", fmt.Errorf("AVG expects 1 argument, got %d", len(call.Args))
+		}
+		if _, ok := call.Args[0].(*ast.StarExpr); ok {
+			return nil, "", fmt.Errorf("AVG(*) is not supported")
+		}
+		ident, ok := call.Args[0].(*ast.IdentExpr)
+		if !ok {
+			return nil, "", fmt.Errorf("AVG expects column name, got %T", call.Args[0])
+		}
+		col, err := info.FindColumn(ident.Name)
+		if err != nil {
+			return nil, "", err
+		}
+		var sum int64
+		var count int64
+		for _, row := range rows {
+			v := row[col.Index]
+			if v == nil {
+				continue
+			}
+			iv, ok := v.(int64)
+			if !ok {
+				return nil, "", fmt.Errorf("AVG requires INT values, got %T", v)
+			}
+			sum += iv
+			count++
+		}
+		if count == 0 {
+			return nil, colName, nil
+		}
+		return sum / count, colName, nil
+	case "MIN":
+		colName := formatCallExpr(call)
+		if len(call.Args) != 1 {
+			return nil, "", fmt.Errorf("MIN expects 1 argument, got %d", len(call.Args))
+		}
+		if _, ok := call.Args[0].(*ast.StarExpr); ok {
+			return nil, "", fmt.Errorf("MIN(*) is not supported")
+		}
+		ident, ok := call.Args[0].(*ast.IdentExpr)
+		if !ok {
+			return nil, "", fmt.Errorf("MIN expects column name, got %T", call.Args[0])
+		}
+		col, err := info.FindColumn(ident.Name)
+		if err != nil {
+			return nil, "", err
+		}
+		var minVal Value
+		for _, row := range rows {
+			v := row[col.Index]
+			if v == nil {
+				continue
+			}
+			if minVal == nil || compareValues(v, minVal) < 0 {
+				minVal = v
+			}
+		}
+		return minVal, colName, nil
+	case "MAX":
+		colName := formatCallExpr(call)
+		if len(call.Args) != 1 {
+			return nil, "", fmt.Errorf("MAX expects 1 argument, got %d", len(call.Args))
+		}
+		if _, ok := call.Args[0].(*ast.StarExpr); ok {
+			return nil, "", fmt.Errorf("MAX(*) is not supported")
+		}
+		ident, ok := call.Args[0].(*ast.IdentExpr)
+		if !ok {
+			return nil, "", fmt.Errorf("MAX expects column name, got %T", call.Args[0])
+		}
+		col, err := info.FindColumn(ident.Name)
+		if err != nil {
+			return nil, "", err
+		}
+		var maxVal Value
+		for _, row := range rows {
+			v := row[col.Index]
+			if v == nil {
+				continue
+			}
+			if maxVal == nil || compareValues(v, maxVal) > 0 {
+				maxVal = v
+			}
+		}
+		return maxVal, colName, nil
 	default:
 		return nil, "", fmt.Errorf("unknown aggregate function: %s", call.Name)
 	}

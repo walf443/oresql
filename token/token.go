@@ -47,6 +47,10 @@ const (
 	INT      // INT type keyword
 	TEXT     // TEXT type keyword
 	COUNT    // COUNT aggregate function
+	SUM      // SUM aggregate function
+	AVG      // AVG aggregate function
+	MIN      // MIN aggregate function
+	MAX      // MAX aggregate function
 	IS       // IS keyword
 	NULL     // NULL keyword
 	AS       // AS keyword
@@ -101,6 +105,10 @@ var tokenNames = map[TokenType]string{
 	INT:          "INT",
 	TEXT:         "TEXT",
 	COUNT:        "COUNT",
+	SUM:          "SUM",
+	AVG:          "AVG",
+	MIN:          "MIN",
+	MAX:          "MAX",
 	IS:           "IS",
 	NULL:         "NULL",
 	AS:           "AS",
@@ -146,6 +154,10 @@ var keywords = map[string]TokenType{
 	"INT":      INT,
 	"TEXT":     TEXT,
 	"COUNT":    COUNT,
+	"SUM":      SUM,
+	"AVG":      AVG,
+	"MIN":      MIN,
+	"MAX":      MAX,
 	"IS":       IS,
 	"NULL":     NULL,
 	"AS":       AS,

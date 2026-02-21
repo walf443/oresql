@@ -2059,12 +2059,26 @@ func evalWhere(expr ast.Expr, row Row, info *TableInfo) (bool, error) {
 // matchLike matches a string against a SQL LIKE pattern.
 // '%' matches any sequence of zero or more characters.
 // '_' matches exactly one character.
+// '\' escapes the next character: '\%' matches literal '%', '\_' matches literal '_', '\\' matches literal '\'.
 func matchLike(str, pattern string) bool {
 	si, pi := 0, 0
 	starPI, starSI := -1, -1
 
 	for si < len(str) {
-		if pi < len(pattern) && pattern[pi] == '_' {
+		if pi < len(pattern) && pattern[pi] == '\\' && pi+1 < len(pattern) {
+			// Escaped character: match literally
+			pi++
+			if pattern[pi] == str[si] {
+				si++
+				pi++
+			} else if starPI >= 0 {
+				starSI++
+				si = starSI
+				pi = starPI + 1
+			} else {
+				return false
+			}
+		} else if pi < len(pattern) && pattern[pi] == '_' {
 			si++
 			pi++
 		} else if pi < len(pattern) && pattern[pi] == '%' {
@@ -2083,8 +2097,14 @@ func matchLike(str, pattern string) bool {
 		}
 	}
 
-	for pi < len(pattern) && pattern[pi] == '%' {
-		pi++
+	for pi < len(pattern) {
+		if pattern[pi] == '%' {
+			pi++
+		} else if pattern[pi] == '\\' && pi+1 < len(pattern) {
+			break
+		} else {
+			break
+		}
 	}
 	return pi == len(pattern)
 }

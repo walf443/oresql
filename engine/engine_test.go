@@ -3071,3 +3071,53 @@ func TestSelectWhereLikeNull(t *testing.T) {
 		t.Errorf("expected id=1, got %v", result.Rows[0][0])
 	}
 }
+
+func TestSelectWhereLikeEscapePercent(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE items (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO items VALUES (1, '100%')")
+	run(t, exec, "INSERT INTO items VALUES (2, '100abc')")
+	run(t, exec, "INSERT INTO items VALUES (3, '50%')")
+
+	result := run(t, exec, "SELECT * FROM items WHERE name LIKE '%\\%'")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(1) {
+		t.Errorf("expected id=1, got %v", result.Rows[0][0])
+	}
+	if result.Rows[1][0] != int64(3) {
+		t.Errorf("expected id=3, got %v", result.Rows[1][0])
+	}
+}
+
+func TestSelectWhereLikeEscapeUnderscore(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE items (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO items VALUES (1, 'a_b')")
+	run(t, exec, "INSERT INTO items VALUES (2, 'aXb')")
+	run(t, exec, "INSERT INTO items VALUES (3, 'a_c')")
+
+	result := run(t, exec, "SELECT * FROM items WHERE name LIKE 'a\\_b'")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(1) {
+		t.Errorf("expected id=1, got %v", result.Rows[0][0])
+	}
+}
+
+func TestSelectWhereLikeEscapeBackslash(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE items (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO items VALUES (1, 'a\\b')")
+	run(t, exec, "INSERT INTO items VALUES (2, 'aXb')")
+
+	result := run(t, exec, "SELECT * FROM items WHERE name LIKE 'a\\\\b'")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(1) {
+		t.Errorf("expected id=1, got %v", result.Rows[0][0])
+	}
+}

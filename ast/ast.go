@@ -106,6 +106,15 @@ type IsNullExpr struct {
 func (e *IsNullExpr) NodeType() string { return "IsNull" }
 func (e *IsNullExpr) exprNode()        {}
 
+// AliasExpr represents an expression with an alias (e.g. id AS user_id).
+type AliasExpr struct {
+	Expr  Expr
+	Alias string
+}
+
+func (e *AliasExpr) NodeType() string { return "Alias" }
+func (e *AliasExpr) exprNode()        {}
+
 // BinaryExpr represents a comparison: left <op> right.
 type BinaryExpr struct {
 	Left  Expr

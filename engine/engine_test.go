@@ -320,6 +320,51 @@ func TestInsertMultipleRows(t *testing.T) {
 	}
 }
 
+func TestSelectAlias(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+
+	result := run(t, exec, "SELECT id AS user_id FROM users")
+	if len(result.Columns) != 1 || result.Columns[0] != "user_id" {
+		t.Errorf("expected columns [user_id], got %v", result.Columns)
+	}
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(1) {
+		t.Errorf("expected id=1, got %v", result.Rows[0][0])
+	}
+}
+
+func TestSelectCountAlias(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+
+	result := run(t, exec, "SELECT COUNT(*) AS total FROM users")
+	if len(result.Columns) != 1 || result.Columns[0] != "total" {
+		t.Errorf("expected columns [total], got %v", result.Columns)
+	}
+	if result.Rows[0][0] != int64(2) {
+		t.Errorf("expected COUNT(*)=2, got %v", result.Rows[0][0])
+	}
+}
+
+func TestSelectLiteralAlias(t *testing.T) {
+	exec := NewExecutor()
+
+	result := run(t, exec, "SELECT 1 AS one")
+	if len(result.Columns) != 1 || result.Columns[0] != "one" {
+		t.Errorf("expected columns [one], got %v", result.Columns)
+	}
+	if result.Rows[0][0] != int64(1) {
+		t.Errorf("expected 1, got %v", result.Rows[0][0])
+	}
+}
+
 func TestErrorDuplicateTable(t *testing.T) {
 	exec := NewExecutor()
 	run(t, exec, "CREATE TABLE users (id INT)")

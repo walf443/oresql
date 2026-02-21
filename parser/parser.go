@@ -281,14 +281,33 @@ func (p *Parser) parseSelectList() ([]ast.Expr, error) {
 }
 
 // parseSelectItem parses a single item in a SELECT list: column, table.column, function call, or literal.
+// Optionally followed by AS alias.
 func (p *Parser) parseSelectItem() (ast.Expr, error) {
+	var expr ast.Expr
+	var err error
+
 	if p.curToken.Type == token.COUNT {
-		return p.parseCallExpr()
+		expr, err = p.parseCallExpr()
+	} else if p.curToken.Type == token.INT_LIT || p.curToken.Type == token.STRING_LIT || p.curToken.Type == token.NULL {
+		expr, err = p.parsePrimary()
+	} else {
+		expr, err = p.parseColumnIdent()
 	}
-	if p.curToken.Type == token.INT_LIT || p.curToken.Type == token.STRING_LIT || p.curToken.Type == token.NULL {
-		return p.parsePrimary()
+	if err != nil {
+		return nil, err
 	}
-	return p.parseColumnIdent()
+
+	if p.curToken.Type == token.AS {
+		p.nextToken() // skip AS
+		if p.curToken.Type != token.IDENT {
+			return nil, fmt.Errorf("expected alias name after AS, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+		}
+		alias := p.curToken.Literal
+		p.nextToken()
+		return &ast.AliasExpr{Expr: expr, Alias: alias}, nil
+	}
+
+	return expr, nil
 }
 
 // parseCallExpr parses a function call: NAME(args...).

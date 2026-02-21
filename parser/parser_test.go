@@ -325,6 +325,72 @@ func TestParseInsertNull(t *testing.T) {
 	}
 }
 
+func TestParseSelectAlias(t *testing.T) {
+	stmt := parse(t, "SELECT id AS user_id FROM users")
+	sel := stmt.(*ast.SelectStmt)
+	if len(sel.Columns) != 1 {
+		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
+	}
+	alias, ok := sel.Columns[0].(*ast.AliasExpr)
+	if !ok {
+		t.Fatalf("expected AliasExpr, got %T", sel.Columns[0])
+	}
+	ident, ok := alias.Expr.(*ast.IdentExpr)
+	if !ok {
+		t.Fatalf("expected IdentExpr inside AliasExpr, got %T", alias.Expr)
+	}
+	if ident.Name != "id" {
+		t.Errorf("expected column name 'id', got %q", ident.Name)
+	}
+	if alias.Alias != "user_id" {
+		t.Errorf("expected alias 'user_id', got %q", alias.Alias)
+	}
+}
+
+func TestParseSelectCountAlias(t *testing.T) {
+	stmt := parse(t, "SELECT COUNT(*) AS total FROM users")
+	sel := stmt.(*ast.SelectStmt)
+	if len(sel.Columns) != 1 {
+		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
+	}
+	alias, ok := sel.Columns[0].(*ast.AliasExpr)
+	if !ok {
+		t.Fatalf("expected AliasExpr, got %T", sel.Columns[0])
+	}
+	call, ok := alias.Expr.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr inside AliasExpr, got %T", alias.Expr)
+	}
+	if call.Name != "COUNT" {
+		t.Errorf("expected function name COUNT, got %s", call.Name)
+	}
+	if alias.Alias != "total" {
+		t.Errorf("expected alias 'total', got %q", alias.Alias)
+	}
+}
+
+func TestParseSelectLiteralAlias(t *testing.T) {
+	stmt := parse(t, "SELECT 1 AS one")
+	sel := stmt.(*ast.SelectStmt)
+	if len(sel.Columns) != 1 {
+		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
+	}
+	alias, ok := sel.Columns[0].(*ast.AliasExpr)
+	if !ok {
+		t.Fatalf("expected AliasExpr, got %T", sel.Columns[0])
+	}
+	lit, ok := alias.Expr.(*ast.IntLitExpr)
+	if !ok {
+		t.Fatalf("expected IntLitExpr inside AliasExpr, got %T", alias.Expr)
+	}
+	if lit.Value != 1 {
+		t.Errorf("expected value 1, got %d", lit.Value)
+	}
+	if alias.Alias != "one" {
+		t.Errorf("expected alias 'one', got %q", alias.Alias)
+	}
+}
+
 func TestParseError(t *testing.T) {
 	inputs := []string{
 		"CREATE",

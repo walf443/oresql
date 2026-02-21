@@ -130,9 +130,15 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 
 	if colNames == nil {
 		for _, colExpr := range stmt.Columns {
-			ident, ok := colExpr.(*ast.IdentExpr)
+			alias := ""
+			inner := colExpr
+			if a, ok := colExpr.(*ast.AliasExpr); ok {
+				alias = a.Alias
+				inner = a.Expr
+			}
+			ident, ok := inner.(*ast.IdentExpr)
 			if !ok {
-				return nil, fmt.Errorf("expected column name in SELECT, got %T", colExpr)
+				return nil, fmt.Errorf("expected column name in SELECT, got %T", inner)
 			}
 			if err := validateTableRef(ident.Table, stmt.TableName); err != nil {
 				return nil, err
@@ -142,7 +148,11 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 				return nil, err
 			}
 			colIndices = append(colIndices, col.Index)
-			colNames = append(colNames, col.Name)
+			if alias != "" {
+				colNames = append(colNames, alias)
+			} else {
+				colNames = append(colNames, col.Name)
+			}
 		}
 	}
 
@@ -183,11 +193,21 @@ func (e *Executor) executeSelectWithoutTable(stmt *ast.SelectStmt) (*Result, err
 	var row Row
 
 	for _, colExpr := range stmt.Columns {
-		val, err := evalLiteral(colExpr)
+		alias := ""
+		inner := colExpr
+		if a, ok := colExpr.(*ast.AliasExpr); ok {
+			alias = a.Alias
+			inner = a.Expr
+		}
+		val, err := evalLiteral(inner)
 		if err != nil {
 			return nil, err
 		}
-		colNames = append(colNames, formatExpr(colExpr))
+		if alias != "" {
+			colNames = append(colNames, alias)
+		} else {
+			colNames = append(colNames, formatExpr(inner))
+		}
 		row = append(row, val)
 	}
 
@@ -216,7 +236,11 @@ func formatExpr(expr ast.Expr) string {
 // hasAggregate returns true if any column expression is a function call.
 func hasAggregate(columns []ast.Expr) bool {
 	for _, col := range columns {
-		if _, ok := col.(*ast.CallExpr); ok {
+		inner := col
+		if a, ok := col.(*ast.AliasExpr); ok {
+			inner = a.Expr
+		}
+		if _, ok := inner.(*ast.CallExpr); ok {
 			return true
 		}
 	}
@@ -249,7 +273,13 @@ func (e *Executor) executeAggregateSelect(stmt *ast.SelectStmt, info *TableInfo)
 	var colNames []string
 	resultRow := make(Row, len(stmt.Columns))
 	for i, colExpr := range stmt.Columns {
-		call, ok := colExpr.(*ast.CallExpr)
+		alias := ""
+		inner := colExpr
+		if a, ok := colExpr.(*ast.AliasExpr); ok {
+			alias = a.Alias
+			inner = a.Expr
+		}
+		call, ok := inner.(*ast.CallExpr)
 		if !ok {
 			return nil, fmt.Errorf("mixed aggregate and non-aggregate columns are not supported")
 		}
@@ -258,7 +288,11 @@ func (e *Executor) executeAggregateSelect(stmt *ast.SelectStmt, info *TableInfo)
 			return nil, err
 		}
 		resultRow[i] = val
-		colNames = append(colNames, colName)
+		if alias != "" {
+			colNames = append(colNames, alias)
+		} else {
+			colNames = append(colNames, colName)
+		}
 	}
 
 	return &Result{Columns: colNames, Rows: []Row{resultRow}}, nil

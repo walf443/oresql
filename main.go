@@ -11,6 +11,7 @@ import (
 	"github.com/walf443/oresql/engine"
 	"github.com/walf443/oresql/lexer"
 	"github.com/walf443/oresql/parser"
+	"github.com/walf443/oresql/repl"
 )
 
 func main() {
@@ -31,8 +32,9 @@ func main() {
 	defer rl.Close()
 
 	exec := engine.NewExecutor()
+	writer := repl.NewWriter(rl.Stdout())
 
-	fmt.Println("Welcome to oresql. Type SQL statements or 'exit' to quit.")
+	writer.Println("Welcome to oresql. Type SQL statements or 'exit' to quit.")
 
 	for {
 		line, err := rl.Readline()
@@ -47,7 +49,7 @@ func main() {
 			continue
 		}
 		if strings.EqualFold(line, "exit") || strings.EqualFold(line, "quit") {
-			fmt.Println("Bye!")
+			writer.Println("Bye!")
 			break
 		}
 
@@ -55,37 +57,16 @@ func main() {
 		p := parser.New(l)
 		stmt, err := p.Parse()
 		if err != nil {
-			fmt.Printf("Parse error: %s\n", err)
+			writer.Println(fmt.Sprintf("Parse error: %s", err))
 			continue
 		}
 
 		result, err := exec.Execute(stmt)
 		if err != nil {
-			fmt.Printf("Error: %s\n", err)
+			writer.PrintError(err.Error())
 			continue
 		}
 
-		printResult(result)
+		writer.PrintResult(result)
 	}
-}
-
-func printResult(r *engine.Result) {
-	if r.Message != "" {
-		fmt.Println(r.Message)
-		return
-	}
-
-	// Print column headers
-	fmt.Println(strings.Join(r.Columns, "\t"))
-	fmt.Println(strings.Repeat("-", len(strings.Join(r.Columns, "\t"))+8))
-
-	// Print rows
-	for _, row := range r.Rows {
-		vals := make([]string, len(row))
-		for i, v := range row {
-			vals[i] = fmt.Sprintf("%v", v)
-		}
-		fmt.Println(strings.Join(vals, "\t"))
-	}
-	fmt.Printf("(%d rows)\n", len(r.Rows))
 }

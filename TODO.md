@@ -24,7 +24,7 @@
 ## SELECT 句
 
 - [ ] DISTINCT
-- [ ] ORDER BY (ASC / DESC)
+- [x] ORDER BY (ASC / DESC)
 - [ ] LIMIT / OFFSET
 - [ ] GROUP BY
 - [ ] HAVING

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/walf443/oresql/ast"
@@ -325,10 +326,9 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 		return nil, err
 	}
 
-	// Filter and project
-	var resultRows []Row
+	// Filter rows
+	var filtered []Row
 	for _, row := range allRows {
-		// Apply WHERE filter
 		if stmt.Where != nil {
 			match, err := evalWhere(stmt.Where, row, info)
 			if err != nil {
@@ -338,8 +338,56 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 				continue
 			}
 		}
+		filtered = append(filtered, row)
+	}
 
-		// Project columns
+	// Sort by ORDER BY
+	if len(stmt.OrderBy) > 0 {
+		var sortErr error
+		sort.SliceStable(filtered, func(i, j int) bool {
+			if sortErr != nil {
+				return false
+			}
+			for _, ob := range stmt.OrderBy {
+				vi, err := evalExpr(ob.Expr, filtered[i], info)
+				if err != nil {
+					sortErr = err
+					return false
+				}
+				vj, err := evalExpr(ob.Expr, filtered[j], info)
+				if err != nil {
+					sortErr = err
+					return false
+				}
+				// NULLs always sort last regardless of ASC/DESC
+				if vi == nil && vj == nil {
+					continue
+				}
+				if vi == nil {
+					return false // NULL sorts last
+				}
+				if vj == nil {
+					return true // NULL sorts last
+				}
+				cmp := compareValues(vi, vj)
+				if cmp == 0 {
+					continue
+				}
+				if ob.Desc {
+					return cmp > 0
+				}
+				return cmp < 0
+			}
+			return false
+		})
+		if sortErr != nil {
+			return nil, sortErr
+		}
+	}
+
+	// Project columns
+	var resultRows []Row
+	for _, row := range filtered {
 		if isStar {
 			projected := make(Row, len(info.Columns))
 			for i, col := range info.Columns {
@@ -360,6 +408,49 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 	}
 
 	return &Result{Columns: colNames, Rows: resultRows}, nil
+}
+
+// compareValues compares two values for ORDER BY sorting.
+// Returns -1 if a < b, 0 if a == b, 1 if a > b.
+// NULL values sort last (are considered greater than any non-NULL value).
+func compareValues(a, b Value) int {
+	if a == nil && b == nil {
+		return 0
+	}
+	if a == nil {
+		return 1 // NULL sorts last
+	}
+	if b == nil {
+		return -1 // NULL sorts last
+	}
+
+	switch av := a.(type) {
+	case int64:
+		bv, ok := b.(int64)
+		if !ok {
+			return 0
+		}
+		if av < bv {
+			return -1
+		}
+		if av > bv {
+			return 1
+		}
+		return 0
+	case string:
+		bv, ok := b.(string)
+		if !ok {
+			return 0
+		}
+		if av < bv {
+			return -1
+		}
+		if av > bv {
+			return 1
+		}
+		return 0
+	}
+	return 0
 }
 
 // executeSelectWithoutTable handles SELECT without FROM (e.g. SELECT 1, 'hello').

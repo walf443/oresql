@@ -602,6 +602,83 @@ func TestParseDeleteNoWhere(t *testing.T) {
 	}
 }
 
+func TestParseSelectOrderBySingleColumn(t *testing.T) {
+	stmt := parse(t, "SELECT * FROM users ORDER BY id")
+	sel := stmt.(*ast.SelectStmt)
+	if len(sel.OrderBy) != 1 {
+		t.Fatalf("expected 1 order by clause, got %d", len(sel.OrderBy))
+	}
+	ident, ok := sel.OrderBy[0].Expr.(*ast.IdentExpr)
+	if !ok {
+		t.Fatalf("expected IdentExpr, got %T", sel.OrderBy[0].Expr)
+	}
+	if ident.Name != "id" {
+		t.Errorf("expected column 'id', got %q", ident.Name)
+	}
+	if sel.OrderBy[0].Desc {
+		t.Errorf("expected ASC (Desc=false), got DESC")
+	}
+}
+
+func TestParseSelectOrderByDesc(t *testing.T) {
+	stmt := parse(t, "SELECT * FROM users ORDER BY id DESC")
+	sel := stmt.(*ast.SelectStmt)
+	if len(sel.OrderBy) != 1 {
+		t.Fatalf("expected 1 order by clause, got %d", len(sel.OrderBy))
+	}
+	if !sel.OrderBy[0].Desc {
+		t.Errorf("expected DESC (Desc=true), got ASC")
+	}
+}
+
+func TestParseSelectOrderByAsc(t *testing.T) {
+	stmt := parse(t, "SELECT * FROM users ORDER BY id ASC")
+	sel := stmt.(*ast.SelectStmt)
+	if len(sel.OrderBy) != 1 {
+		t.Fatalf("expected 1 order by clause, got %d", len(sel.OrderBy))
+	}
+	if sel.OrderBy[0].Desc {
+		t.Errorf("expected ASC (Desc=false), got DESC")
+	}
+}
+
+func TestParseSelectOrderByMultipleColumns(t *testing.T) {
+	stmt := parse(t, "SELECT * FROM users ORDER BY name ASC, id DESC")
+	sel := stmt.(*ast.SelectStmt)
+	if len(sel.OrderBy) != 2 {
+		t.Fatalf("expected 2 order by clauses, got %d", len(sel.OrderBy))
+	}
+	ident0 := sel.OrderBy[0].Expr.(*ast.IdentExpr)
+	if ident0.Name != "name" {
+		t.Errorf("order by 0: expected 'name', got %q", ident0.Name)
+	}
+	if sel.OrderBy[0].Desc {
+		t.Errorf("order by 0: expected ASC")
+	}
+	ident1 := sel.OrderBy[1].Expr.(*ast.IdentExpr)
+	if ident1.Name != "id" {
+		t.Errorf("order by 1: expected 'id', got %q", ident1.Name)
+	}
+	if !sel.OrderBy[1].Desc {
+		t.Errorf("order by 1: expected DESC")
+	}
+}
+
+func TestParseSelectWhereOrderBy(t *testing.T) {
+	stmt := parse(t, "SELECT * FROM users WHERE id > 1 ORDER BY name")
+	sel := stmt.(*ast.SelectStmt)
+	if sel.Where == nil {
+		t.Fatal("expected WHERE clause")
+	}
+	if len(sel.OrderBy) != 1 {
+		t.Fatalf("expected 1 order by clause, got %d", len(sel.OrderBy))
+	}
+	ident := sel.OrderBy[0].Expr.(*ast.IdentExpr)
+	if ident.Name != "name" {
+		t.Errorf("expected order by 'name', got %q", ident.Name)
+	}
+}
+
 func TestParseError(t *testing.T) {
 	inputs := []string{
 		"CREATE",

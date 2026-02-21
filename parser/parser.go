@@ -376,11 +376,64 @@ func (p *Parser) parseSelect() (*ast.SelectStmt, error) {
 		}
 	}
 
+	var orderBy []ast.OrderByClause
+	if p.curToken.Type == token.ORDER {
+		p.nextToken() // skip ORDER
+		if err := p.expectToken(token.BY); err != nil {
+			return nil, err
+		}
+		orderBy, err = p.parseOrderByList()
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return &ast.SelectStmt{
 		Columns:   columns,
 		TableName: tableName,
 		Where:     where,
+		OrderBy:   orderBy,
 	}, nil
+}
+
+// parseOrderByList parses: <expr> [ASC|DESC] [, <expr> [ASC|DESC] ...]
+func (p *Parser) parseOrderByList() ([]ast.OrderByClause, error) {
+	var clauses []ast.OrderByClause
+
+	clause, err := p.parseOrderByItem()
+	if err != nil {
+		return nil, err
+	}
+	clauses = append(clauses, clause)
+
+	for p.curToken.Type == token.COMMA {
+		p.nextToken() // skip comma
+		clause, err := p.parseOrderByItem()
+		if err != nil {
+			return nil, err
+		}
+		clauses = append(clauses, clause)
+	}
+
+	return clauses, nil
+}
+
+// parseOrderByItem parses: <expr> [ASC|DESC]
+func (p *Parser) parseOrderByItem() (ast.OrderByClause, error) {
+	expr, err := p.parseAdditive()
+	if err != nil {
+		return ast.OrderByClause{}, err
+	}
+
+	desc := false
+	if p.curToken.Type == token.ASC {
+		p.nextToken() // skip ASC
+	} else if p.curToken.Type == token.DESC {
+		desc = true
+		p.nextToken() // skip DESC
+	}
+
+	return ast.OrderByClause{Expr: expr, Desc: desc}, nil
 }
 
 func (p *Parser) parseSelectList() ([]ast.Expr, error) {

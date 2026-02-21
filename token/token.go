@@ -53,6 +53,10 @@ const (
 	UPDATE // UPDATE keyword
 	SET    // SET keyword
 	DELETE // DELETE keyword
+	ORDER  // ORDER keyword
+	BY     // BY keyword
+	ASC    // ASC keyword
+	DESC   // DESC keyword
 )
 
 var tokenNames = map[TokenType]string{
@@ -97,6 +101,10 @@ var tokenNames = map[TokenType]string{
 	UPDATE:       "UPDATE",
 	SET:          "SET",
 	DELETE:       "DELETE",
+	ORDER:        "ORDER",
+	BY:           "BY",
+	ASC:          "ASC",
+	DESC:         "DESC",
 }
 
 func (t TokenType) String() string {
@@ -132,6 +140,10 @@ var keywords = map[string]TokenType{
 	"UPDATE": UPDATE,
 	"SET":    SET,
 	"DELETE": DELETE,
+	"ORDER":  ORDER,
+	"BY":     BY,
+	"ASC":    ASC,
+	"DESC":   DESC,
 }
 
 // LookupIdent returns the keyword TokenType if the identifier is a keyword,

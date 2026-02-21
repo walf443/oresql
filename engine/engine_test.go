@@ -773,6 +773,127 @@ func TestDeleteNoWhere(t *testing.T) {
 	}
 }
 
+func TestSelectOrderByAsc(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+
+	result := run(t, exec, "SELECT * FROM users ORDER BY id")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(1) {
+		t.Errorf("row 0: expected id=1, got %v", result.Rows[0][0])
+	}
+	if result.Rows[1][0] != int64(2) {
+		t.Errorf("row 1: expected id=2, got %v", result.Rows[1][0])
+	}
+	if result.Rows[2][0] != int64(3) {
+		t.Errorf("row 2: expected id=3, got %v", result.Rows[2][0])
+	}
+}
+
+func TestSelectOrderByDesc(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+
+	result := run(t, exec, "SELECT * FROM users ORDER BY id DESC")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(3) {
+		t.Errorf("row 0: expected id=3, got %v", result.Rows[0][0])
+	}
+	if result.Rows[1][0] != int64(2) {
+		t.Errorf("row 1: expected id=2, got %v", result.Rows[1][0])
+	}
+	if result.Rows[2][0] != int64(1) {
+		t.Errorf("row 2: expected id=1, got %v", result.Rows[2][0])
+	}
+}
+
+func TestSelectOrderByMultipleColumns(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT, age INT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice', 30)")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob', 20)")
+	run(t, exec, "INSERT INTO users VALUES (3, 'alice', 20)")
+
+	result := run(t, exec, "SELECT * FROM users ORDER BY name ASC, age ASC")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	// alice age=20 first, then alice age=30, then bob age=20
+	if result.Rows[0][0] != int64(3) {
+		t.Errorf("row 0: expected id=3, got %v", result.Rows[0][0])
+	}
+	if result.Rows[1][0] != int64(1) {
+		t.Errorf("row 1: expected id=1, got %v", result.Rows[1][0])
+	}
+	if result.Rows[2][0] != int64(2) {
+		t.Errorf("row 2: expected id=2, got %v", result.Rows[2][0])
+	}
+}
+
+func TestSelectWhereOrderBy(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+
+	result := run(t, exec, "SELECT * FROM users WHERE id > 1 ORDER BY id DESC")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(3) {
+		t.Errorf("row 0: expected id=3, got %v", result.Rows[0][0])
+	}
+	if result.Rows[1][0] != int64(2) {
+		t.Errorf("row 1: expected id=2, got %v", result.Rows[1][0])
+	}
+}
+
+func TestSelectOrderByWithNull(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, NULL)")
+	run(t, exec, "INSERT INTO users VALUES (3, 'bob')")
+
+	// NULLs should sort last in ASC
+	result := run(t, exec, "SELECT * FROM users ORDER BY name ASC")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][1] != "alice" {
+		t.Errorf("row 0: expected name='alice', got %v", result.Rows[0][1])
+	}
+	if result.Rows[1][1] != "bob" {
+		t.Errorf("row 1: expected name='bob', got %v", result.Rows[1][1])
+	}
+	if result.Rows[2][1] != nil {
+		t.Errorf("row 2: expected name=nil, got %v", result.Rows[2][1])
+	}
+
+	// NULLs should sort last in DESC too
+	result = run(t, exec, "SELECT * FROM users ORDER BY name DESC")
+	if result.Rows[0][1] != "bob" {
+		t.Errorf("row 0: expected name='bob', got %v", result.Rows[0][1])
+	}
+	if result.Rows[1][1] != "alice" {
+		t.Errorf("row 1: expected name='alice', got %v", result.Rows[1][1])
+	}
+	if result.Rows[2][1] != nil {
+		t.Errorf("row 2: expected name=nil, got %v", result.Rows[2][1])
+	}
+}
+
 func TestErrorSelectNonexistentColumn(t *testing.T) {
 	exec := NewExecutor()
 	run(t, exec, "CREATE TABLE users (id INT)")

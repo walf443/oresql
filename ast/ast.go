@@ -42,11 +42,18 @@ type InsertStmt struct {
 func (s *InsertStmt) NodeType() string { return "Insert" }
 func (s *InsertStmt) statementNode()   {}
 
-// SelectStmt represents SELECT <columns> FROM <table> [WHERE <condition>].
+// OrderByClause represents a single ORDER BY item.
+type OrderByClause struct {
+	Expr Expr
+	Desc bool // true for DESC, false for ASC (default)
+}
+
+// SelectStmt represents SELECT <columns> FROM <table> [WHERE <condition>] [ORDER BY ...].
 type SelectStmt struct {
 	Columns   []Expr
 	TableName string
-	Where     Expr // nil if no WHERE clause
+	Where     Expr            // nil if no WHERE clause
+	OrderBy   []OrderByClause // nil if no ORDER BY clause
 }
 
 func (s *SelectStmt) NodeType() string { return "Select" }

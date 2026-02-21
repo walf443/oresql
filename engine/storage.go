@@ -367,6 +367,94 @@ func (s *Storage) DropTable(name string) {
 	}
 }
 
+// AddColumn appends a value to every row in the table.
+func (s *Storage) AddColumn(tableName string, defaultVal Value) error {
+	lower := strings.ToLower(tableName)
+	tbl, ok := s.tables[lower]
+	if !ok {
+		return fmt.Errorf("table %q does not exist in storage", tableName)
+	}
+
+	tbl.tree.ForEach(func(key int64, value any) bool {
+		row := value.(Row)
+		newRow := make(Row, len(row)+1)
+		copy(newRow, row)
+		newRow[len(row)] = defaultVal
+		tbl.tree.Put(key, newRow)
+		return true
+	})
+	return nil
+}
+
+// DropColumn removes a column from every row and adjusts indexes.
+func (s *Storage) DropColumn(tableName string, colIdx int) error {
+	lower := strings.ToLower(tableName)
+	tbl, ok := s.tables[lower]
+	if !ok {
+		return fmt.Errorf("table %q does not exist in storage", tableName)
+	}
+
+	// Check for composite indexes referencing this column
+	for _, idx := range tbl.indexes {
+		if len(idx.Info.ColumnIdxs) > 1 {
+			for _, ci := range idx.Info.ColumnIdxs {
+				if ci == colIdx {
+					return fmt.Errorf("cannot drop column: composite index %q references it, drop the index first", idx.Info.Name)
+				}
+			}
+		}
+	}
+
+	// Find and delete single-column indexes on this column
+	var toDelete []string
+	for name, idx := range tbl.indexes {
+		if len(idx.Info.ColumnIdxs) == 1 && idx.Info.ColumnIdxs[0] == colIdx {
+			toDelete = append(toDelete, name)
+		}
+	}
+	for _, name := range toDelete {
+		delete(tbl.indexes, name)
+		delete(s.indexTable, name)
+	}
+
+	// Adjust ColumnIdxs for remaining indexes and track which need rebuild
+	var toRebuild []*SecondaryIndex
+	for _, idx := range tbl.indexes {
+		needsRebuild := false
+		for i, ci := range idx.Info.ColumnIdxs {
+			if ci > colIdx {
+				idx.Info.ColumnIdxs[i] = ci - 1
+				needsRebuild = true
+			}
+		}
+		if needsRebuild {
+			toRebuild = append(toRebuild, idx)
+		}
+	}
+
+	// Remove the column from all rows
+	tbl.tree.ForEach(func(key int64, value any) bool {
+		row := value.(Row)
+		newRow := make(Row, len(row)-1)
+		copy(newRow[:colIdx], row[:colIdx])
+		copy(newRow[colIdx:], row[colIdx+1:])
+		tbl.tree.Put(key, newRow)
+		return true
+	})
+
+	// Rebuild affected indexes
+	for _, idx := range toRebuild {
+		idx.tree = btree.New[KeyEncoding](32)
+		tbl.tree.ForEach(func(key int64, value any) bool {
+			row := value.(Row)
+			idx.addRow(key, row)
+			return true
+		})
+	}
+
+	return nil
+}
+
 // CreateIndex creates a secondary index and builds it from existing data.
 func (s *Storage) CreateIndex(info *IndexInfo) error {
 	lower := strings.ToLower(info.TableName)

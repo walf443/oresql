@@ -239,6 +239,24 @@ type DropIndexStmt struct {
 func (s *DropIndexStmt) NodeType() string { return "DropIndex" }
 func (s *DropIndexStmt) statementNode()   {}
 
+// AlterTableAddColumnStmt represents ALTER TABLE <name> ADD COLUMN <def>.
+type AlterTableAddColumnStmt struct {
+	TableName string
+	Column    ColumnDef
+}
+
+func (s *AlterTableAddColumnStmt) NodeType() string { return "AlterTableAddColumn" }
+func (s *AlterTableAddColumnStmt) statementNode()   {}
+
+// AlterTableDropColumnStmt represents ALTER TABLE <name> DROP COLUMN <name>.
+type AlterTableDropColumnStmt struct {
+	TableName  string
+	ColumnName string
+}
+
+func (s *AlterTableDropColumnStmt) NodeType() string { return "AlterTableDropColumn" }
+func (s *AlterTableDropColumnStmt) statementNode()   {}
+
 // BinaryExpr represents a comparison: left <op> right.
 type BinaryExpr struct {
 	Left  Expr

@@ -3376,3 +3376,189 @@ func TestDeleteNoWhereWithIndex(t *testing.T) {
 		t.Fatalf("expected 0 rows, got %d", len(result.Rows))
 	}
 }
+
+func TestAlterTableAddColumn(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+
+	result := run(t, exec, "ALTER TABLE users ADD COLUMN age INT")
+	if result.Message != "table altered" {
+		t.Errorf("expected 'table altered', got %q", result.Message)
+	}
+
+	// New column should be usable in INSERT
+	run(t, exec, "INSERT INTO users VALUES (3, 'charlie', 30)")
+
+	// Existing rows should have NULL for the new column
+	result = run(t, exec, "SELECT id, name, age FROM users ORDER BY id")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][2] != nil {
+		t.Errorf("expected nil for alice's age, got %v", result.Rows[0][2])
+	}
+	if result.Rows[2][2] != int64(30) {
+		t.Errorf("expected 30 for charlie's age, got %v", result.Rows[2][2])
+	}
+
+	// COLUMN keyword should be optional
+	result = run(t, exec, "ALTER TABLE users ADD email TEXT")
+	if result.Message != "table altered" {
+		t.Errorf("expected 'table altered', got %q", result.Message)
+	}
+}
+
+func TestAlterTableAddColumnWithDefault(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+
+	run(t, exec, "ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'")
+
+	// Existing rows should have the default value
+	result := run(t, exec, "SELECT id, status FROM users ORDER BY id")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][1] != "active" {
+		t.Errorf("expected 'active', got %v", result.Rows[0][1])
+	}
+	if result.Rows[1][1] != "active" {
+		t.Errorf("expected 'active', got %v", result.Rows[1][1])
+	}
+}
+
+func TestAlterTableAddColumnNotNull(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+
+	// NOT NULL + DEFAULT should work: existing rows get the default
+	run(t, exec, "ALTER TABLE users ADD COLUMN age INT NOT NULL DEFAULT 0")
+
+	result := run(t, exec, "SELECT id, age FROM users")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][1] != int64(0) {
+		t.Errorf("expected 0, got %v", result.Rows[0][1])
+	}
+}
+
+func TestAlterTableAddColumnNotNullNoDefault(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+
+	// NOT NULL without DEFAULT should error when rows exist
+	runExpectError(t, exec, "ALTER TABLE users ADD COLUMN age INT NOT NULL")
+}
+
+func TestAlterTableDropColumn(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT, age INT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice', 30)")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob', 25)")
+
+	result := run(t, exec, "ALTER TABLE users DROP COLUMN age")
+	if result.Message != "table altered" {
+		t.Errorf("expected 'table altered', got %q", result.Message)
+	}
+
+	// Column should be gone
+	result = run(t, exec, "SELECT * FROM users ORDER BY id")
+	if len(result.Columns) != 2 {
+		t.Fatalf("expected 2 columns, got %d", len(result.Columns))
+	}
+	if result.Columns[0] != "id" || result.Columns[1] != "name" {
+		t.Errorf("expected [id, name], got %v", result.Columns)
+	}
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(1) || result.Rows[0][1] != "alice" {
+		t.Errorf("unexpected row 0: %v", result.Rows[0])
+	}
+	if result.Rows[1][0] != int64(2) || result.Rows[1][1] != "bob" {
+		t.Errorf("unexpected row 1: %v", result.Rows[1])
+	}
+
+	// COLUMN keyword should be optional
+	result = run(t, exec, "ALTER TABLE users DROP name")
+	if result.Message != "table altered" {
+		t.Errorf("expected 'table altered', got %q", result.Message)
+	}
+}
+
+func TestAlterTableDropColumnWithIndex(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT, age INT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice', 30)")
+	run(t, exec, "CREATE INDEX idx_age ON users(age)")
+
+	// Dropping a column with a single-column index should auto-delete the index
+	run(t, exec, "ALTER TABLE users DROP COLUMN age")
+
+	// Verify the index is gone by creating a new one with the same name
+	run(t, exec, "ALTER TABLE users ADD COLUMN age INT")
+	run(t, exec, "CREATE INDEX idx_age ON users(age)")
+}
+
+func TestAlterTableDropColumnCompositeIndex(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT, age INT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice', 30)")
+	run(t, exec, "CREATE INDEX idx_name_age ON users(name, age)")
+
+	// Dropping a column used in a composite index should error
+	runExpectError(t, exec, "ALTER TABLE users DROP COLUMN age")
+	runExpectError(t, exec, "ALTER TABLE users DROP COLUMN name")
+}
+
+func TestAlterTableDropColumnAdjustsIndex(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (a INT, b INT, c INT)")
+	run(t, exec, "INSERT INTO t VALUES (1, 10, 100)")
+	run(t, exec, "INSERT INTO t VALUES (2, 20, 200)")
+	run(t, exec, "CREATE INDEX idx_c ON t(c)")
+
+	// Drop column b (index 1) — index on c should be adjusted
+	run(t, exec, "ALTER TABLE t DROP COLUMN b")
+
+	// Index on c should still work for lookups
+	result := run(t, exec, "SELECT a, c FROM t WHERE c = 100")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(1) {
+		t.Errorf("expected a=1, got %v", result.Rows[0][0])
+	}
+}
+
+func TestAlterTableDropPrimaryKey(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+
+	// Cannot drop PK column
+	runExpectError(t, exec, "ALTER TABLE users DROP COLUMN id")
+}
+
+func TestAlterTableDropLastColumn(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (a INT)")
+
+	// Cannot drop the last column
+	runExpectError(t, exec, "ALTER TABLE t DROP COLUMN a")
+}
+
+func TestAlterTableDuplicateColumnName(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+
+	// Adding duplicate column name should error
+	runExpectError(t, exec, "ALTER TABLE users ADD COLUMN name TEXT")
+}

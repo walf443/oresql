@@ -78,6 +78,9 @@ const (
 	LIKE     // LIKE keyword
 	INDEX    // INDEX keyword
 	ON       // ON keyword
+	ALTER    // ALTER keyword
+	ADD      // ADD keyword
+	COLUMN   // COLUMN keyword
 )
 
 var tokenNames = map[TokenType]string{
@@ -147,6 +150,9 @@ var tokenNames = map[TokenType]string{
 	LIKE:         "LIKE",
 	INDEX:        "INDEX",
 	ON:           "ON",
+	ALTER:        "ALTER",
+	ADD:          "ADD",
+	COLUMN:       "COLUMN",
 }
 
 func (t TokenType) String() string {
@@ -206,6 +212,9 @@ var keywords = map[string]TokenType{
 	"LIKE":     LIKE,
 	"INDEX":    INDEX,
 	"ON":       ON,
+	"ALTER":    ALTER,
+	"ADD":      ADD,
+	"COLUMN":   COLUMN,
 }
 
 // LookupIdent returns the keyword TokenType if the identifier is a keyword,

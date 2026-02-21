@@ -133,6 +133,122 @@ func (c *Catalog) DropTable(name string) error {
 	return nil
 }
 
+func (c *Catalog) AddColumn(tableName string, colDef ast.ColumnDef) (*TableInfo, error) {
+	lower := strings.ToLower(tableName)
+	info, ok := c.tables[lower]
+	if !ok {
+		return nil, fmt.Errorf("table %q does not exist", tableName)
+	}
+
+	// Check duplicate column name
+	colLower := strings.ToLower(colDef.Name)
+	for _, col := range info.Columns {
+		if strings.ToLower(col.Name) == colLower {
+			return nil, fmt.Errorf("column %q already exists in table %q", colDef.Name, tableName)
+		}
+	}
+
+	// PRIMARY KEY via ALTER TABLE ADD COLUMN is not allowed
+	if colDef.PrimaryKey {
+		return nil, fmt.Errorf("cannot add PRIMARY KEY column via ALTER TABLE")
+	}
+
+	col := ColumnInfo{
+		Name:       colDef.Name,
+		DataType:   colDef.DataType,
+		Index:      len(info.Columns),
+		NotNull:    colDef.NotNull,
+		PrimaryKey: false,
+	}
+
+	if colDef.Default != nil {
+		col.HasDefault = true
+		val, err := evalLiteral(colDef.Default)
+		if err != nil {
+			return nil, fmt.Errorf("invalid DEFAULT for column %q: %w", colDef.Name, err)
+		}
+		if val == nil {
+			if colDef.NotNull {
+				return nil, fmt.Errorf("column %q is NOT NULL but DEFAULT is NULL", colDef.Name)
+			}
+		} else {
+			switch colDef.DataType {
+			case "INT":
+				if _, ok := val.(int64); !ok {
+					return nil, fmt.Errorf("column %q expects INT, DEFAULT value is %T", colDef.Name, val)
+				}
+			case "FLOAT":
+				switch v := val.(type) {
+				case float64:
+					// ok
+				case int64:
+					val = float64(v)
+				default:
+					return nil, fmt.Errorf("column %q expects FLOAT, DEFAULT value is %T", colDef.Name, val)
+				}
+			case "TEXT":
+				if _, ok := val.(string); !ok {
+					return nil, fmt.Errorf("column %q expects TEXT, DEFAULT value is %T", colDef.Name, val)
+				}
+			}
+		}
+		col.Default = val
+	}
+
+	info.Columns = append(info.Columns, col)
+	return info, nil
+}
+
+func (c *Catalog) DropColumn(tableName string, columnName string) (*ColumnInfo, *TableInfo, error) {
+	lower := strings.ToLower(tableName)
+	info, ok := c.tables[lower]
+	if !ok {
+		return nil, nil, fmt.Errorf("table %q does not exist", tableName)
+	}
+
+	// Find the column
+	colLower := strings.ToLower(columnName)
+	colIdx := -1
+	for i, col := range info.Columns {
+		if strings.ToLower(col.Name) == colLower {
+			colIdx = i
+			break
+		}
+	}
+	if colIdx < 0 {
+		return nil, nil, fmt.Errorf("column %q not found in table %q", columnName, tableName)
+	}
+
+	// Cannot drop PK column
+	if info.Columns[colIdx].PrimaryKey {
+		return nil, nil, fmt.Errorf("cannot drop PRIMARY KEY column %q", columnName)
+	}
+
+	// Cannot drop last column
+	if len(info.Columns) <= 1 {
+		return nil, nil, fmt.Errorf("cannot drop the only column in table %q", tableName)
+	}
+
+	droppedCol := info.Columns[colIdx]
+
+	// Remove column from slice
+	info.Columns = append(info.Columns[:colIdx], info.Columns[colIdx+1:]...)
+
+	// Re-index columns
+	for i := range info.Columns {
+		info.Columns[i].Index = i
+	}
+
+	// Update PrimaryKeyCol
+	if info.PrimaryKeyCol >= 0 {
+		if info.PrimaryKeyCol > colIdx {
+			info.PrimaryKeyCol--
+		}
+	}
+
+	return &droppedCol, info, nil
+}
+
 func (c *Catalog) GetTable(name string) (*TableInfo, error) {
 	lower := strings.ToLower(name)
 	info, ok := c.tables[lower]

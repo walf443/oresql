@@ -57,6 +57,8 @@ func (p *Parser) Parse() (ast.Statement, error) {
 		}
 	case token.TRUNCATE:
 		stmt, err = p.parseTruncateTable()
+	case token.ALTER:
+		stmt, err = p.parseAlterTable()
 	default:
 		return nil, fmt.Errorf("unexpected token %s (%q)", p.curToken.Type, p.curToken.Literal)
 	}
@@ -1062,4 +1064,50 @@ func (p *Parser) parseDropIndex() (ast.Statement, error) {
 	p.nextToken()
 
 	return &ast.DropIndexStmt{IndexName: indexName}, nil
+}
+
+// parseAlterTable parses: ALTER TABLE <name> ADD [COLUMN] <column_def>
+//
+//	ALTER TABLE <name> DROP [COLUMN] <column_name>
+func (p *Parser) parseAlterTable() (ast.Statement, error) {
+	if err := p.expectToken(token.ALTER); err != nil {
+		return nil, err
+	}
+	if err := p.expectToken(token.TABLE); err != nil {
+		return nil, err
+	}
+
+	if !p.isIdent() {
+		return nil, fmt.Errorf("expected table name, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+	}
+	tableName := p.curToken.Literal
+	p.nextToken()
+
+	switch p.curToken.Type {
+	case token.ADD:
+		p.nextToken() // skip ADD
+		// COLUMN keyword is optional
+		if p.curToken.Type == token.COLUMN {
+			p.nextToken()
+		}
+		col, err := p.parseColumnDef()
+		if err != nil {
+			return nil, err
+		}
+		return &ast.AlterTableAddColumnStmt{TableName: tableName, Column: col}, nil
+	case token.DROP:
+		p.nextToken() // skip DROP
+		// COLUMN keyword is optional
+		if p.curToken.Type == token.COLUMN {
+			p.nextToken()
+		}
+		if !p.isIdent() {
+			return nil, fmt.Errorf("expected column name, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+		}
+		colName := p.curToken.Literal
+		p.nextToken()
+		return &ast.AlterTableDropColumnStmt{TableName: tableName, ColumnName: colName}, nil
+	default:
+		return nil, fmt.Errorf("expected ADD or DROP after ALTER TABLE, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+	}
 }

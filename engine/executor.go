@@ -102,6 +102,10 @@ func (e *Executor) Execute(stmt ast.Statement) (*Result, error) {
 		return e.executeCreateIndex(s)
 	case *ast.DropIndexStmt:
 		return e.executeDropIndex(s)
+	case *ast.AlterTableAddColumnStmt:
+		return e.executeAlterTableAddColumn(s)
+	case *ast.AlterTableDropColumnStmt:
+		return e.executeAlterTableDropColumn(s)
 	default:
 		return nil, fmt.Errorf("unknown statement type: %T", stmt)
 	}
@@ -168,6 +172,42 @@ func (e *Executor) executeDropIndex(stmt *ast.DropIndexStmt) (*Result, error) {
 		return nil, err
 	}
 	return &Result{Message: "index dropped"}, nil
+}
+
+func (e *Executor) executeAlterTableAddColumn(stmt *ast.AlterTableAddColumnStmt) (*Result, error) {
+	info, err := e.catalog.AddColumn(stmt.TableName, stmt.Column)
+	if err != nil {
+		return nil, err
+	}
+
+	// Determine default value for existing rows
+	newCol := info.Columns[len(info.Columns)-1]
+	var defaultVal Value
+	if newCol.HasDefault {
+		defaultVal = newCol.Default
+	} else {
+		if newCol.NotNull {
+			return nil, fmt.Errorf("cannot add NOT NULL column %q without DEFAULT to table with existing rows", newCol.Name)
+		}
+		defaultVal = nil
+	}
+
+	if err := e.storage.AddColumn(stmt.TableName, defaultVal); err != nil {
+		return nil, err
+	}
+	return &Result{Message: "table altered"}, nil
+}
+
+func (e *Executor) executeAlterTableDropColumn(stmt *ast.AlterTableDropColumnStmt) (*Result, error) {
+	droppedCol, _, err := e.catalog.DropColumn(stmt.TableName, stmt.ColumnName)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := e.storage.DropColumn(stmt.TableName, droppedCol.Index); err != nil {
+		return nil, err
+	}
+	return &Result{Message: "table altered"}, nil
 }
 
 // tryIndexLookup attempts to use an index for equality conditions in WHERE.

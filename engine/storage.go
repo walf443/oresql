@@ -56,6 +56,13 @@ func (s *Storage) DeleteRows(tableName string, keepIndices map[int]bool) error {
 	return nil
 }
 
+func (s *Storage) TruncateTable(name string) {
+	lower := strings.ToLower(name)
+	if tbl, ok := s.tables[lower]; ok {
+		tbl.Rows = nil
+	}
+}
+
 func (s *Storage) DropTable(name string) {
 	lower := strings.ToLower(name)
 	delete(s.tables, lower)

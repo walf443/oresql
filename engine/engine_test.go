@@ -983,6 +983,39 @@ func TestSelectOffsetExceedsRowCount(t *testing.T) {
 	}
 }
 
+func TestTruncateTable(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+
+	result := run(t, exec, "TRUNCATE TABLE users")
+	if result.Message != "table truncated" {
+		t.Errorf("expected 'table truncated', got %q", result.Message)
+	}
+
+	// Table still exists but has no rows
+	result = run(t, exec, "SELECT * FROM users")
+	if len(result.Rows) != 0 {
+		t.Fatalf("expected 0 rows, got %d", len(result.Rows))
+	}
+
+	// Can insert again after truncate
+	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
+	result = run(t, exec, "SELECT * FROM users")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(3) {
+		t.Errorf("expected id=3, got %v", result.Rows[0][0])
+	}
+}
+
+func TestTruncateTableNotExists(t *testing.T) {
+	exec := NewExecutor()
+	runExpectError(t, exec, "TRUNCATE TABLE nonexistent")
+}
+
 func TestDropTable(t *testing.T) {
 	exec := NewExecutor()
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")

@@ -5,6 +5,7 @@
 ## DDL（データ定義）
 
 - [x] DROP TABLE
+- [x] TRUNCATE TABLE
 - [ ] ALTER TABLE (ADD COLUMN, DROP COLUMN, MODIFY COLUMN)
 - [ ] PRIMARY KEY 制約
 - [ ] UNIQUE 制約

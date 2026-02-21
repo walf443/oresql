@@ -96,6 +96,8 @@ func (e *Executor) Execute(stmt ast.Statement) (*Result, error) {
 		return e.executeDelete(s)
 	case *ast.DropTableStmt:
 		return e.executeDropTable(s)
+	case *ast.TruncateTableStmt:
+		return e.executeTruncateTable(s)
 	default:
 		return nil, fmt.Errorf("unknown statement type: %T", stmt)
 	}
@@ -116,6 +118,14 @@ func (e *Executor) executeDropTable(stmt *ast.DropTableStmt) (*Result, error) {
 	}
 	e.storage.DropTable(stmt.TableName)
 	return &Result{Message: "table dropped"}, nil
+}
+
+func (e *Executor) executeTruncateTable(stmt *ast.TruncateTableStmt) (*Result, error) {
+	if _, err := e.catalog.GetTable(stmt.TableName); err != nil {
+		return nil, err
+	}
+	e.storage.TruncateTable(stmt.TableName)
+	return &Result{Message: "table truncated"}, nil
 }
 
 func (e *Executor) executeInsert(stmt *ast.InsertStmt) (*Result, error) {

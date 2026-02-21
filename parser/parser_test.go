@@ -738,6 +738,17 @@ func TestParseSelectOrderByLimitOffset(t *testing.T) {
 	}
 }
 
+func TestParseTruncateTable(t *testing.T) {
+	stmt := parse(t, "TRUNCATE TABLE users")
+	tt, ok := stmt.(*ast.TruncateTableStmt)
+	if !ok {
+		t.Fatalf("expected TruncateTableStmt, got %T", stmt)
+	}
+	if tt.TableName != "users" {
+		t.Errorf("table name: expected %q, got %q", "users", tt.TableName)
+	}
+}
+
 func TestParseDropTable(t *testing.T) {
 	stmt := parse(t, "DROP TABLE users")
 	dt, ok := stmt.(*ast.DropTableStmt)

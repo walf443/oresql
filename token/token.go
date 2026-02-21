@@ -44,22 +44,23 @@ const (
 	AND
 	OR
 	NOT
-	INT    // INT type keyword
-	TEXT   // TEXT type keyword
-	COUNT  // COUNT aggregate function
-	IS     // IS keyword
-	NULL   // NULL keyword
-	AS     // AS keyword
-	UPDATE // UPDATE keyword
-	SET    // SET keyword
-	DELETE // DELETE keyword
-	ORDER  // ORDER keyword
-	BY     // BY keyword
-	ASC    // ASC keyword
-	DESC   // DESC keyword
-	LIMIT  // LIMIT keyword
-	OFFSET // OFFSET keyword
-	DROP   // DROP keyword
+	INT      // INT type keyword
+	TEXT     // TEXT type keyword
+	COUNT    // COUNT aggregate function
+	IS       // IS keyword
+	NULL     // NULL keyword
+	AS       // AS keyword
+	UPDATE   // UPDATE keyword
+	SET      // SET keyword
+	DELETE   // DELETE keyword
+	ORDER    // ORDER keyword
+	BY       // BY keyword
+	ASC      // ASC keyword
+	DESC     // DESC keyword
+	LIMIT    // LIMIT keyword
+	OFFSET   // OFFSET keyword
+	DROP     // DROP keyword
+	TRUNCATE // TRUNCATE keyword
 )
 
 var tokenNames = map[TokenType]string{
@@ -111,6 +112,7 @@ var tokenNames = map[TokenType]string{
 	LIMIT:        "LIMIT",
 	OFFSET:       "OFFSET",
 	DROP:         "DROP",
+	TRUNCATE:     "TRUNCATE",
 }
 
 func (t TokenType) String() string {
@@ -126,33 +128,34 @@ type Token struct {
 }
 
 var keywords = map[string]TokenType{
-	"CREATE": CREATE,
-	"TABLE":  TABLE,
-	"INSERT": INSERT,
-	"INTO":   INTO,
-	"VALUES": VALUES,
-	"SELECT": SELECT,
-	"FROM":   FROM,
-	"WHERE":  WHERE,
-	"AND":    AND,
-	"OR":     OR,
-	"NOT":    NOT,
-	"INT":    INT,
-	"TEXT":   TEXT,
-	"COUNT":  COUNT,
-	"IS":     IS,
-	"NULL":   NULL,
-	"AS":     AS,
-	"UPDATE": UPDATE,
-	"SET":    SET,
-	"DELETE": DELETE,
-	"ORDER":  ORDER,
-	"BY":     BY,
-	"ASC":    ASC,
-	"DESC":   DESC,
-	"LIMIT":  LIMIT,
-	"OFFSET": OFFSET,
-	"DROP":   DROP,
+	"CREATE":   CREATE,
+	"TABLE":    TABLE,
+	"INSERT":   INSERT,
+	"INTO":     INTO,
+	"VALUES":   VALUES,
+	"SELECT":   SELECT,
+	"FROM":     FROM,
+	"WHERE":    WHERE,
+	"AND":      AND,
+	"OR":       OR,
+	"NOT":      NOT,
+	"INT":      INT,
+	"TEXT":     TEXT,
+	"COUNT":    COUNT,
+	"IS":       IS,
+	"NULL":     NULL,
+	"AS":       AS,
+	"UPDATE":   UPDATE,
+	"SET":      SET,
+	"DELETE":   DELETE,
+	"ORDER":    ORDER,
+	"BY":       BY,
+	"ASC":      ASC,
+	"DESC":     DESC,
+	"LIMIT":    LIMIT,
+	"OFFSET":   OFFSET,
+	"DROP":     DROP,
+	"TRUNCATE": TRUNCATE,
 }
 
 // LookupIdent returns the keyword TokenType if the identifier is a keyword,

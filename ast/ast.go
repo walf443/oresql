@@ -168,6 +168,14 @@ type DropTableStmt struct {
 func (s *DropTableStmt) NodeType() string { return "DropTable" }
 func (s *DropTableStmt) statementNode()   {}
 
+// TruncateTableStmt represents TRUNCATE TABLE <name>.
+type TruncateTableStmt struct {
+	TableName string
+}
+
+func (s *TruncateTableStmt) NodeType() string { return "TruncateTable" }
+func (s *TruncateTableStmt) statementNode()   {}
+
 // BinaryExpr represents a comparison: left <op> right.
 type BinaryExpr struct {
 	Left  Expr

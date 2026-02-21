@@ -112,7 +112,7 @@ func (e *Executor) Execute(stmt ast.Statement) (*Result, error) {
 }
 
 func (e *Executor) executeCreateTable(stmt *ast.CreateTableStmt) (*Result, error) {
-	info, err := e.catalog.CreateTable(stmt.TableName, stmt.Columns)
+	info, err := e.catalog.CreateTable(stmt.TableName, stmt.Columns, stmt.PrimaryKey)
 	if err != nil {
 		return nil, err
 	}
@@ -137,6 +137,26 @@ func (e *Executor) executeCreateTable(stmt *ast.CreateTableStmt) (*Result, error
 			if err := e.storage.CreateIndex(idxInfo); err != nil {
 				return nil, err
 			}
+		}
+	}
+
+	// Auto-create unique index for table-level PRIMARY KEY (composite PK)
+	if info.PrimaryKeyCol == -1 && len(info.PrimaryKeyCols) > 0 {
+		colNames := make([]string, len(info.PrimaryKeyCols))
+		for i, idx := range info.PrimaryKeyCols {
+			colNames[i] = info.Columns[idx].Name
+		}
+		idxName := fmt.Sprintf("pk_%s", info.Name)
+		idxInfo := &IndexInfo{
+			Name:        idxName,
+			TableName:   info.Name,
+			ColumnNames: colNames,
+			ColumnIdxs:  info.PrimaryKeyCols,
+			Type:        "BTREE",
+			Unique:      true,
+		}
+		if err := e.storage.CreateIndex(idxInfo); err != nil {
+			return nil, err
 		}
 	}
 

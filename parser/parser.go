@@ -112,13 +112,34 @@ func (p *Parser) parseCreateTable() (*ast.CreateTableStmt, error) {
 		return nil, err
 	}
 
+	// Parse optional table-level PRIMARY KEY (col1, col2, ...)
+	var primaryKey []string
+	if p.curToken.Type == token.COMMA && p.peekToken.Type == token.PRIMARY {
+		p.nextToken() // skip comma
+		p.nextToken() // skip PRIMARY
+		if err := p.expectToken(token.KEY); err != nil {
+			return nil, err
+		}
+		if err := p.expectToken(token.LPAREN); err != nil {
+			return nil, err
+		}
+		primaryKey, err = p.parseIdentList()
+		if err != nil {
+			return nil, err
+		}
+		if err := p.expectToken(token.RPAREN); err != nil {
+			return nil, err
+		}
+	}
+
 	if err := p.expectToken(token.RPAREN); err != nil {
 		return nil, err
 	}
 
 	return &ast.CreateTableStmt{
-		TableName: tableName,
-		Columns:   columns,
+		TableName:  tableName,
+		Columns:    columns,
+		PrimaryKey: primaryKey,
 	}, nil
 }
 
@@ -132,6 +153,9 @@ func (p *Parser) parseColumnDefList() ([]ast.ColumnDef, error) {
 	columns = append(columns, col)
 
 	for p.curToken.Type == token.COMMA {
+		if p.peekToken.Type == token.PRIMARY {
+			break
+		}
 		p.nextToken() // skip comma
 		col, err := p.parseColumnDef()
 		if err != nil {

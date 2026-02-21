@@ -20,9 +20,10 @@ type ColumnInfo struct {
 
 // TableInfo describes a table's schema.
 type TableInfo struct {
-	Name          string
-	Columns       []ColumnInfo
-	PrimaryKeyCol int // index of PK column, -1 if no PK
+	Name           string
+	Columns        []ColumnInfo
+	PrimaryKeyCol  int   // index of single INT PK column, -1 if no PK or composite PK
+	PrimaryKeyCols []int // all PK column indexes (nil if no PK)
 }
 
 // FindColumn returns the column info for the given name, or an error if not found.
@@ -55,14 +56,15 @@ func NewCatalog() *Catalog {
 	return &Catalog{tables: make(map[string]*TableInfo)}
 }
 
-func (c *Catalog) CreateTable(name string, columnDefs []ast.ColumnDef) (*TableInfo, error) {
+func (c *Catalog) CreateTable(name string, columnDefs []ast.ColumnDef, tablePK []string) (*TableInfo, error) {
 	lower := strings.ToLower(name)
 	if _, exists := c.tables[lower]; exists {
 		return nil, fmt.Errorf("table %q already exists", name)
 	}
 
-	// Validate PRIMARY KEY constraints
+	// Validate column-level PRIMARY KEY constraints
 	pkCol := -1
+	hasColumnLevelPK := false
 	for i, cd := range columnDefs {
 		if cd.PrimaryKey {
 			if pkCol >= 0 {
@@ -72,7 +74,13 @@ func (c *Catalog) CreateTable(name string, columnDefs []ast.ColumnDef) (*TableIn
 				return nil, fmt.Errorf("PRIMARY KEY must be INT type, got %s", cd.DataType)
 			}
 			pkCol = i
+			hasColumnLevelPK = true
 		}
+	}
+
+	// Reject combining column-level and table-level PK
+	if hasColumnLevelPK && len(tablePK) > 0 {
+		return nil, fmt.Errorf("cannot specify both column-level and table-level PRIMARY KEY")
 	}
 
 	columns := make([]ColumnInfo, len(columnDefs))
@@ -120,7 +128,32 @@ func (c *Catalog) CreateTable(name string, columnDefs []ast.ColumnDef) (*TableIn
 		columns[i] = col
 	}
 
-	info := &TableInfo{Name: lower, Columns: columns, PrimaryKeyCol: pkCol}
+	var primaryKeyCols []int
+
+	if len(tablePK) > 0 {
+		// Table-level PRIMARY KEY
+		pkCol = -1 // use auto-increment
+		for _, pkName := range tablePK {
+			found := false
+			pkLower := strings.ToLower(pkName)
+			for i := range columns {
+				if strings.ToLower(columns[i].Name) == pkLower {
+					primaryKeyCols = append(primaryKeyCols, i)
+					columns[i].PrimaryKey = true
+					columns[i].NotNull = true
+					found = true
+					break
+				}
+			}
+			if !found {
+				return nil, fmt.Errorf("column %q in PRIMARY KEY not found", pkName)
+			}
+		}
+	} else if hasColumnLevelPK {
+		primaryKeyCols = []int{pkCol}
+	}
+
+	info := &TableInfo{Name: lower, Columns: columns, PrimaryKeyCol: pkCol, PrimaryKeyCols: primaryKeyCols}
 	c.tables[lower] = info
 	return info, nil
 }
@@ -245,6 +278,19 @@ func (c *Catalog) DropColumn(tableName string, columnName string) (*ColumnInfo, 
 		if info.PrimaryKeyCol > colIdx {
 			info.PrimaryKeyCol--
 		}
+	}
+
+	// Update PrimaryKeyCols
+	if len(info.PrimaryKeyCols) > 0 {
+		newPKCols := make([]int, 0, len(info.PrimaryKeyCols))
+		for _, idx := range info.PrimaryKeyCols {
+			if idx > colIdx {
+				newPKCols = append(newPKCols, idx-1)
+			} else {
+				newPKCols = append(newPKCols, idx)
+			}
+		}
+		info.PrimaryKeyCols = newPKCols
 	}
 
 	return &droppedCol, info, nil

@@ -29,8 +29,9 @@ type ColumnDef struct {
 
 // CreateTableStmt represents CREATE TABLE <name> (<columns>).
 type CreateTableStmt struct {
-	TableName string
-	Columns   []ColumnDef
+	TableName  string
+	Columns    []ColumnDef
+	PrimaryKey []string // table-level PRIMARY KEY column names (nil if not specified)
 }
 
 func (s *CreateTableStmt) NodeType() string { return "CreateTable" }

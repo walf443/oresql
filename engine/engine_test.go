@@ -3697,3 +3697,118 @@ func TestUniqueColumnWithNotNull(t *testing.T) {
 	// NULL should fail (due to NOT NULL, not UNIQUE)
 	runExpectError(t, exec, "INSERT INTO users VALUES (4, NULL)")
 }
+
+func TestCompositePrimaryKey(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE enrollment (student_id INT, course_id INT, grade TEXT, PRIMARY KEY (student_id, course_id))")
+	run(t, exec, "INSERT INTO enrollment VALUES (1, 100, 'A')")
+	run(t, exec, "INSERT INTO enrollment VALUES (1, 200, 'B')")
+	run(t, exec, "INSERT INTO enrollment VALUES (2, 100, 'C')")
+
+	result := run(t, exec, "SELECT * FROM enrollment")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+}
+
+func TestCompositePrimaryKeyDuplicate(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE enrollment (student_id INT, course_id INT, grade TEXT, PRIMARY KEY (student_id, course_id))")
+	run(t, exec, "INSERT INTO enrollment VALUES (1, 100, 'A')")
+
+	// Same composite key should fail
+	runExpectError(t, exec, "INSERT INTO enrollment VALUES (1, 100, 'B')")
+}
+
+func TestCompositePrimaryKeyNull(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE enrollment (student_id INT, course_id INT, grade TEXT, PRIMARY KEY (student_id, course_id))")
+
+	// NULL in PK column should fail
+	runExpectError(t, exec, "INSERT INTO enrollment VALUES (NULL, 100, 'A')")
+	runExpectError(t, exec, "INSERT INTO enrollment VALUES (1, NULL, 'A')")
+}
+
+func TestCompositePrimaryKeyWithTextColumns(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE tags (category TEXT, tag TEXT, value INT, PRIMARY KEY (category, tag))")
+	run(t, exec, "INSERT INTO tags VALUES ('color', 'red', 1)")
+	run(t, exec, "INSERT INTO tags VALUES ('color', 'blue', 2)")
+	run(t, exec, "INSERT INTO tags VALUES ('size', 'red', 3)")
+
+	result := run(t, exec, "SELECT * FROM tags")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+
+	// Duplicate composite key with TEXT should fail
+	runExpectError(t, exec, "INSERT INTO tags VALUES ('color', 'red', 99)")
+}
+
+func TestCompositePrimaryKeyUpdate(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE enrollment (student_id INT, course_id INT, grade TEXT, PRIMARY KEY (student_id, course_id))")
+	run(t, exec, "INSERT INTO enrollment VALUES (1, 100, 'A')")
+	run(t, exec, "INSERT INTO enrollment VALUES (2, 100, 'B')")
+
+	// Update to duplicate composite key should fail
+	runExpectError(t, exec, "UPDATE enrollment SET student_id = 1 WHERE student_id = 2 AND course_id = 100")
+
+	// Update non-PK column should succeed
+	run(t, exec, "UPDATE enrollment SET grade = 'A+' WHERE student_id = 1 AND course_id = 100")
+	result := run(t, exec, "SELECT grade FROM enrollment WHERE student_id = 1 AND course_id = 100")
+	if len(result.Rows) != 1 || result.Rows[0][0] != "A+" {
+		t.Errorf("expected grade='A+', got %v", result.Rows)
+	}
+}
+
+func TestCompositePrimaryKeyDropColumn(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE enrollment (student_id INT, course_id INT, grade TEXT, PRIMARY KEY (student_id, course_id))")
+
+	// Dropping PK column should fail
+	runExpectError(t, exec, "ALTER TABLE enrollment DROP COLUMN student_id")
+	runExpectError(t, exec, "ALTER TABLE enrollment DROP COLUMN course_id")
+
+	// Dropping non-PK column should succeed
+	run(t, exec, "ALTER TABLE enrollment DROP COLUMN grade")
+}
+
+func TestBothColumnAndTablePrimaryKey(t *testing.T) {
+	exec := NewExecutor()
+
+	// Both column-level and table-level PK should error
+	runExpectError(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, name TEXT, PRIMARY KEY (id, name))")
+}
+
+func TestTableLevelSinglePrimaryKey(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, name TEXT, PRIMARY KEY (id))")
+	run(t, exec, "INSERT INTO t VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO t VALUES (2, 'bob')")
+
+	// Duplicate should fail
+	runExpectError(t, exec, "INSERT INTO t VALUES (1, 'charlie')")
+
+	result := run(t, exec, "SELECT * FROM t")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+}
+
+func TestCompositePrimaryKeyDeleteAndReinsert(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE enrollment (student_id INT, course_id INT, grade TEXT, PRIMARY KEY (student_id, course_id))")
+	run(t, exec, "INSERT INTO enrollment VALUES (1, 100, 'A')")
+
+	// Delete the row
+	run(t, exec, "DELETE FROM enrollment WHERE student_id = 1 AND course_id = 100")
+
+	// Reinsert with the same PK should succeed
+	run(t, exec, "INSERT INTO enrollment VALUES (1, 100, 'B')")
+
+	result := run(t, exec, "SELECT grade FROM enrollment WHERE student_id = 1 AND course_id = 100")
+	if len(result.Rows) != 1 || result.Rows[0][0] != "B" {
+		t.Errorf("expected grade='B', got %v", result.Rows)
+	}
+}

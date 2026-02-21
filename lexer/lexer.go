@@ -103,6 +103,9 @@ func (l *Lexer) NextToken() token.Token {
 	case ';':
 		tok = token.Token{Type: token.SEMICOLON, Literal: ";"}
 		l.readChar()
+	case '.':
+		tok = token.Token{Type: token.DOT, Literal: "."}
+		l.readChar()
 	case '=':
 		tok = token.Token{Type: token.EQ, Literal: "="}
 		l.readChar()

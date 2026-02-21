@@ -51,9 +51,10 @@ type SelectStmt struct {
 func (s *SelectStmt) NodeType() string { return "Select" }
 func (s *SelectStmt) statementNode()   {}
 
-// IdentExpr represents a column name reference.
+// IdentExpr represents a column name reference, optionally qualified with a table name.
 type IdentExpr struct {
-	Name string
+	Table string // table name (empty if unqualified)
+	Name  string
 }
 
 func (e *IdentExpr) NodeType() string { return "Ident" }

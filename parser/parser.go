@@ -237,22 +237,44 @@ func (p *Parser) parseSelectList() ([]ast.Expr, error) {
 	}
 
 	var columns []ast.Expr
-	if p.curToken.Type != token.IDENT {
-		return nil, fmt.Errorf("expected column name or *, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+
+	col, err := p.parseColumnIdent()
+	if err != nil {
+		return nil, err
 	}
-	columns = append(columns, &ast.IdentExpr{Name: p.curToken.Literal})
-	p.nextToken()
+	columns = append(columns, col)
 
 	for p.curToken.Type == token.COMMA {
 		p.nextToken() // skip comma
-		if p.curToken.Type != token.IDENT {
-			return nil, fmt.Errorf("expected column name, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+		col, err := p.parseColumnIdent()
+		if err != nil {
+			return nil, err
 		}
-		columns = append(columns, &ast.IdentExpr{Name: p.curToken.Literal})
-		p.nextToken()
+		columns = append(columns, col)
 	}
 
 	return columns, nil
+}
+
+// parseColumnIdent parses a column reference: ident or ident.ident
+func (p *Parser) parseColumnIdent() (ast.Expr, error) {
+	if p.curToken.Type != token.IDENT {
+		return nil, fmt.Errorf("expected column name, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+	}
+	name := p.curToken.Literal
+	p.nextToken()
+
+	if p.curToken.Type == token.DOT {
+		p.nextToken() // skip dot
+		if p.curToken.Type != token.IDENT {
+			return nil, fmt.Errorf("expected column name after '.', got %s (%q)", p.curToken.Type, p.curToken.Literal)
+		}
+		colName := p.curToken.Literal
+		p.nextToken()
+		return &ast.IdentExpr{Table: name, Name: colName}, nil
+	}
+
+	return &ast.IdentExpr{Name: name}, nil
 }
 
 // Expression parsing with precedence: OR < AND < comparison < primary
@@ -333,9 +355,18 @@ func (p *Parser) parseComparison() (ast.Expr, error) {
 func (p *Parser) parsePrimary() (ast.Expr, error) {
 	switch p.curToken.Type {
 	case token.IDENT:
-		expr := &ast.IdentExpr{Name: p.curToken.Literal}
+		name := p.curToken.Literal
 		p.nextToken()
-		return expr, nil
+		if p.curToken.Type == token.DOT {
+			p.nextToken() // skip dot
+			if p.curToken.Type != token.IDENT {
+				return nil, fmt.Errorf("expected column name after '.', got %s (%q)", p.curToken.Type, p.curToken.Literal)
+			}
+			colName := p.curToken.Literal
+			p.nextToken()
+			return &ast.IdentExpr{Table: name, Name: colName}, nil
+		}
+		return &ast.IdentExpr{Name: name}, nil
 	case token.INT_LIT:
 		val, err := strconv.ParseInt(p.curToken.Literal, 10, 64)
 		if err != nil {

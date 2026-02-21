@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/walf443/oresql/ast"
 )
@@ -113,6 +114,9 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 			if !ok {
 				return nil, fmt.Errorf("expected column name in SELECT, got %T", colExpr)
 			}
+			if err := validateTableRef(ident.Table, stmt.TableName); err != nil {
+				return nil, err
+			}
 			col, err := info.FindColumn(ident.Name)
 			if err != nil {
 				return nil, err
@@ -169,6 +173,9 @@ func evalLiteral(expr ast.Expr) (Value, error) {
 func evalExpr(expr ast.Expr, row Row, info *TableInfo) (Value, error) {
 	switch e := expr.(type) {
 	case *ast.IdentExpr:
+		if err := validateTableRef(e.Table, info.Name); err != nil {
+			return nil, err
+		}
 		col, err := info.FindColumn(e.Name)
 		if err != nil {
 			return nil, err
@@ -260,6 +267,15 @@ func evalComparison(left Value, op string, right Value) (bool, error) {
 	}
 
 	return false, fmt.Errorf("cannot compare %T and %T with %s", left, right, op)
+}
+
+// validateTableRef checks that a qualified table reference matches the target table.
+// If tableRef is empty (unqualified), validation is skipped.
+func validateTableRef(tableRef, targetTable string) error {
+	if tableRef != "" && strings.ToLower(tableRef) != strings.ToLower(targetTable) {
+		return fmt.Errorf("unknown table %q", tableRef)
+	}
+	return nil
 }
 
 // evalWhere evaluates a WHERE expression and returns a boolean.

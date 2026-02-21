@@ -20,6 +20,7 @@ const (
 	LPAREN    // (
 	RPAREN    // )
 	SEMICOLON // ;
+	DOT       // .
 	EQ        // =
 	NEQ       // != or <>
 	LT        // <
@@ -54,6 +55,7 @@ var tokenNames = map[TokenType]string{
 	LPAREN:     "LPAREN",
 	RPAREN:     "RPAREN",
 	SEMICOLON:  "SEMICOLON",
+	DOT:        "DOT",
 	EQ:         "EQ",
 	NEQ:        "NEQ",
 	LT:         "LT",

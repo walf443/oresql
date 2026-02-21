@@ -159,6 +159,48 @@ func TestParseSelectWithSemicolon(t *testing.T) {
 	}
 }
 
+func TestParseSelectQualifiedColumns(t *testing.T) {
+	stmt := parse(t, "SELECT users.id, users.name FROM users")
+	sel := stmt.(*ast.SelectStmt)
+	if len(sel.Columns) != 2 {
+		t.Fatalf("expected 2 columns, got %d", len(sel.Columns))
+	}
+	col0 := sel.Columns[0].(*ast.IdentExpr)
+	if col0.Table != "users" || col0.Name != "id" {
+		t.Errorf("column 0: expected users.id, got %s.%s", col0.Table, col0.Name)
+	}
+	col1 := sel.Columns[1].(*ast.IdentExpr)
+	if col1.Table != "users" || col1.Name != "name" {
+		t.Errorf("column 1: expected users.name, got %s.%s", col1.Table, col1.Name)
+	}
+}
+
+func TestParseSelectQualifiedWhere(t *testing.T) {
+	stmt := parse(t, "SELECT * FROM users WHERE users.id = 1")
+	sel := stmt.(*ast.SelectStmt)
+	bin := sel.Where.(*ast.BinaryExpr)
+	ident := bin.Left.(*ast.IdentExpr)
+	if ident.Table != "users" || ident.Name != "id" {
+		t.Errorf("expected users.id, got %s.%s", ident.Table, ident.Name)
+	}
+}
+
+func TestParseSelectMixedColumns(t *testing.T) {
+	stmt := parse(t, "SELECT users.id, name FROM users")
+	sel := stmt.(*ast.SelectStmt)
+	if len(sel.Columns) != 2 {
+		t.Fatalf("expected 2 columns, got %d", len(sel.Columns))
+	}
+	col0 := sel.Columns[0].(*ast.IdentExpr)
+	if col0.Table != "users" || col0.Name != "id" {
+		t.Errorf("column 0: expected users.id, got %s.%s", col0.Table, col0.Name)
+	}
+	col1 := sel.Columns[1].(*ast.IdentExpr)
+	if col1.Table != "" || col1.Name != "name" {
+		t.Errorf("column 1: expected name (unqualified), got %s.%s", col1.Table, col1.Name)
+	}
+}
+
 func TestParseError(t *testing.T) {
 	inputs := []string{
 		"CREATE",

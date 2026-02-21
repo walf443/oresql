@@ -116,6 +116,17 @@ func TestEscapedQuote(t *testing.T) {
 	}
 }
 
+func TestDotToken(t *testing.T) {
+	input := `users.id`
+	expected := []token.Token{
+		{token.IDENT, "users"},
+		{token.DOT, "."},
+		{token.IDENT, "id"},
+		{token.EOF, ""},
+	}
+	testTokens(t, input, expected)
+}
+
 func testTokens(t *testing.T, input string, expected []token.Token) {
 	t.Helper()
 	l := New(input)

@@ -449,6 +449,20 @@ func TestErrorDivisionByZero(t *testing.T) {
 	runExpectError(t, exec, "SELECT 1 / 0")
 }
 
+func TestSelectUnaryMinus(t *testing.T) {
+	exec := NewExecutor()
+
+	result := run(t, exec, "SELECT -1")
+	if result.Rows[0][0] != int64(-1) {
+		t.Errorf("expected -1, got %v", result.Rows[0][0])
+	}
+
+	result = run(t, exec, "SELECT -2 + 5")
+	if result.Rows[0][0] != int64(3) {
+		t.Errorf("expected -2+5=3, got %v", result.Rows[0][0])
+	}
+}
+
 func TestErrorDuplicateTable(t *testing.T) {
 	exec := NewExecutor()
 	run(t, exec, "CREATE TABLE users (id INT)")

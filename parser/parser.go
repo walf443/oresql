@@ -520,6 +520,16 @@ func (p *Parser) parsePrimary() (ast.Expr, error) {
 	case token.NULL:
 		p.nextToken()
 		return &ast.NullLitExpr{}, nil
+	case token.MINUS:
+		p.nextToken() // skip -
+		operand, err := p.parsePrimary()
+		if err != nil {
+			return nil, err
+		}
+		return &ast.ArithmeticExpr{Left: &ast.IntLitExpr{Value: 0}, Op: "-", Right: operand}, nil
+	case token.PLUS:
+		p.nextToken() // skip +
+		return p.parsePrimary()
 	case token.LPAREN:
 		p.nextToken() // skip (
 		expr, err := p.parseExpr()

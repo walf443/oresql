@@ -461,6 +461,27 @@ func TestParseSelectArithmeticPrecedence(t *testing.T) {
 	}
 }
 
+func TestParseSelectUnaryMinus(t *testing.T) {
+	stmt := parse(t, "SELECT -1")
+	sel := stmt.(*ast.SelectStmt)
+	if len(sel.Columns) != 1 {
+		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
+	}
+	arith, ok := sel.Columns[0].(*ast.ArithmeticExpr)
+	if !ok {
+		t.Fatalf("expected ArithmeticExpr, got %T", sel.Columns[0])
+	}
+	if arith.Op != "-" {
+		t.Errorf("expected op '-', got %q", arith.Op)
+	}
+	if arith.Left.(*ast.IntLitExpr).Value != 0 {
+		t.Errorf("expected left=0")
+	}
+	if arith.Right.(*ast.IntLitExpr).Value != 1 {
+		t.Errorf("expected right=1")
+	}
+}
+
 func TestParseError(t *testing.T) {
 	inputs := []string{
 		"CREATE",

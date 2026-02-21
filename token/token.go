@@ -81,6 +81,7 @@ const (
 	ALTER    // ALTER keyword
 	ADD      // ADD keyword
 	COLUMN   // COLUMN keyword
+	UNIQUE   // UNIQUE keyword
 )
 
 var tokenNames = map[TokenType]string{
@@ -153,6 +154,7 @@ var tokenNames = map[TokenType]string{
 	ALTER:        "ALTER",
 	ADD:          "ADD",
 	COLUMN:       "COLUMN",
+	UNIQUE:       "UNIQUE",
 }
 
 func (t TokenType) String() string {
@@ -215,6 +217,7 @@ var keywords = map[string]TokenType{
 	"ALTER":    ALTER,
 	"ADD":      ADD,
 	"COLUMN":   COLUMN,
+	"UNIQUE":   UNIQUE,
 }
 
 // LookupIdent returns the keyword TokenType if the identifier is a keyword,

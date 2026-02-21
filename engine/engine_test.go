@@ -3562,3 +3562,138 @@ func TestAlterTableDuplicateColumnName(t *testing.T) {
 	// Adding duplicate column name should error
 	runExpectError(t, exec, "ALTER TABLE users ADD COLUMN name TEXT")
 }
+
+func TestUniqueColumnConstraint(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, email TEXT UNIQUE)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice@example.com')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob@example.com')")
+
+	// Duplicate email should fail
+	runExpectError(t, exec, "INSERT INTO users VALUES (3, 'alice@example.com')")
+
+	// Verify existing data is intact
+	result := run(t, exec, "SELECT * FROM users")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+}
+
+func TestUniqueColumnInsertNull(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, email TEXT UNIQUE)")
+
+	// Multiple NULLs should be allowed per SQL standard
+	run(t, exec, "INSERT INTO users VALUES (1, NULL)")
+	run(t, exec, "INSERT INTO users VALUES (2, NULL)")
+
+	result := run(t, exec, "SELECT * FROM users")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+}
+
+func TestCreateUniqueIndex(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, email TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice@example.com')")
+	run(t, exec, "CREATE UNIQUE INDEX idx_email ON users(email)")
+
+	// Duplicate email should fail
+	runExpectError(t, exec, "INSERT INTO users VALUES (2, 'alice@example.com')")
+
+	// Different email should succeed
+	run(t, exec, "INSERT INTO users VALUES (3, 'bob@example.com')")
+}
+
+func TestCreateUniqueCompositeIndex(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE orders (user_id INT, product_id INT, qty INT)")
+	run(t, exec, "CREATE UNIQUE INDEX idx_user_product ON orders(user_id, product_id)")
+
+	run(t, exec, "INSERT INTO orders VALUES (1, 100, 1)")
+	run(t, exec, "INSERT INTO orders VALUES (1, 200, 2)")
+	run(t, exec, "INSERT INTO orders VALUES (2, 100, 3)")
+
+	// Duplicate (user_id, product_id) should fail
+	runExpectError(t, exec, "INSERT INTO orders VALUES (1, 100, 5)")
+
+	result := run(t, exec, "SELECT * FROM orders")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+}
+
+func TestCreateUniqueIndexOnExistingDuplicates(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, email TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice@example.com')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'alice@example.com')")
+
+	// Creating unique index on data with duplicates should fail
+	runExpectError(t, exec, "CREATE UNIQUE INDEX idx_email ON users(email)")
+}
+
+func TestUniqueUpdateViolation(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, email TEXT UNIQUE)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice@example.com')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob@example.com')")
+
+	// Update that causes duplicate should fail
+	runExpectError(t, exec, "UPDATE users SET email = 'alice@example.com' WHERE id = 2")
+
+	// Verify data unchanged
+	result := run(t, exec, "SELECT email FROM users WHERE id = 2")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != "bob@example.com" {
+		t.Errorf("expected 'bob@example.com', got %v", result.Rows[0][0])
+	}
+}
+
+func TestUniqueUpdateSameRow(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, email TEXT UNIQUE)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice@example.com')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob@example.com')")
+
+	// Updating a row to the same value should succeed
+	run(t, exec, "UPDATE users SET email = 'alice@example.com' WHERE id = 1")
+
+	result := run(t, exec, "SELECT email FROM users WHERE id = 1")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != "alice@example.com" {
+		t.Errorf("expected 'alice@example.com', got %v", result.Rows[0][0])
+	}
+}
+
+func TestAlterTableAddColumnUnique(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+
+	run(t, exec, "ALTER TABLE users ADD COLUMN email TEXT UNIQUE")
+
+	// Both existing rows have NULL for email (allowed by UNIQUE)
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob', 'bob@example.com')")
+
+	// Duplicate email should fail
+	runExpectError(t, exec, "INSERT INTO users VALUES (3, 'charlie', 'bob@example.com')")
+}
+
+func TestUniqueColumnWithNotNull(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, email TEXT NOT NULL UNIQUE)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice@example.com')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob@example.com')")
+
+	// Duplicate should fail
+	runExpectError(t, exec, "INSERT INTO users VALUES (3, 'alice@example.com')")
+
+	// NULL should fail (due to NOT NULL, not UNIQUE)
+	runExpectError(t, exec, "INSERT INTO users VALUES (4, NULL)")
+}

@@ -8,7 +8,7 @@
 - [x] TRUNCATE TABLE
 - [x] ALTER TABLE (ADD COLUMN, DROP COLUMN)
 - [x] PRIMARY KEY 制約
-- [ ] UNIQUE 制約
+- [x] UNIQUE 制約
 - [x] DEFAULT 値
 - [ ] CHECK 制約
 - [ ] FOREIGN KEY 制約

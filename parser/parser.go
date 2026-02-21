@@ -36,7 +36,7 @@ func (p *Parser) Parse() (ast.Statement, error) {
 
 	switch p.curToken.Type {
 	case token.CREATE:
-		if p.peekToken.Type == token.INDEX {
+		if p.peekToken.Type == token.INDEX || p.peekToken.Type == token.UNIQUE {
 			stmt, err = p.parseCreateIndex()
 		} else {
 			stmt, err = p.parseCreateTable()
@@ -166,6 +166,12 @@ func (p *Parser) parseColumnDef() (ast.ColumnDef, error) {
 		notNull = true
 	}
 
+	unique := false
+	if p.curToken.Type == token.UNIQUE {
+		p.nextToken() // skip UNIQUE
+		unique = true
+	}
+
 	primaryKey := false
 	if p.curToken.Type == token.PRIMARY {
 		p.nextToken() // skip PRIMARY
@@ -186,7 +192,7 @@ func (p *Parser) parseColumnDef() (ast.ColumnDef, error) {
 		}
 	}
 
-	return ast.ColumnDef{Name: name, DataType: dataType, NotNull: notNull, PrimaryKey: primaryKey, Default: defaultExpr}, nil
+	return ast.ColumnDef{Name: name, DataType: dataType, NotNull: notNull, Unique: unique, PrimaryKey: primaryKey, Default: defaultExpr}, nil
 }
 
 // parseInsert parses: INSERT INTO <table> [(<columns>)] VALUES (<expr>, ...) [, (<expr>, ...) ...]
@@ -1003,10 +1009,15 @@ func (p *Parser) parsePrimary() (ast.Expr, error) {
 	}
 }
 
-// parseCreateIndex parses: CREATE INDEX <name> ON <table>(<column>)
+// parseCreateIndex parses: CREATE [UNIQUE] INDEX <name> ON <table>(<column>)
 func (p *Parser) parseCreateIndex() (ast.Statement, error) {
 	if err := p.expectToken(token.CREATE); err != nil {
 		return nil, err
+	}
+	unique := false
+	if p.curToken.Type == token.UNIQUE {
+		p.nextToken() // skip UNIQUE
+		unique = true
 	}
 	if err := p.expectToken(token.INDEX); err != nil {
 		return nil, err
@@ -1045,6 +1056,7 @@ func (p *Parser) parseCreateIndex() (ast.Statement, error) {
 		IndexName:   indexName,
 		TableName:   tableName,
 		ColumnNames: columnNames,
+		Unique:      unique,
 	}, nil
 }
 

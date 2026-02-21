@@ -208,6 +208,39 @@ func (si *SecondaryIndex) Lookup(vals []Value) []int64 {
 	return keys
 }
 
+// isAllNull returns true if all indexed columns in the row are NULL.
+func isAllNull(row Row, columnIdxs []int) bool {
+	for _, idx := range columnIdxs {
+		if row[idx] != nil {
+			return false
+		}
+	}
+	return true
+}
+
+// checkUnique checks if inserting or updating a row would violate the unique constraint.
+// excludeKey is the BTree key of the row being updated (-1 for inserts).
+func (si *SecondaryIndex) checkUnique(row Row, excludeKey int64) error {
+	if !si.Info.Unique {
+		return nil
+	}
+	if isAllNull(row, si.Info.ColumnIdxs) {
+		return nil
+	}
+	encoded := encodeCompositeKey(row, si.Info.ColumnIdxs)
+	val, found := si.tree.Get(encoded)
+	if !found {
+		return nil
+	}
+	keySet := val.(map[int64]struct{})
+	for k := range keySet {
+		if k != excludeKey {
+			return fmt.Errorf("duplicate key value violates unique constraint %q", si.Info.Name)
+		}
+	}
+	return nil
+}
+
 func (si *SecondaryIndex) addRow(key int64, row Row) {
 	encoded := encodeCompositeKey(row, si.Info.ColumnIdxs)
 	val, found := si.tree.Get(encoded)
@@ -268,6 +301,13 @@ func (s *Storage) Insert(tableName string, row Row) error {
 		return fmt.Errorf("table %q does not exist in storage", tableName)
 	}
 
+	// Check unique constraints before inserting
+	for _, idx := range tbl.indexes {
+		if err := idx.checkUnique(row, -1); err != nil {
+			return err
+		}
+	}
+
 	var key int64
 	if tbl.Info.PrimaryKeyCol >= 0 {
 		// Use PK column value as key
@@ -324,13 +364,27 @@ func (s *Storage) UpdateRow(tableName string, key int64, row Row) error {
 	}
 
 	// Remove old index entries
+	var oldRow Row
 	if len(tbl.indexes) > 0 {
 		oldVal, found := tbl.tree.Get(key)
 		if found {
-			oldRow := oldVal.(Row)
+			oldRow = oldVal.(Row)
 			for _, idx := range tbl.indexes {
 				idx.removeRow(key, oldRow)
 			}
+		}
+	}
+
+	// Check unique constraints before applying update
+	for _, idx := range tbl.indexes {
+		if err := idx.checkUnique(row, key); err != nil {
+			// Restore old index entries
+			if oldRow != nil {
+				for _, idx2 := range tbl.indexes {
+					idx2.addRow(key, oldRow)
+				}
+			}
+			return err
 		}
 	}
 
@@ -469,11 +523,21 @@ func (s *Storage) CreateIndex(info *IndexInfo) error {
 	}
 
 	// Build index from existing data
+	var buildErr error
 	tbl.tree.ForEach(func(key int64, value any) bool {
 		row := value.(Row)
+		if info.Unique {
+			if err := idx.checkUnique(row, -1); err != nil {
+				buildErr = err
+				return false
+			}
+		}
 		idx.addRow(key, row)
 		return true
 	})
+	if buildErr != nil {
+		return buildErr
+	}
 
 	tbl.indexes[strings.ToLower(info.Name)] = idx
 	s.indexTable[strings.ToLower(info.Name)] = lower

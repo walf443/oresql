@@ -117,6 +117,29 @@ func (e *Executor) executeCreateTable(stmt *ast.CreateTableStmt) (*Result, error
 		return nil, err
 	}
 	e.storage.CreateTable(info)
+
+	// Auto-create unique indexes for UNIQUE columns (non-PK)
+	for _, cd := range stmt.Columns {
+		if cd.Unique && !cd.PrimaryKey {
+			col, err := info.FindColumn(cd.Name)
+			if err != nil {
+				return nil, err
+			}
+			idxName := fmt.Sprintf("unique_%s_%s", info.Name, strings.ToLower(cd.Name))
+			idxInfo := &IndexInfo{
+				Name:        idxName,
+				TableName:   info.Name,
+				ColumnNames: []string{col.Name},
+				ColumnIdxs:  []int{col.Index},
+				Type:        "BTREE",
+				Unique:      true,
+			}
+			if err := e.storage.CreateIndex(idxInfo); err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	return &Result{Message: "table created"}, nil
 }
 
@@ -160,6 +183,7 @@ func (e *Executor) executeCreateIndex(stmt *ast.CreateIndexStmt) (*Result, error
 		ColumnNames: columnNames,
 		ColumnIdxs:  columnIdxs,
 		Type:        "BTREE",
+		Unique:      stmt.Unique,
 	}
 	if err := e.storage.CreateIndex(idxInfo); err != nil {
 		return nil, err
@@ -195,6 +219,23 @@ func (e *Executor) executeAlterTableAddColumn(stmt *ast.AlterTableAddColumnStmt)
 	if err := e.storage.AddColumn(stmt.TableName, defaultVal); err != nil {
 		return nil, err
 	}
+
+	// Auto-create unique index for UNIQUE column
+	if stmt.Column.Unique && !stmt.Column.PrimaryKey {
+		idxName := fmt.Sprintf("unique_%s_%s", info.Name, strings.ToLower(newCol.Name))
+		idxInfo := &IndexInfo{
+			Name:        idxName,
+			TableName:   info.Name,
+			ColumnNames: []string{newCol.Name},
+			ColumnIdxs:  []int{newCol.Index},
+			Type:        "BTREE",
+			Unique:      true,
+		}
+		if err := e.storage.CreateIndex(idxInfo); err != nil {
+			return nil, err
+		}
+	}
+
 	return &Result{Message: "table altered"}, nil
 }
 

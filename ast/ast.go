@@ -22,6 +22,7 @@ type ColumnDef struct {
 	Name       string
 	DataType   string // "INT" or "TEXT"
 	NotNull    bool
+	Unique     bool
 	PrimaryKey bool
 	Default    Expr // nil = no DEFAULT clause
 }
@@ -226,6 +227,7 @@ type CreateIndexStmt struct {
 	IndexName   string
 	TableName   string
 	ColumnNames []string
+	Unique      bool
 }
 
 func (s *CreateIndexStmt) NodeType() string { return "CreateIndex" }

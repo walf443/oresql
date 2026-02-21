@@ -43,6 +43,7 @@ type IndexInfo struct {
 	ColumnNames []string
 	ColumnIdxs  []int
 	Type        string // "BTREE" or "HASH"
+	Unique      bool
 }
 
 // Catalog holds all table schemas.

@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 )
 
 // WAL implements write-ahead logging for SQL statements.
 type WAL struct {
+	mu   sync.Mutex
 	file *os.File
 }
 
@@ -23,6 +25,8 @@ func NewWAL(path string) (*WAL, error) {
 
 // Append writes a SQL statement to the WAL file.
 func (w *WAL) Append(sql string) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	_, err := fmt.Fprintln(w.file, sql)
 	if err != nil {
 		return err
@@ -33,6 +37,8 @@ func (w *WAL) Append(sql string) error {
 // Replay reads the WAL file from the beginning and executes each statement via execFn.
 // Empty lines and lines starting with "--" are skipped.
 func (w *WAL) Replay(execFn func(sql string) error) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	if _, err := w.file.Seek(0, 0); err != nil {
 		return fmt.Errorf("failed to seek WAL file: %w", err)
 	}

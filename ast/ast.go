@@ -160,6 +160,14 @@ type DeleteStmt struct {
 func (s *DeleteStmt) NodeType() string { return "Delete" }
 func (s *DeleteStmt) statementNode()   {}
 
+// DropTableStmt represents DROP TABLE <name>.
+type DropTableStmt struct {
+	TableName string
+}
+
+func (s *DropTableStmt) NodeType() string { return "DropTable" }
+func (s *DropTableStmt) statementNode()   {}
+
 // BinaryExpr represents a comparison: left <op> right.
 type BinaryExpr struct {
 	Left  Expr

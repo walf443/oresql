@@ -45,6 +45,8 @@ func (p *Parser) Parse() (ast.Statement, error) {
 		stmt, err = p.parseUpdate()
 	case token.DELETE:
 		stmt, err = p.parseDelete()
+	case token.DROP:
+		stmt, err = p.parseDropTable()
 	default:
 		return nil, fmt.Errorf("unexpected token %s (%q)", p.curToken.Type, p.curToken.Literal)
 	}
@@ -342,6 +344,24 @@ func (p *Parser) parseDelete() (*ast.DeleteStmt, error) {
 		TableName: tableName,
 		Where:     where,
 	}, nil
+}
+
+// parseDropTable parses: DROP TABLE <name>
+func (p *Parser) parseDropTable() (*ast.DropTableStmt, error) {
+	if err := p.expectToken(token.DROP); err != nil {
+		return nil, err
+	}
+	if err := p.expectToken(token.TABLE); err != nil {
+		return nil, err
+	}
+
+	if !p.isIdent() {
+		return nil, fmt.Errorf("expected table name, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+	}
+	tableName := p.curToken.Literal
+	p.nextToken()
+
+	return &ast.DropTableStmt{TableName: tableName}, nil
 }
 
 // parseSelect parses: SELECT <columns> FROM <table> [WHERE <expr>]

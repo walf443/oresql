@@ -59,6 +59,7 @@ const (
 	DESC   // DESC keyword
 	LIMIT  // LIMIT keyword
 	OFFSET // OFFSET keyword
+	DROP   // DROP keyword
 )
 
 var tokenNames = map[TokenType]string{
@@ -109,6 +110,7 @@ var tokenNames = map[TokenType]string{
 	DESC:         "DESC",
 	LIMIT:        "LIMIT",
 	OFFSET:       "OFFSET",
+	DROP:         "DROP",
 }
 
 func (t TokenType) String() string {
@@ -150,6 +152,7 @@ var keywords = map[string]TokenType{
 	"DESC":   DESC,
 	"LIMIT":  LIMIT,
 	"OFFSET": OFFSET,
+	"DROP":   DROP,
 }
 
 // LookupIdent returns the keyword TokenType if the identifier is a keyword,

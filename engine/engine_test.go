@@ -983,6 +983,44 @@ func TestSelectOffsetExceedsRowCount(t *testing.T) {
 	}
 }
 
+func TestDropTable(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+
+	result := run(t, exec, "DROP TABLE users")
+	if result.Message != "table dropped" {
+		t.Errorf("expected 'table dropped', got %q", result.Message)
+	}
+
+	// SELECT after DROP TABLE should error
+	runExpectError(t, exec, "SELECT * FROM users")
+}
+
+func TestDropTableNotExists(t *testing.T) {
+	exec := NewExecutor()
+	runExpectError(t, exec, "DROP TABLE nonexistent")
+}
+
+func TestDropTableRecreate(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "DROP TABLE users")
+
+	// Re-create the table
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+
+	result := run(t, exec, "SELECT * FROM users")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(2) {
+		t.Errorf("expected id=2, got %v", result.Rows[0][0])
+	}
+}
+
 func TestErrorSelectNonexistentColumn(t *testing.T) {
 	exec := NewExecutor()
 	run(t, exec, "CREATE TABLE users (id INT)")

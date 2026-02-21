@@ -62,6 +62,15 @@ func (c *Catalog) CreateTable(name string, columnDefs []ast.ColumnDef) (*TableIn
 	return info, nil
 }
 
+func (c *Catalog) DropTable(name string) error {
+	lower := strings.ToLower(name)
+	if _, exists := c.tables[lower]; !exists {
+		return fmt.Errorf("table %q does not exist", name)
+	}
+	delete(c.tables, lower)
+	return nil
+}
+
 func (c *Catalog) GetTable(name string) (*TableInfo, error) {
 	lower := strings.ToLower(name)
 	info, ok := c.tables[lower]

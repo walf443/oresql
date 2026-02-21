@@ -94,6 +94,8 @@ func (e *Executor) Execute(stmt ast.Statement) (*Result, error) {
 		return e.executeUpdate(s)
 	case *ast.DeleteStmt:
 		return e.executeDelete(s)
+	case *ast.DropTableStmt:
+		return e.executeDropTable(s)
 	default:
 		return nil, fmt.Errorf("unknown statement type: %T", stmt)
 	}
@@ -106,6 +108,14 @@ func (e *Executor) executeCreateTable(stmt *ast.CreateTableStmt) (*Result, error
 	}
 	e.storage.CreateTable(info)
 	return &Result{Message: "table created"}, nil
+}
+
+func (e *Executor) executeDropTable(stmt *ast.DropTableStmt) (*Result, error) {
+	if err := e.catalog.DropTable(stmt.TableName); err != nil {
+		return nil, err
+	}
+	e.storage.DropTable(stmt.TableName)
+	return &Result{Message: "table dropped"}, nil
 }
 
 func (e *Executor) executeInsert(stmt *ast.InsertStmt) (*Result, error) {

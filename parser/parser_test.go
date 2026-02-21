@@ -738,6 +738,17 @@ func TestParseSelectOrderByLimitOffset(t *testing.T) {
 	}
 }
 
+func TestParseDropTable(t *testing.T) {
+	stmt := parse(t, "DROP TABLE users")
+	dt, ok := stmt.(*ast.DropTableStmt)
+	if !ok {
+		t.Fatalf("expected DropTableStmt, got %T", stmt)
+	}
+	if dt.TableName != "users" {
+		t.Errorf("table name: expected %q, got %q", "users", dt.TableName)
+	}
+}
+
 func TestParseError(t *testing.T) {
 	inputs := []string{
 		"CREATE",

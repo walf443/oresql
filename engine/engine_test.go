@@ -2694,3 +2694,135 @@ func TestSelectWithIndexRangeAndFilter(t *testing.T) {
 		t.Errorf("expected ids 3 and 5, got %v", ids)
 	}
 }
+
+func TestSelectWithCompositeIndexRangeGt(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (col1 INT, col2 INT, col3 TEXT)")
+	run(t, exec, "CREATE INDEX idx ON t(col1, col2)")
+	run(t, exec, "INSERT INTO t VALUES (1, 3, 'a')")
+	run(t, exec, "INSERT INTO t VALUES (1, 5, 'b')")
+	run(t, exec, "INSERT INTO t VALUES (1, 7, 'c')")
+	run(t, exec, "INSERT INTO t VALUES (1, 10, 'd')")
+	run(t, exec, "INSERT INTO t VALUES (2, 1, 'e')")
+	run(t, exec, "INSERT INTO t VALUES (2, 8, 'f')")
+
+	result := run(t, exec, "SELECT * FROM t WHERE col1 = 1 AND col2 > 5")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	col2s := map[int64]bool{}
+	for _, row := range result.Rows {
+		col2s[row[1].(int64)] = true
+	}
+	if !col2s[7] || !col2s[10] {
+		t.Errorf("expected col2 7 and 10, got %v", col2s)
+	}
+}
+
+func TestSelectWithCompositeIndexRangeBetween(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (col1 INT, col2 INT, col3 TEXT)")
+	run(t, exec, "CREATE INDEX idx ON t(col1, col2)")
+	run(t, exec, "INSERT INTO t VALUES (1, 1, 'a')")
+	run(t, exec, "INSERT INTO t VALUES (1, 3, 'b')")
+	run(t, exec, "INSERT INTO t VALUES (1, 5, 'c')")
+	run(t, exec, "INSERT INTO t VALUES (1, 7, 'd')")
+	run(t, exec, "INSERT INTO t VALUES (1, 10, 'e')")
+	run(t, exec, "INSERT INTO t VALUES (2, 5, 'f')")
+
+	result := run(t, exec, "SELECT * FROM t WHERE col1 = 1 AND col2 BETWEEN 3 AND 7")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	col2s := map[int64]bool{}
+	for _, row := range result.Rows {
+		col2s[row[1].(int64)] = true
+	}
+	if !col2s[3] || !col2s[5] || !col2s[7] {
+		t.Errorf("expected col2 3,5,7, got %v", col2s)
+	}
+}
+
+func TestSelectWithCompositeIndexRangeLt(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (col1 TEXT, col2 INT, col3 TEXT)")
+	run(t, exec, "CREATE INDEX idx ON t(col1, col2)")
+	run(t, exec, "INSERT INTO t VALUES ('a', 3, 'x')")
+	run(t, exec, "INSERT INTO t VALUES ('a', 7, 'y')")
+	run(t, exec, "INSERT INTO t VALUES ('a', 10, 'z')")
+	run(t, exec, "INSERT INTO t VALUES ('b', 5, 'w')")
+
+	result := run(t, exec, "SELECT * FROM t WHERE col1 = 'a' AND col2 < 10")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	col2s := map[int64]bool{}
+	for _, row := range result.Rows {
+		col2s[row[1].(int64)] = true
+	}
+	if !col2s[3] || !col2s[7] {
+		t.Errorf("expected col2 3 and 7, got %v", col2s)
+	}
+}
+
+func TestSelectWithCompositeIndexRangeNoMatch(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (col1 INT, col2 INT)")
+	run(t, exec, "CREATE INDEX idx ON t(col1, col2)")
+	run(t, exec, "INSERT INTO t VALUES (1, 3)")
+	run(t, exec, "INSERT INTO t VALUES (1, 5)")
+	run(t, exec, "INSERT INTO t VALUES (2, 1)")
+
+	result := run(t, exec, "SELECT * FROM t WHERE col1 = 1 AND col2 > 100")
+	if len(result.Rows) != 0 {
+		t.Fatalf("expected 0 rows, got %d", len(result.Rows))
+	}
+}
+
+func TestSelectWithCompositeIndexRangeWithPostFilter(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (col1 INT, col2 INT, col3 TEXT)")
+	run(t, exec, "CREATE INDEX idx ON t(col1, col2)")
+	run(t, exec, "INSERT INTO t VALUES (1, 3, 'x')")
+	run(t, exec, "INSERT INTO t VALUES (1, 5, 'y')")
+	run(t, exec, "INSERT INTO t VALUES (1, 7, 'x')")
+	run(t, exec, "INSERT INTO t VALUES (1, 10, 'y')")
+	run(t, exec, "INSERT INTO t VALUES (2, 4, 'x')")
+
+	// col1=1 AND col2>3 uses composite index, col3='x' is post-filtered
+	result := run(t, exec, "SELECT * FROM t WHERE col1 = 1 AND col2 > 3 AND col3 = 'x'")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][1].(int64) != 7 {
+		t.Errorf("expected col2=7, got %v", result.Rows[0][1])
+	}
+	if result.Rows[0][2].(string) != "x" {
+		t.Errorf("expected col3='x', got %v", result.Rows[0][2])
+	}
+}
+
+func TestSelectWithCompositeIndexRangePartialPrefix(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (a INT, b INT, c INT, d TEXT)")
+	run(t, exec, "CREATE INDEX idx ON t(a, b, c)")
+	run(t, exec, "INSERT INTO t VALUES (1, 2, 3, 'x')")
+	run(t, exec, "INSERT INTO t VALUES (1, 2, 5, 'y')")
+	run(t, exec, "INSERT INTO t VALUES (1, 2, 8, 'z')")
+	run(t, exec, "INSERT INTO t VALUES (1, 2, 10, 'w')")
+	run(t, exec, "INSERT INTO t VALUES (1, 3, 1, 'v')")
+	run(t, exec, "INSERT INTO t VALUES (2, 2, 5, 'u')")
+
+	// a=1 AND b=2 AND c>=5 uses 3-column composite index
+	result := run(t, exec, "SELECT * FROM t WHERE a = 1 AND b = 2 AND c >= 5")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	cs := map[int64]bool{}
+	for _, row := range result.Rows {
+		cs[row[2].(int64)] = true
+	}
+	if !cs[5] || !cs[8] || !cs[10] {
+		t.Errorf("expected c 5,8,10, got %v", cs)
+	}
+}

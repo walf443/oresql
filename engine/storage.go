@@ -85,6 +85,64 @@ func encodeSingleValue(val Value) KeyEncoding {
 	return KeyEncoding(buf.String())
 }
 
+// encodeValues encodes multiple values into a single KeyEncoding.
+func encodeValues(vals []Value) KeyEncoding {
+	var buf strings.Builder
+	for _, v := range vals {
+		encodeValue(&buf, v)
+	}
+	return KeyEncoding(buf.String())
+}
+
+// CompositeRangeScan returns BTree keys for rows matching a composite index prefix
+// with a range condition on the last column.
+// prefixVals are the equality values for the first N-1 columns;
+// the range condition applies to the Nth column.
+func (si *SecondaryIndex) CompositeRangeScan(
+	prefixVals []Value,
+	fromVal *Value, fromInclusive bool,
+	toVal *Value, toInclusive bool,
+) []int64 {
+	if len(prefixVals)+1 != len(si.Info.ColumnIdxs) {
+		return nil
+	}
+
+	var fromKey *KeyEncoding
+	var toKey *KeyEncoding
+
+	if fromVal != nil {
+		vals := append(append([]Value{}, prefixVals...), *fromVal)
+		k := encodeValues(vals)
+		fromKey = &k
+	} else {
+		// No lower bound: start right after the prefix itself
+		k := encodeValues(prefixVals)
+		fromKey = &k
+		fromInclusive = false
+	}
+
+	if toVal != nil {
+		vals := append(append([]Value{}, prefixVals...), *toVal)
+		k := encodeValues(vals)
+		toKey = &k
+	} else {
+		// No upper bound: stop at prefix + \xff (exclusive)
+		k := encodeValues(prefixVals) + "\xff"
+		toKey = &k
+		toInclusive = false
+	}
+
+	var keys []int64
+	si.tree.ForEachRange(fromKey, fromInclusive, toKey, toInclusive, func(key KeyEncoding, value any) bool {
+		keySet := value.(map[int64]struct{})
+		for k := range keySet {
+			keys = append(keys, k)
+		}
+		return true
+	})
+	return keys
+}
+
 // RangeScan returns BTree keys for rows whose indexed value falls within the given range.
 // Only works for single-column indexes; returns nil for composite indexes.
 func (si *SecondaryIndex) RangeScan(fromVal *Value, fromInclusive bool, toVal *Value, toInclusive bool) []int64 {

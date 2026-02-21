@@ -264,6 +264,49 @@ func TestParseSelectCountStarLowerCase(t *testing.T) {
 	}
 }
 
+func TestParseIsNull(t *testing.T) {
+	stmt := parse(t, "SELECT * FROM users WHERE name IS NULL")
+	sel := stmt.(*ast.SelectStmt)
+	isNull, ok := sel.Where.(*ast.IsNullExpr)
+	if !ok {
+		t.Fatalf("expected IsNullExpr, got %T", sel.Where)
+	}
+	ident := isNull.Expr.(*ast.IdentExpr)
+	if ident.Name != "name" {
+		t.Errorf("expected column name 'name', got %q", ident.Name)
+	}
+	if isNull.Not {
+		t.Errorf("expected Not=false, got true")
+	}
+}
+
+func TestParseIsNotNull(t *testing.T) {
+	stmt := parse(t, "SELECT * FROM users WHERE name IS NOT NULL")
+	sel := stmt.(*ast.SelectStmt)
+	isNull, ok := sel.Where.(*ast.IsNullExpr)
+	if !ok {
+		t.Fatalf("expected IsNullExpr, got %T", sel.Where)
+	}
+	ident := isNull.Expr.(*ast.IdentExpr)
+	if ident.Name != "name" {
+		t.Errorf("expected column name 'name', got %q", ident.Name)
+	}
+	if !isNull.Not {
+		t.Errorf("expected Not=true, got false")
+	}
+}
+
+func TestParseInsertNull(t *testing.T) {
+	stmt := parse(t, "INSERT INTO users VALUES (1, NULL)")
+	ins := stmt.(*ast.InsertStmt)
+	if len(ins.Rows[0]) != 2 {
+		t.Fatalf("expected 2 values, got %d", len(ins.Rows[0]))
+	}
+	if _, ok := ins.Rows[0][1].(*ast.NullLitExpr); !ok {
+		t.Errorf("expected NullLitExpr, got %T", ins.Rows[0][1])
+	}
+}
+
 func TestParseError(t *testing.T) {
 	inputs := []string{
 		"CREATE",

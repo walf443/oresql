@@ -383,6 +383,21 @@ func (p *Parser) parseComparison() (ast.Expr, error) {
 		return nil, err
 	}
 
+	// Handle IS [NOT] NULL
+	if p.curToken.Type == token.IS {
+		p.nextToken() // skip IS
+		not := false
+		if p.curToken.Type == token.NOT {
+			not = true
+			p.nextToken() // skip NOT
+		}
+		if p.curToken.Type != token.NULL {
+			return nil, fmt.Errorf("expected NULL after IS, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+		}
+		p.nextToken() // skip NULL
+		return &ast.IsNullExpr{Expr: left, Not: not}, nil
+	}
+
 	op := ""
 	switch p.curToken.Type {
 	case token.EQ:
@@ -437,6 +452,9 @@ func (p *Parser) parsePrimary() (ast.Expr, error) {
 		expr := &ast.StringLitExpr{Value: p.curToken.Literal}
 		p.nextToken()
 		return expr, nil
+	case token.NULL:
+		p.nextToken()
+		return &ast.NullLitExpr{}, nil
 	case token.LPAREN:
 		p.nextToken() // skip (
 		expr, err := p.parseExpr()

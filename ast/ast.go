@@ -91,6 +91,21 @@ type CallExpr struct {
 func (e *CallExpr) NodeType() string { return "Call" }
 func (e *CallExpr) exprNode()       {}
 
+// NullLitExpr represents the NULL literal.
+type NullLitExpr struct{}
+
+func (e *NullLitExpr) NodeType() string { return "NullLit" }
+func (e *NullLitExpr) exprNode()       {}
+
+// IsNullExpr represents <expr> IS [NOT] NULL.
+type IsNullExpr struct {
+	Expr Expr
+	Not  bool // true for IS NOT NULL
+}
+
+func (e *IsNullExpr) NodeType() string { return "IsNull" }
+func (e *IsNullExpr) exprNode()       {}
+
 // BinaryExpr represents a comparison: left <op> right.
 type BinaryExpr struct {
 	Left  Expr

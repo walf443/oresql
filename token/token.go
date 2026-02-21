@@ -43,6 +43,8 @@ const (
 	INT   // INT type keyword
 	TEXT  // TEXT type keyword
 	COUNT // COUNT aggregate function
+	IS    // IS keyword
+	NULL  // NULL keyword
 )
 
 var tokenNames = map[TokenType]string{
@@ -77,6 +79,8 @@ var tokenNames = map[TokenType]string{
 	INT:        "INT",
 	TEXT:       "TEXT",
 	COUNT:      "COUNT",
+	IS:         "IS",
+	NULL:       "NULL",
 }
 
 func (t TokenType) String() string {
@@ -106,6 +110,8 @@ var keywords = map[string]TokenType{
 	"INT":    INT,
 	"TEXT":   TEXT,
 	"COUNT":  COUNT,
+	"IS":     IS,
+	"NULL":   NULL,
 }
 
 // LookupIdent returns the keyword TokenType if the identifier is a keyword,

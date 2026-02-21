@@ -282,6 +282,77 @@ func TestErrorSelectNonexistentTable(t *testing.T) {
 	runExpectError(t, exec, "SELECT * FROM nonexistent")
 }
 
+func TestInsertNull(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	result := run(t, exec, "INSERT INTO users VALUES (1, NULL)")
+	if result.Message != "1 row inserted" {
+		t.Errorf("expected '1 row inserted', got %q", result.Message)
+	}
+
+	result = run(t, exec, "SELECT * FROM users")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(1) {
+		t.Errorf("expected id=1, got %v", result.Rows[0][0])
+	}
+	if result.Rows[0][1] != nil {
+		t.Errorf("expected name=nil, got %v", result.Rows[0][1])
+	}
+}
+
+func TestSelectWhereIsNull(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, NULL)")
+	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
+
+	result := run(t, exec, "SELECT id FROM users WHERE name IS NULL")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(2) {
+		t.Errorf("expected id=2, got %v", result.Rows[0][0])
+	}
+}
+
+func TestSelectWhereIsNotNull(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, NULL)")
+	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
+
+	result := run(t, exec, "SELECT id FROM users WHERE name IS NOT NULL")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(1) {
+		t.Errorf("expected id=1, got %v", result.Rows[0][0])
+	}
+	if result.Rows[1][0] != int64(3) {
+		t.Errorf("expected id=3, got %v", result.Rows[1][0])
+	}
+}
+
+func TestNullComparisonReturnsFalse(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, NULL)")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+
+	// NULL = 'bob' should be false (SQL semantics)
+	result := run(t, exec, "SELECT * FROM users WHERE name = 'bob'")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(2) {
+		t.Errorf("expected id=2, got %v", result.Rows[0][0])
+	}
+}
+
 func TestErrorSelectNonexistentColumn(t *testing.T) {
 	exec := NewExecutor()
 	run(t, exec, "CREATE TABLE users (id INT)")

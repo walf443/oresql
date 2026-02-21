@@ -67,16 +67,18 @@ func (e *Executor) executeInsert(stmt *ast.InsertStmt) (*Result, error) {
 				return nil, err
 			}
 
-			// Type check
-			col := info.Columns[i]
-			switch col.DataType {
-			case "INT":
-				if _, ok := val.(int64); !ok {
-					return nil, fmt.Errorf("column %q expects INT, got %T", col.Name, val)
-				}
-			case "TEXT":
-				if _, ok := val.(string); !ok {
-					return nil, fmt.Errorf("column %q expects TEXT, got %T", col.Name, val)
+			// Type check (NULL is allowed for any column)
+			if val != nil {
+				col := info.Columns[i]
+				switch col.DataType {
+				case "INT":
+					if _, ok := val.(int64); !ok {
+						return nil, fmt.Errorf("column %q expects INT, got %T", col.Name, val)
+					}
+				case "TEXT":
+					if _, ok := val.(string); !ok {
+						return nil, fmt.Errorf("column %q expects TEXT, got %T", col.Name, val)
+					}
 				}
 			}
 
@@ -259,6 +261,8 @@ func evalLiteral(expr ast.Expr) (Value, error) {
 		return e.Value, nil
 	case *ast.StringLitExpr:
 		return e.Value, nil
+	case *ast.NullLitExpr:
+		return nil, nil
 	default:
 		return nil, fmt.Errorf("expected literal value, got %T", expr)
 	}
@@ -280,6 +284,17 @@ func evalExpr(expr ast.Expr, row Row, info *TableInfo) (Value, error) {
 		return e.Value, nil
 	case *ast.StringLitExpr:
 		return e.Value, nil
+	case *ast.NullLitExpr:
+		return nil, nil
+	case *ast.IsNullExpr:
+		val, err := evalExpr(e.Expr, row, info)
+		if err != nil {
+			return nil, err
+		}
+		if e.Not {
+			return val != nil, nil
+		}
+		return val == nil, nil
 	case *ast.BinaryExpr:
 		left, err := evalExpr(e.Left, row, info)
 		if err != nil {
@@ -321,6 +336,11 @@ func evalExpr(expr ast.Expr, row Row, info *TableInfo) (Value, error) {
 }
 
 func evalComparison(left Value, op string, right Value) (bool, error) {
+	// NULL comparison: any comparison with NULL returns false (SQL semantics)
+	if left == nil || right == nil {
+		return false, nil
+	}
+
 	// Both int64
 	if lv, ok := left.(int64); ok {
 		if rv, ok := right.(int64); ok {

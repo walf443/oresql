@@ -482,6 +482,23 @@ func (s *Storage) GetByKeys(tableName string, keys []int64) ([]Row, error) {
 	return rows, nil
 }
 
+// GetKeyRowsByKeys retrieves rows with their BTree keys by their BTree keys.
+func (s *Storage) GetKeyRowsByKeys(tableName string, keys []int64) ([]KeyRow, error) {
+	lower := strings.ToLower(tableName)
+	tbl, ok := s.tables[lower]
+	if !ok {
+		return nil, fmt.Errorf("table %q does not exist in storage", tableName)
+	}
+	var rows []KeyRow
+	for _, key := range keys {
+		val, found := tbl.tree.Get(key)
+		if found {
+			rows = append(rows, KeyRow{Key: key, Row: val.(Row)})
+		}
+	}
+	return rows, nil
+}
+
 // Scan returns all rows in key order.
 func (s *Storage) Scan(tableName string) ([]Row, error) {
 	lower := strings.ToLower(tableName)

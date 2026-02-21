@@ -171,11 +171,12 @@ func (e *Executor) executeDropIndex(stmt *ast.DropIndexStmt) (*Result, error) {
 }
 
 // tryIndexLookup attempts to use an index for equality conditions in WHERE.
-func (e *Executor) tryIndexLookup(stmt *ast.SelectStmt, info *TableInfo) ([]Row, bool) {
-	if stmt.Where == nil {
+// Returns BTree keys matching the index lookup.
+func (e *Executor) tryIndexLookup(where ast.Expr, info *TableInfo) ([]int64, bool) {
+	if where == nil {
 		return nil, false
 	}
-	eqConds := extractEqualityConditions(stmt.Where)
+	eqConds := extractEqualityConditions(where)
 	if len(eqConds) == 0 {
 		return nil, false
 	}
@@ -198,13 +199,9 @@ func (e *Executor) tryIndexLookup(stmt *ast.SelectStmt, info *TableInfo) ([]Row,
 		}
 		keys := idx.Lookup(vals)
 		if keys == nil {
-			return []Row{}, true
+			return []int64{}, true
 		}
-		rows, err := e.storage.GetByKeys(info.Name, keys)
-		if err != nil {
-			return nil, false
-		}
-		return rows, true
+		return keys, true
 	}
 	return nil, false
 }
@@ -311,11 +308,12 @@ func dedupKeys(keys []int64) []int64 {
 }
 
 // tryIndexInLookup attempts to use an index for IN conditions in WHERE.
-func (e *Executor) tryIndexInLookup(stmt *ast.SelectStmt, info *TableInfo) ([]Row, bool) {
-	if stmt.Where == nil {
+// Returns BTree keys matching the index lookup.
+func (e *Executor) tryIndexInLookup(where ast.Expr, info *TableInfo) ([]int64, bool) {
+	if where == nil {
 		return nil, false
 	}
-	inConds := extractInConditions(stmt.Where)
+	inConds := extractInConditions(where)
 	if len(inConds) == 0 {
 		return nil, false
 	}
@@ -336,17 +334,13 @@ func (e *Executor) tryIndexInLookup(stmt *ast.SelectStmt, info *TableInfo) ([]Ro
 		}
 		keys = dedupKeys(keys)
 		if len(keys) == 0 {
-			return []Row{}, true
+			return []int64{}, true
 		}
-		rows, err := e.storage.GetByKeys(info.Name, keys)
-		if err != nil {
-			return nil, false
-		}
-		return rows, true
+		return keys, true
 	}
 
 	// 2. Try composite indexes: prefix equality + last column IN
-	eqConds := extractEqualityConditions(stmt.Where)
+	eqConds := extractEqualityConditions(where)
 	indexes := e.storage.GetIndexes(info.Name)
 	for _, idx := range indexes {
 		if len(idx.Info.ColumnNames) < 2 {
@@ -381,13 +375,9 @@ func (e *Executor) tryIndexInLookup(stmt *ast.SelectStmt, info *TableInfo) ([]Ro
 		}
 		keys = dedupKeys(keys)
 		if len(keys) == 0 {
-			return []Row{}, true
+			return []int64{}, true
 		}
-		rows, err := e.storage.GetByKeys(info.Name, keys)
-		if err != nil {
-			return nil, false
-		}
-		return rows, true
+		return keys, true
 	}
 
 	return nil, false
@@ -531,12 +521,13 @@ func collectRangeConditions(expr ast.Expr, result map[string]*rangeCondition) {
 }
 
 // tryIndexRangeScan attempts to use an index for range conditions in WHERE.
-func (e *Executor) tryIndexRangeScan(stmt *ast.SelectStmt, info *TableInfo) ([]Row, bool) {
-	if stmt.Where == nil {
+// Returns BTree keys matching the index range scan.
+func (e *Executor) tryIndexRangeScan(where ast.Expr, info *TableInfo) ([]int64, bool) {
+	if where == nil {
 		return nil, false
 	}
 
-	rangeConds := extractRangeConditions(stmt.Where)
+	rangeConds := extractRangeConditions(where)
 	if len(rangeConds) == 0 {
 		return nil, false
 	}
@@ -557,17 +548,13 @@ func (e *Executor) tryIndexRangeScan(stmt *ast.SelectStmt, info *TableInfo) ([]R
 
 		keys := idx.RangeScan(rc.fromVal, rc.fromInclusive, rc.toVal, rc.toInclusive)
 		if keys == nil {
-			return []Row{}, true
+			return []int64{}, true
 		}
-		rows, err := e.storage.GetByKeys(info.Name, keys)
-		if err != nil {
-			return nil, false
-		}
-		return rows, true
+		return keys, true
 	}
 
 	// Try composite indexes: prefix equality + next column range
-	eqConds := extractEqualityConditions(stmt.Where)
+	eqConds := extractEqualityConditions(where)
 	indexes := e.storage.GetIndexes(info.Name)
 	for _, idx := range indexes {
 		if len(idx.Info.ColumnNames) < 2 {
@@ -596,16 +583,28 @@ func (e *Executor) tryIndexRangeScan(stmt *ast.SelectStmt, info *TableInfo) ([]R
 			}
 			keys := idx.CompositeRangeScan(prefixVals, rc.fromVal, rc.fromInclusive, rc.toVal, rc.toInclusive)
 			if keys == nil {
-				return []Row{}, true
+				return []int64{}, true
 			}
-			rows, err := e.storage.GetByKeys(info.Name, keys)
-			if err != nil {
-				return nil, false
-			}
-			return rows, true
+			return keys, true
 		}
 	}
 
+	return nil, false
+}
+
+// tryIndexScan attempts to use an index for the WHERE clause.
+// Tries equality lookup, then IN lookup, then range scan.
+// Returns BTree keys and whether an index was used.
+func (e *Executor) tryIndexScan(where ast.Expr, info *TableInfo) ([]int64, bool) {
+	if keys, ok := e.tryIndexLookup(where, info); ok {
+		return keys, true
+	}
+	if keys, ok := e.tryIndexInLookup(where, info); ok {
+		return keys, true
+	}
+	if keys, ok := e.tryIndexRangeScan(where, info); ok {
+		return keys, true
+	}
 	return nil, false
 }
 
@@ -744,7 +743,12 @@ func (e *Executor) executeUpdate(stmt *ast.UpdateStmt) (*Result, error) {
 		return nil, err
 	}
 
-	allRows, err := e.storage.ScanWithKeys(stmt.TableName)
+	var allRows []KeyRow
+	if keys, indexUsed := e.tryIndexScan(stmt.Where, info); indexUsed {
+		allRows, err = e.storage.GetKeyRowsByKeys(info.Name, keys)
+	} else {
+		allRows, err = e.storage.ScanWithKeys(stmt.TableName)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -804,7 +808,12 @@ func (e *Executor) executeDelete(stmt *ast.DeleteStmt) (*Result, error) {
 		return nil, err
 	}
 
-	allRows, err := e.storage.ScanWithKeys(stmt.TableName)
+	var allRows []KeyRow
+	if keys, indexUsed := e.tryIndexScan(stmt.Where, info); indexUsed {
+		allRows, err = e.storage.GetKeyRowsByKeys(info.Name, keys)
+	} else {
+		allRows, err = e.storage.ScanWithKeys(stmt.TableName)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -897,14 +906,13 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 		}
 	}
 
-	// Try index lookup, then IN lookup, then range scan, fall back to full scan
+	// Try index scan, fall back to full scan
 	var allRows []Row
-	if indexedRows, indexUsed := e.tryIndexLookup(stmt, info); indexUsed {
-		allRows = indexedRows
-	} else if indexedRows, indexUsed := e.tryIndexInLookup(stmt, info); indexUsed {
-		allRows = indexedRows
-	} else if indexedRows, indexUsed := e.tryIndexRangeScan(stmt, info); indexUsed {
-		allRows = indexedRows
+	if keys, indexUsed := e.tryIndexScan(stmt.Where, info); indexUsed {
+		allRows, err = e.storage.GetByKeys(info.Name, keys)
+		if err != nil {
+			return nil, err
+		}
 	} else {
 		allRows, err = e.storage.Scan(stmt.TableName)
 		if err != nil {

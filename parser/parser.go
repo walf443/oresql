@@ -43,6 +43,8 @@ func (p *Parser) Parse() (ast.Statement, error) {
 		stmt, err = p.parseSelect()
 	case token.UPDATE:
 		stmt, err = p.parseUpdate()
+	case token.DELETE:
+		stmt, err = p.parseDelete()
 	default:
 		return nil, fmt.Errorf("unexpected token %s (%q)", p.curToken.Type, p.curToken.Literal)
 	}
@@ -309,6 +311,37 @@ func (p *Parser) parseSetClause() (ast.SetClause, error) {
 	}
 
 	return ast.SetClause{Column: column, Value: value}, nil
+}
+
+// parseDelete parses: DELETE FROM <table> [WHERE <expr>]
+func (p *Parser) parseDelete() (*ast.DeleteStmt, error) {
+	if err := p.expectToken(token.DELETE); err != nil {
+		return nil, err
+	}
+	if err := p.expectToken(token.FROM); err != nil {
+		return nil, err
+	}
+
+	if !p.isIdent() {
+		return nil, fmt.Errorf("expected table name, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+	}
+	tableName := p.curToken.Literal
+	p.nextToken()
+
+	var where ast.Expr
+	var err error
+	if p.curToken.Type == token.WHERE {
+		p.nextToken() // skip WHERE
+		where, err = p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &ast.DeleteStmt{
+		TableName: tableName,
+		Where:     where,
+	}, nil
 }
 
 // parseSelect parses: SELECT <columns> FROM <table> [WHERE <expr>]

@@ -91,6 +91,8 @@ func (e *Executor) Execute(stmt ast.Statement) (*Result, error) {
 		return e.executeSelect(s)
 	case *ast.UpdateStmt:
 		return e.executeUpdate(s)
+	case *ast.DeleteStmt:
+		return e.executeDelete(s)
 	default:
 		return nil, fmt.Errorf("unknown statement type: %T", stmt)
 	}
@@ -217,6 +219,45 @@ func (e *Executor) executeUpdate(stmt *ast.UpdateStmt) (*Result, error) {
 	msg := fmt.Sprintf("%d rows updated", updated)
 	if updated == 1 {
 		msg = "1 row updated"
+	}
+
+	return &Result{Message: msg}, nil
+}
+
+func (e *Executor) executeDelete(stmt *ast.DeleteStmt) (*Result, error) {
+	info, err := e.catalog.GetTable(stmt.TableName)
+	if err != nil {
+		return nil, err
+	}
+
+	allRows, err := e.storage.Scan(stmt.TableName)
+	if err != nil {
+		return nil, err
+	}
+
+	keepIndices := make(map[int]bool)
+	deleted := 0
+	for i, row := range allRows {
+		if stmt.Where != nil {
+			match, err := evalWhere(stmt.Where, row, info)
+			if err != nil {
+				return nil, err
+			}
+			if !match {
+				keepIndices[i] = true
+				continue
+			}
+		}
+		deleted++
+	}
+
+	if err := e.storage.DeleteRows(stmt.TableName, keepIndices); err != nil {
+		return nil, err
+	}
+
+	msg := fmt.Sprintf("%d rows deleted", deleted)
+	if deleted == 1 {
+		msg = "1 row deleted"
 	}
 
 	return &Result{Message: msg}, nil

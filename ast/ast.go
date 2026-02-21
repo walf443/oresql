@@ -142,6 +142,15 @@ type UpdateStmt struct {
 func (s *UpdateStmt) NodeType() string { return "Update" }
 func (s *UpdateStmt) statementNode()   {}
 
+// DeleteStmt represents DELETE FROM <table> [WHERE <condition>].
+type DeleteStmt struct {
+	TableName string
+	Where     Expr // nil if no WHERE clause
+}
+
+func (s *DeleteStmt) NodeType() string { return "Delete" }
+func (s *DeleteStmt) statementNode()   {}
+
 // BinaryExpr represents a comparison: left <op> right.
 type BinaryExpr struct {
 	Left  Expr

@@ -40,6 +40,22 @@ func (s *Storage) Insert(tableName string, row Row) error {
 	return nil
 }
 
+func (s *Storage) DeleteRows(tableName string, keepIndices map[int]bool) error {
+	lower := strings.ToLower(tableName)
+	tbl, ok := s.tables[lower]
+	if !ok {
+		return fmt.Errorf("table %q does not exist in storage", tableName)
+	}
+	var kept []Row
+	for i, row := range tbl.Rows {
+		if keepIndices[i] {
+			kept = append(kept, row)
+		}
+	}
+	tbl.Rows = kept
+	return nil
+}
+
 func (s *Storage) Scan(tableName string) ([]Row, error) {
 	lower := strings.ToLower(tableName)
 	tbl, ok := s.tables[lower]

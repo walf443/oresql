@@ -52,6 +52,7 @@ const (
 	AS     // AS keyword
 	UPDATE // UPDATE keyword
 	SET    // SET keyword
+	DELETE // DELETE keyword
 )
 
 var tokenNames = map[TokenType]string{
@@ -95,6 +96,7 @@ var tokenNames = map[TokenType]string{
 	AS:           "AS",
 	UPDATE:       "UPDATE",
 	SET:          "SET",
+	DELETE:       "DELETE",
 }
 
 func (t TokenType) String() string {
@@ -129,6 +131,7 @@ var keywords = map[string]TokenType{
 	"AS":     AS,
 	"UPDATE": UPDATE,
 	"SET":    SET,
+	"DELETE": DELETE,
 }
 
 // LookupIdent returns the keyword TokenType if the identifier is a keyword,

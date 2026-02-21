@@ -570,6 +570,38 @@ func TestParseUpdateNoWhere(t *testing.T) {
 	}
 }
 
+func TestParseDelete(t *testing.T) {
+	stmt := parse(t, "DELETE FROM users WHERE id = 1")
+	del, ok := stmt.(*ast.DeleteStmt)
+	if !ok {
+		t.Fatalf("expected DeleteStmt, got %T", stmt)
+	}
+	if del.TableName != "users" {
+		t.Errorf("table name: expected %q, got %q", "users", del.TableName)
+	}
+	if del.Where == nil {
+		t.Fatal("expected WHERE clause")
+	}
+	bin := del.Where.(*ast.BinaryExpr)
+	if bin.Left.(*ast.IdentExpr).Name != "id" {
+		t.Errorf("where left: expected 'id'")
+	}
+	if bin.Right.(*ast.IntLitExpr).Value != 1 {
+		t.Errorf("where right: expected 1")
+	}
+}
+
+func TestParseDeleteNoWhere(t *testing.T) {
+	stmt := parse(t, "DELETE FROM users")
+	del := stmt.(*ast.DeleteStmt)
+	if del.TableName != "users" {
+		t.Errorf("table name: expected %q, got %q", "users", del.TableName)
+	}
+	if del.Where != nil {
+		t.Errorf("expected no WHERE, got %v", del.Where)
+	}
+}
+
 func TestParseError(t *testing.T) {
 	inputs := []string{
 		"CREATE",

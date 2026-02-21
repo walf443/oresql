@@ -16,8 +16,8 @@
 
 ## DML（データ操作）
 
-- [ ] UPDATE ... SET ... WHERE
-- [ ] DELETE FROM ... WHERE
+- [x] UPDATE ... SET ... WHERE
+- [x] DELETE FROM ... WHERE
 - [ ] INSERT でカラムリストを指定 (`INSERT INTO t (col1, col2) VALUES (...)`)
 - [ ] INSERT ... SELECT
 

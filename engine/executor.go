@@ -492,6 +492,36 @@ func collectRangeConditions(expr ast.Expr, result map[string]*rangeCondition) {
 			toInclusive:   true,
 		}
 
+	case *ast.LikeExpr:
+		if e.Not {
+			return
+		}
+		ident, ok := e.Left.(*ast.IdentExpr)
+		if !ok {
+			return
+		}
+		patLit, ok := e.Pattern.(*ast.StringLitExpr)
+		if !ok {
+			return
+		}
+		prefix := extractLikePrefix(patLit.Value)
+		if prefix == "" {
+			return
+		}
+		colName := strings.ToLower(ident.Name)
+		var fromVal Value = prefix
+		rc := &rangeCondition{
+			colName:       colName,
+			fromVal:       &fromVal,
+			fromInclusive: true,
+		}
+		if next, ok := nextPrefix(prefix); ok {
+			var toVal Value = next
+			rc.toVal = &toVal
+			rc.toInclusive = false
+		}
+		result[colName] = rc
+
 	case *ast.LogicalExpr:
 		if e.Op == "AND" {
 			collectRangeConditions(e.Left, result)
@@ -2054,6 +2084,43 @@ func evalWhere(expr ast.Expr, row Row, info *TableInfo) (bool, error) {
 		return false, fmt.Errorf("WHERE expression must evaluate to boolean, got %T", val)
 	}
 	return b, nil
+}
+
+// extractLikePrefix extracts the literal prefix from a LIKE pattern.
+// It returns characters up to the first unescaped '%' or '_'.
+// Escape sequences: \% -> %, \_ -> _, \\ -> \.
+func extractLikePrefix(pattern string) string {
+	var prefix []byte
+	i := 0
+	for i < len(pattern) {
+		if pattern[i] == '\\' && i+1 < len(pattern) {
+			// Escaped character: add the literal
+			prefix = append(prefix, pattern[i+1])
+			i += 2
+		} else if pattern[i] == '%' || pattern[i] == '_' {
+			break
+		} else {
+			prefix = append(prefix, pattern[i])
+			i++
+		}
+	}
+	return string(prefix)
+}
+
+// nextPrefix computes the exclusive upper bound for a prefix range scan.
+// It increments the last byte; if 0xFF, truncates and retries.
+// Returns ("", false) if no upper bound exists (all 0xFF or empty).
+func nextPrefix(s string) (string, bool) {
+	b := []byte(s)
+	for len(b) > 0 {
+		last := b[len(b)-1]
+		if last < 0xFF {
+			b[len(b)-1] = last + 1
+			return string(b), true
+		}
+		b = b[:len(b)-1]
+	}
+	return "", false
 }
 
 // matchLike matches a string against a SQL LIKE pattern.

@@ -3121,3 +3121,105 @@ func TestSelectWhereLikeEscapeBackslash(t *testing.T) {
 		t.Errorf("expected id=1, got %v", result.Rows[0][0])
 	}
 }
+
+func TestExtractLikePrefix(t *testing.T) {
+	tests := []struct {
+		pattern string
+		want    string
+	}{
+		{"abc%", "abc"},
+		{"a\\_b%", "a_b"},
+		{"%abc", ""},
+		{"_abc", ""},
+		{"abc", "abc"},
+		{"abc\\%def", "abc%def"},
+		{"a\\\\b%", "a\\b"},
+		{"", ""},
+		{"\\%%", "%"},
+	}
+	for _, tt := range tests {
+		got := extractLikePrefix(tt.pattern)
+		if got != tt.want {
+			t.Errorf("extractLikePrefix(%q) = %q, want %q", tt.pattern, got, tt.want)
+		}
+	}
+}
+
+func TestNextPrefix(t *testing.T) {
+	tests := []struct {
+		input  string
+		want   string
+		wantOK bool
+	}{
+		{"abc", "abd", true},
+		{"ab" + string([]byte{0xFF}), "ac", true},
+		{string([]byte{0xFF}), "", false},
+		{string([]byte{0xFF, 0xFF}), "", false},
+		{"", "", false},
+		{"a", "b", true},
+	}
+	for _, tt := range tests {
+		got, ok := nextPrefix(tt.input)
+		if ok != tt.wantOK || got != tt.want {
+			t.Errorf("nextPrefix(%q) = (%q, %v), want (%q, %v)", tt.input, got, ok, tt.want, tt.wantOK)
+		}
+	}
+}
+
+func TestSelectWhereLikeWithIndex(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "CREATE INDEX idx_name ON users(name)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'albert')")
+	run(t, exec, "INSERT INTO users VALUES (3, 'bob')")
+	run(t, exec, "INSERT INTO users VALUES (4, 'almond')")
+
+	result := run(t, exec, "SELECT * FROM users WHERE name LIKE 'al%'")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	// Verify all returned rows start with "al"
+	for _, row := range result.Rows {
+		name := row[1].(string)
+		if name[:2] != "al" {
+			t.Errorf("expected name starting with 'al', got %q", name)
+		}
+	}
+}
+
+func TestSelectWhereLikeWithIndexNoPrefix(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "CREATE INDEX idx_name ON users(name)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
+
+	// LIKE '%ice' has no prefix, so index should not be used, but results should be correct
+	result := run(t, exec, "SELECT * FROM users WHERE name LIKE '%ice'")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][1] != "alice" {
+		t.Errorf("expected 'alice', got %v", result.Rows[0][1])
+	}
+}
+
+func TestSelectWhereLikeWithIndexEscape(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE items (id INT, name TEXT)")
+	run(t, exec, "CREATE INDEX idx_name ON items(name)")
+	run(t, exec, "INSERT INTO items VALUES (1, 'a_bcd')")
+	run(t, exec, "INSERT INTO items VALUES (2, 'a_xyz')")
+	run(t, exec, "INSERT INTO items VALUES (3, 'abcd')")
+
+	// LIKE 'a\_b%' — escaped underscore, prefix is "a_b"
+	result := run(t, exec, "SELECT * FROM items WHERE name LIKE 'a\\_b%'")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(1) {
+		t.Errorf("expected id=1, got %v", result.Rows[0][0])
+	}
+}

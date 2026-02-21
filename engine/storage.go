@@ -19,10 +19,10 @@ type KeyRow struct {
 	Row Row
 }
 
-// SecondaryIndex is a hash-based secondary index on a single column.
+// SecondaryIndex is a BTree-based secondary index on one or more columns.
 type SecondaryIndex struct {
-	Info    *IndexInfo
-	entries map[string]map[int64]struct{} // encoded value -> set of BTree keys
+	Info *IndexInfo
+	tree *btree.StringBTree // encoded value -> map[int64]struct{} (set of BTree keys)
 }
 
 // encodeCompositeKey encodes multiple column values into a single string key.
@@ -51,10 +51,11 @@ func (si *SecondaryIndex) Lookup(vals []Value) []int64 {
 		parts[i] = fmt.Sprintf("%v", v)
 	}
 	encoded := strings.Join(parts, "\x00")
-	keySet, ok := si.entries[encoded]
+	val, ok := si.tree.Get(encoded)
 	if !ok {
 		return nil
 	}
+	keySet := val.(map[int64]struct{})
 	keys := make([]int64, 0, len(keySet))
 	for k := range keySet {
 		keys = append(keys, k)
@@ -67,10 +68,13 @@ func (si *SecondaryIndex) addRow(key int64, row Row) {
 	if !ok {
 		return
 	}
-	if si.entries[encoded] == nil {
-		si.entries[encoded] = make(map[int64]struct{})
+	val, found := si.tree.Get(encoded)
+	if found {
+		keySet := val.(map[int64]struct{})
+		keySet[key] = struct{}{}
+	} else {
+		si.tree.Put(encoded, map[int64]struct{}{key: {}})
 	}
-	si.entries[encoded][key] = struct{}{}
 }
 
 func (si *SecondaryIndex) removeRow(key int64, row Row) {
@@ -78,10 +82,12 @@ func (si *SecondaryIndex) removeRow(key int64, row Row) {
 	if !ok {
 		return
 	}
-	if keySet, ok := si.entries[encoded]; ok {
+	val, found := si.tree.Get(encoded)
+	if found {
+		keySet := val.(map[int64]struct{})
 		delete(keySet, key)
 		if len(keySet) == 0 {
-			delete(si.entries, encoded)
+			si.tree.Delete(encoded)
 		}
 	}
 }
@@ -206,7 +212,7 @@ func (s *Storage) TruncateTable(name string) {
 		tbl.nextRowID = 1
 		// Clear index entries but keep index structure
 		for _, idx := range tbl.indexes {
-			idx.entries = make(map[string]map[int64]struct{})
+			idx.tree = btree.NewStringBTree(32)
 		}
 	}
 }
@@ -231,8 +237,8 @@ func (s *Storage) CreateIndex(info *IndexInfo) error {
 	}
 
 	idx := &SecondaryIndex{
-		Info:    info,
-		entries: make(map[string]map[int64]struct{}),
+		Info: info,
+		tree: btree.NewStringBTree(32),
 	}
 
 	// Build index from existing data

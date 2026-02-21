@@ -155,6 +155,7 @@ func (e *Executor) executeCreateIndex(stmt *ast.CreateIndexStmt) (*Result, error
 		TableName:   info.Name,
 		ColumnNames: columnNames,
 		ColumnIdxs:  columnIdxs,
+		Type:        "BTREE",
 	}
 	if err := e.storage.CreateIndex(idxInfo); err != nil {
 		return nil, err

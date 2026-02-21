@@ -1872,9 +1872,12 @@ func TestPrimaryKeyImpliesNotNull(t *testing.T) {
 	runExpectError(t, exec, "INSERT INTO users VALUES (NULL, 'alice')")
 }
 
-func TestErrorPrimaryKeyTextType(t *testing.T) {
+func TestTextPrimaryKeyAllowed(t *testing.T) {
 	exec := NewExecutor()
-	runExpectError(t, exec, "CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT)")
+	result := run(t, exec, "CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT)")
+	if result.Message != "table created" {
+		t.Errorf("expected 'table created', got %q", result.Message)
+	}
 }
 
 func TestErrorMultiplePrimaryKeys(t *testing.T) {
@@ -3810,5 +3813,38 @@ func TestCompositePrimaryKeyDeleteAndReinsert(t *testing.T) {
 	result := run(t, exec, "SELECT grade FROM enrollment WHERE student_id = 1 AND course_id = 100")
 	if len(result.Rows) != 1 || result.Rows[0][0] != "B" {
 		t.Errorf("expected grade='B', got %v", result.Rows)
+	}
+}
+
+func TestTextColumnPrimaryKey(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE codes (code TEXT PRIMARY KEY, description TEXT)")
+	run(t, exec, "INSERT INTO codes VALUES ('A01', 'first')")
+	run(t, exec, "INSERT INTO codes VALUES ('B02', 'second')")
+
+	// Duplicate TEXT PK should fail
+	runExpectError(t, exec, "INSERT INTO codes VALUES ('A01', 'duplicate')")
+
+	// NULL in TEXT PK should fail
+	runExpectError(t, exec, "INSERT INTO codes VALUES (NULL, 'null key')")
+
+	result := run(t, exec, "SELECT * FROM codes")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+}
+
+func TestFloatColumnPrimaryKey(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE measurements (sensor_id FLOAT PRIMARY KEY, value TEXT)")
+	run(t, exec, "INSERT INTO measurements VALUES (1.5, 'a')")
+	run(t, exec, "INSERT INTO measurements VALUES (2.5, 'b')")
+
+	// Duplicate FLOAT PK should fail
+	runExpectError(t, exec, "INSERT INTO measurements VALUES (1.5, 'duplicate')")
+
+	result := run(t, exec, "SELECT * FROM measurements")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
 	}
 }

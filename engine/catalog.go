@@ -70,10 +70,11 @@ func (c *Catalog) CreateTable(name string, columnDefs []ast.ColumnDef, tablePK [
 			if pkCol >= 0 {
 				return nil, fmt.Errorf("multiple PRIMARY KEY columns are not allowed")
 			}
-			if cd.DataType != "INT" {
-				return nil, fmt.Errorf("PRIMARY KEY must be INT type, got %s", cd.DataType)
+			if cd.DataType == "INT" {
+				pkCol = i // INT PK uses BTree key directly
+			} else {
+				pkCol = i // temporary; will be reset to -1 below for non-INT
 			}
-			pkCol = i
 			hasColumnLevelPK = true
 		}
 	}
@@ -151,6 +152,10 @@ func (c *Catalog) CreateTable(name string, columnDefs []ast.ColumnDef, tablePK [
 		}
 	} else if hasColumnLevelPK {
 		primaryKeyCols = []int{pkCol}
+		// Non-INT PK uses auto-increment + unique index (same as composite PK)
+		if columns[pkCol].DataType != "INT" {
+			pkCol = -1
+		}
 	}
 
 	info := &TableInfo{Name: lower, Columns: columns, PrimaryKeyCol: pkCol, PrimaryKeyCols: primaryKeyCols}

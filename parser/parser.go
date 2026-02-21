@@ -755,6 +755,37 @@ func (p *Parser) parseComparison() (ast.Expr, error) {
 		return nil, err
 	}
 
+	// Handle [NOT] IN (expr_list)
+	if p.curToken.Type == token.IN {
+		p.nextToken() // skip IN
+		if err := p.expectToken(token.LPAREN); err != nil {
+			return nil, err
+		}
+		values, err := p.parseExprList()
+		if err != nil {
+			return nil, err
+		}
+		if err := p.expectToken(token.RPAREN); err != nil {
+			return nil, err
+		}
+		return &ast.InExpr{Left: left, Values: values, Not: false}, nil
+	}
+	if p.curToken.Type == token.NOT && p.peekToken.Type == token.IN {
+		p.nextToken() // skip NOT
+		p.nextToken() // skip IN
+		if err := p.expectToken(token.LPAREN); err != nil {
+			return nil, err
+		}
+		values, err := p.parseExprList()
+		if err != nil {
+			return nil, err
+		}
+		if err := p.expectToken(token.RPAREN); err != nil {
+			return nil, err
+		}
+		return &ast.InExpr{Left: left, Values: values, Not: true}, nil
+	}
+
 	// Handle IS [NOT] NULL
 	if p.curToken.Type == token.IS {
 		p.nextToken() // skip IS

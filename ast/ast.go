@@ -189,6 +189,16 @@ type TruncateTableStmt struct {
 func (s *TruncateTableStmt) NodeType() string { return "TruncateTable" }
 func (s *TruncateTableStmt) statementNode()   {}
 
+// InExpr represents <expr> [NOT] IN (<expr>, ...).
+type InExpr struct {
+	Left   Expr
+	Values []Expr
+	Not    bool // true for NOT IN
+}
+
+func (e *InExpr) NodeType() string { return "In" }
+func (e *InExpr) exprNode()        {}
+
 // BinaryExpr represents a comparison: left <op> right.
 type BinaryExpr struct {
 	Left  Expr

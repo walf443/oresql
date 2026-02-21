@@ -1257,6 +1257,28 @@ func evalExpr(expr ast.Expr, row Row, info *TableInfo) (Value, error) {
 			return val != nil, nil
 		}
 		return val == nil, nil
+	case *ast.InExpr:
+		left, err := evalExpr(e.Left, row, info)
+		if err != nil {
+			return nil, err
+		}
+		if left == nil {
+			return false, nil
+		}
+		for _, valExpr := range e.Values {
+			val, err := evalExpr(valExpr, row, info)
+			if err != nil {
+				return nil, err
+			}
+			match, err := evalComparison(left, "=", val)
+			if err != nil {
+				return nil, err
+			}
+			if match {
+				return !e.Not, nil
+			}
+		}
+		return e.Not, nil
 	case *ast.ArithmeticExpr:
 		left, err := evalExpr(e.Left, row, info)
 		if err != nil {

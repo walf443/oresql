@@ -1108,6 +1108,59 @@ func TestParseInsertWithoutColumns(t *testing.T) {
 	}
 }
 
+func TestParseSelectWhereIn(t *testing.T) {
+	stmt := parse(t, "SELECT * FROM t WHERE id IN (1, 2, 3)")
+	sel := stmt.(*ast.SelectStmt)
+	inExpr, ok := sel.Where.(*ast.InExpr)
+	if !ok {
+		t.Fatalf("expected InExpr, got %T", sel.Where)
+	}
+	if inExpr.Not {
+		t.Errorf("expected Not=false, got true")
+	}
+	ident := inExpr.Left.(*ast.IdentExpr)
+	if ident.Name != "id" {
+		t.Errorf("expected column 'id', got %q", ident.Name)
+	}
+	if len(inExpr.Values) != 3 {
+		t.Fatalf("expected 3 values, got %d", len(inExpr.Values))
+	}
+	if inExpr.Values[0].(*ast.IntLitExpr).Value != 1 {
+		t.Errorf("expected value 0 = 1")
+	}
+	if inExpr.Values[1].(*ast.IntLitExpr).Value != 2 {
+		t.Errorf("expected value 1 = 2")
+	}
+	if inExpr.Values[2].(*ast.IntLitExpr).Value != 3 {
+		t.Errorf("expected value 2 = 3")
+	}
+}
+
+func TestParseSelectWhereNotIn(t *testing.T) {
+	stmt := parse(t, "SELECT * FROM t WHERE name NOT IN ('a', 'b')")
+	sel := stmt.(*ast.SelectStmt)
+	inExpr, ok := sel.Where.(*ast.InExpr)
+	if !ok {
+		t.Fatalf("expected InExpr, got %T", sel.Where)
+	}
+	if !inExpr.Not {
+		t.Errorf("expected Not=true, got false")
+	}
+	ident := inExpr.Left.(*ast.IdentExpr)
+	if ident.Name != "name" {
+		t.Errorf("expected column 'name', got %q", ident.Name)
+	}
+	if len(inExpr.Values) != 2 {
+		t.Fatalf("expected 2 values, got %d", len(inExpr.Values))
+	}
+	if inExpr.Values[0].(*ast.StringLitExpr).Value != "a" {
+		t.Errorf("expected value 0 = 'a'")
+	}
+	if inExpr.Values[1].(*ast.StringLitExpr).Value != "b" {
+		t.Errorf("expected value 1 = 'b'")
+	}
+}
+
 func TestParseError(t *testing.T) {
 	inputs := []string{
 		"CREATE",

@@ -256,6 +256,143 @@ func collectEqualities(expr ast.Expr, result map[string]Value) {
 	}
 }
 
+// extractInConditions extracts all column IN (literal, ...) conditions from a WHERE expression.
+// For AND chains, it collects all IN conditions. NOT IN is skipped.
+// Returns map[lowercase_col_name][]Value.
+func extractInConditions(expr ast.Expr) map[string][]Value {
+	result := make(map[string][]Value)
+	collectInConditions(expr, result)
+	return result
+}
+
+func collectInConditions(expr ast.Expr, result map[string][]Value) {
+	switch e := expr.(type) {
+	case *ast.InExpr:
+		if e.Not {
+			return
+		}
+		ident, ok := e.Left.(*ast.IdentExpr)
+		if !ok {
+			return
+		}
+		var vals []Value
+		for _, valExpr := range e.Values {
+			switch lit := valExpr.(type) {
+			case *ast.IntLitExpr:
+				vals = append(vals, lit.Value)
+			case *ast.FloatLitExpr:
+				vals = append(vals, lit.Value)
+			case *ast.StringLitExpr:
+				vals = append(vals, lit.Value)
+			default:
+				return // non-literal value, skip this IN condition
+			}
+		}
+		result[strings.ToLower(ident.Name)] = vals
+	case *ast.LogicalExpr:
+		if e.Op == "AND" {
+			collectInConditions(e.Left, result)
+			collectInConditions(e.Right, result)
+		}
+	}
+}
+
+// dedupKeys removes duplicate int64 keys, preserving order.
+func dedupKeys(keys []int64) []int64 {
+	seen := make(map[int64]bool)
+	var result []int64
+	for _, k := range keys {
+		if !seen[k] {
+			seen[k] = true
+			result = append(result, k)
+		}
+	}
+	return result
+}
+
+// tryIndexInLookup attempts to use an index for IN conditions in WHERE.
+func (e *Executor) tryIndexInLookup(stmt *ast.SelectStmt, info *TableInfo) ([]Row, bool) {
+	if stmt.Where == nil {
+		return nil, false
+	}
+	inConds := extractInConditions(stmt.Where)
+	if len(inConds) == 0 {
+		return nil, false
+	}
+
+	// 1. Try single-column indexes
+	for colName, vals := range inConds {
+		col, err := info.FindColumn(colName)
+		if err != nil {
+			continue
+		}
+		idx := e.storage.LookupSingleColumnIndex(info.Name, col.Index)
+		if idx == nil {
+			continue
+		}
+		var keys []int64
+		for _, val := range vals {
+			keys = append(keys, idx.Lookup([]Value{val})...)
+		}
+		keys = dedupKeys(keys)
+		if len(keys) == 0 {
+			return []Row{}, true
+		}
+		rows, err := e.storage.GetByKeys(info.Name, keys)
+		if err != nil {
+			return nil, false
+		}
+		return rows, true
+	}
+
+	// 2. Try composite indexes: prefix equality + last column IN
+	eqConds := extractEqualityConditions(stmt.Where)
+	indexes := e.storage.GetIndexes(info.Name)
+	for _, idx := range indexes {
+		if len(idx.Info.ColumnNames) < 2 {
+			continue
+		}
+		prefixLen := len(idx.Info.ColumnNames) - 1
+		lastCol := strings.ToLower(idx.Info.ColumnNames[prefixLen])
+		inVals, hasIn := inConds[lastCol]
+		if !hasIn {
+			continue
+		}
+		// Check if first N-1 columns have equality conditions
+		prefixVals := make([]Value, 0, prefixLen)
+		allPrefixFound := true
+		for i := 0; i < prefixLen; i++ {
+			val, ok := eqConds[strings.ToLower(idx.Info.ColumnNames[i])]
+			if !ok {
+				allPrefixFound = false
+				break
+			}
+			prefixVals = append(prefixVals, val)
+		}
+		if !allPrefixFound {
+			continue
+		}
+		var keys []int64
+		for _, v := range inVals {
+			lookupVals := make([]Value, len(prefixVals)+1)
+			copy(lookupVals, prefixVals)
+			lookupVals[prefixLen] = v
+			keys = append(keys, idx.Lookup(lookupVals)...)
+		}
+		keys = dedupKeys(keys)
+		if len(keys) == 0 {
+			return []Row{}, true
+		}
+		rows, err := e.storage.GetByKeys(info.Name, keys)
+		if err != nil {
+			return nil, false
+		}
+		return rows, true
+	}
+
+	return nil, false
+}
+
 // rangeCondition represents a range condition on a single column.
 type rangeCondition struct {
 	colName       string
@@ -729,9 +866,11 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 		}
 	}
 
-	// Try index lookup, then range scan, fall back to full scan
+	// Try index lookup, then IN lookup, then range scan, fall back to full scan
 	var allRows []Row
 	if indexedRows, indexUsed := e.tryIndexLookup(stmt, info); indexUsed {
+		allRows = indexedRows
+	} else if indexedRows, indexUsed := e.tryIndexInLookup(stmt, info); indexUsed {
 		allRows = indexedRows
 	} else if indexedRows, indexUsed := e.tryIndexRangeScan(stmt, info); indexUsed {
 		allRows = indexedRows

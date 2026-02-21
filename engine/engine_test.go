@@ -2826,3 +2826,95 @@ func TestSelectWithCompositeIndexRangePartialPrefix(t *testing.T) {
 		t.Errorf("expected c 5,8,10, got %v", cs)
 	}
 }
+
+func TestSelectWithIndexIn(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
+	run(t, exec, "CREATE INDEX idx_id ON users(id)")
+
+	result := run(t, exec, "SELECT * FROM users WHERE id IN (1, 3)")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	ids := map[int64]bool{}
+	for _, row := range result.Rows {
+		ids[row[0].(int64)] = true
+	}
+	if !ids[1] || !ids[3] {
+		t.Errorf("expected ids 1 and 3, got %v", ids)
+	}
+}
+
+func TestSelectWithIndexInNoMatch(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "CREATE INDEX idx_id ON users(id)")
+
+	result := run(t, exec, "SELECT * FROM users WHERE id IN (100, 200)")
+	if len(result.Rows) != 0 {
+		t.Fatalf("expected 0 rows, got %d", len(result.Rows))
+	}
+}
+
+func TestSelectWithIndexInSingleValue(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
+	run(t, exec, "CREATE INDEX idx_id ON users(id)")
+
+	result := run(t, exec, "SELECT * FROM users WHERE id IN (2)")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(2) {
+		t.Errorf("expected id=2, got %v", result.Rows[0][0])
+	}
+}
+
+func TestSelectWithCompositeIndexIn(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE items (a INT, b INT, c TEXT)")
+	run(t, exec, "INSERT INTO items VALUES (1, 3, 'x')")
+	run(t, exec, "INSERT INTO items VALUES (1, 5, 'y')")
+	run(t, exec, "INSERT INTO items VALUES (1, 7, 'z')")
+	run(t, exec, "INSERT INTO items VALUES (2, 3, 'w')")
+	run(t, exec, "CREATE INDEX idx_ab ON items(a, b)")
+
+	result := run(t, exec, "SELECT * FROM items WHERE a = 1 AND b IN (3, 7)")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	bs := map[int64]bool{}
+	for _, row := range result.Rows {
+		bs[row[1].(int64)] = true
+	}
+	if !bs[3] || !bs[7] {
+		t.Errorf("expected b 3 and 7, got %v", bs)
+	}
+}
+
+func TestSelectWithIndexInAndFilter(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO users VALUES (3, 'alice')")
+	run(t, exec, "CREATE INDEX idx_id ON users(id)")
+
+	result := run(t, exec, "SELECT * FROM users WHERE id IN (1, 2, 3) AND name = 'alice'")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	for _, row := range result.Rows {
+		if row[1] != "alice" {
+			t.Errorf("expected name='alice', got %v", row[1])
+		}
+	}
+}

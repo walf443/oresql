@@ -1816,6 +1816,105 @@ func TestErrorInsertColumnValueCountMismatch(t *testing.T) {
 	runExpectError(t, exec, "INSERT INTO users (id, name) VALUES (1)")
 }
 
+func TestPrimaryKeyCreateInsertSelect(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+
+	// SELECT should return rows in PK order
+	result := run(t, exec, "SELECT * FROM users")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(1) {
+		t.Errorf("row 0: expected id=1, got %v", result.Rows[0][0])
+	}
+	if result.Rows[0][1] != "alice" {
+		t.Errorf("row 0: expected name='alice', got %v", result.Rows[0][1])
+	}
+	if result.Rows[1][0] != int64(2) {
+		t.Errorf("row 1: expected id=2, got %v", result.Rows[1][0])
+	}
+	if result.Rows[2][0] != int64(3) {
+		t.Errorf("row 2: expected id=3, got %v", result.Rows[2][0])
+	}
+}
+
+func TestPrimaryKeyDuplicateInsertError(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	runExpectError(t, exec, "INSERT INTO users VALUES (1, 'bob')")
+}
+
+func TestPrimaryKeyDeleteAndReinsert(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "DELETE FROM users WHERE id = 1")
+
+	// Should be able to reinsert with the same PK
+	run(t, exec, "INSERT INTO users VALUES (1, 'bob')")
+	result := run(t, exec, "SELECT name FROM users WHERE id = 1")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != "bob" {
+		t.Errorf("expected 'bob', got %v", result.Rows[0][0])
+	}
+}
+
+func TestPrimaryKeyImpliesNotNull(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
+	runExpectError(t, exec, "INSERT INTO users VALUES (NULL, 'alice')")
+}
+
+func TestErrorPrimaryKeyTextType(t *testing.T) {
+	exec := NewExecutor()
+	runExpectError(t, exec, "CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT)")
+}
+
+func TestErrorMultiplePrimaryKeys(t *testing.T) {
+	exec := NewExecutor()
+	runExpectError(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, code INT PRIMARY KEY)")
+}
+
+func TestPrimaryKeyUpdate(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+
+	run(t, exec, "UPDATE users SET name = 'ALICE' WHERE id = 1")
+	result := run(t, exec, "SELECT name FROM users WHERE id = 1")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != "ALICE" {
+		t.Errorf("expected 'ALICE', got %v", result.Rows[0][0])
+	}
+}
+
+func TestPrimaryKeyTruncateAndReinsert(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "TRUNCATE TABLE users")
+
+	// Should be able to insert with same PK after truncate
+	run(t, exec, "INSERT INTO users VALUES (1, 'bob')")
+	result := run(t, exec, "SELECT * FROM users")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][1] != "bob" {
+		t.Errorf("expected 'bob', got %v", result.Rows[0][1])
+	}
+}
+
 func TestInsertWithColumnsMultipleRows(t *testing.T) {
 	exec := NewExecutor()
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT DEFAULT 'unknown')")

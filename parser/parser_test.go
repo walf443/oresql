@@ -1161,6 +1161,46 @@ func TestParseSelectWhereNotIn(t *testing.T) {
 	}
 }
 
+func TestParseCreateTablePrimaryKey(t *testing.T) {
+	stmt := parse(t, "CREATE TABLE t (id INT PRIMARY KEY, name TEXT)")
+	ct, ok := stmt.(*ast.CreateTableStmt)
+	if !ok {
+		t.Fatalf("expected CreateTableStmt, got %T", stmt)
+	}
+	if len(ct.Columns) != 2 {
+		t.Fatalf("expected 2 columns, got %d", len(ct.Columns))
+	}
+	if ct.Columns[0].Name != "id" || ct.Columns[0].DataType != "INT" {
+		t.Errorf("column 0: expected (id, INT), got (%s, %s)", ct.Columns[0].Name, ct.Columns[0].DataType)
+	}
+	if !ct.Columns[0].PrimaryKey {
+		t.Error("column 0: expected PrimaryKey=true")
+	}
+	if !ct.Columns[0].NotNull {
+		t.Error("column 0: expected NotNull=true (implied by PRIMARY KEY)")
+	}
+	if ct.Columns[1].PrimaryKey {
+		t.Error("column 1: expected PrimaryKey=false")
+	}
+}
+
+func TestParseCreateTableNotNullPrimaryKey(t *testing.T) {
+	stmt := parse(t, "CREATE TABLE t (id INT NOT NULL PRIMARY KEY, name TEXT)")
+	ct, ok := stmt.(*ast.CreateTableStmt)
+	if !ok {
+		t.Fatalf("expected CreateTableStmt, got %T", stmt)
+	}
+	if len(ct.Columns) != 2 {
+		t.Fatalf("expected 2 columns, got %d", len(ct.Columns))
+	}
+	if !ct.Columns[0].PrimaryKey {
+		t.Error("column 0: expected PrimaryKey=true")
+	}
+	if !ct.Columns[0].NotNull {
+		t.Error("column 0: expected NotNull=true")
+	}
+}
+
 func TestParseError(t *testing.T) {
 	inputs := []string{
 		"CREATE",

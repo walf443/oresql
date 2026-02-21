@@ -19,10 +19,11 @@ type Expr interface {
 
 // ColumnDef represents a column definition in CREATE TABLE.
 type ColumnDef struct {
-	Name     string
-	DataType string // "INT" or "TEXT"
-	NotNull  bool
-	Default  Expr // nil = no DEFAULT clause
+	Name       string
+	DataType   string // "INT" or "TEXT"
+	NotNull    bool
+	PrimaryKey bool
+	Default    Expr // nil = no DEFAULT clause
 }
 
 // CreateTableStmt represents CREATE TABLE <name> (<columns>).

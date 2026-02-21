@@ -72,6 +72,8 @@ const (
 	DISTINCT // DISTINCT keyword
 	DEFAULT  // DEFAULT keyword
 	IN       // IN keyword
+	PRIMARY  // PRIMARY keyword
+	KEY      // KEY keyword
 )
 
 var tokenNames = map[TokenType]string{
@@ -135,6 +137,8 @@ var tokenNames = map[TokenType]string{
 	DISTINCT:     "DISTINCT",
 	DEFAULT:      "DEFAULT",
 	IN:           "IN",
+	PRIMARY:      "PRIMARY",
+	KEY:          "KEY",
 }
 
 func (t TokenType) String() string {
@@ -188,6 +192,8 @@ var keywords = map[string]TokenType{
 	"DISTINCT": DISTINCT,
 	"DEFAULT":  DEFAULT,
 	"IN":       IN,
+	"PRIMARY":  PRIMARY,
+	"KEY":      KEY,
 }
 
 // LookupIdent returns the keyword TokenType if the identifier is a keyword,

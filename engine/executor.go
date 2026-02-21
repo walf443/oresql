@@ -263,15 +263,15 @@ func (e *Executor) executeUpdate(stmt *ast.UpdateStmt) (*Result, error) {
 		return nil, err
 	}
 
-	allRows, err := e.storage.Scan(stmt.TableName)
+	allRows, err := e.storage.ScanWithKeys(stmt.TableName)
 	if err != nil {
 		return nil, err
 	}
 
 	updated := 0
-	for _, row := range allRows {
+	for _, kr := range allRows {
 		if stmt.Where != nil {
-			match, err := evalWhere(stmt.Where, row, info)
+			match, err := evalWhere(stmt.Where, kr.Row, info)
 			if err != nil {
 				return nil, err
 			}
@@ -279,6 +279,10 @@ func (e *Executor) executeUpdate(stmt *ast.UpdateStmt) (*Result, error) {
 				continue
 			}
 		}
+
+		// Clone the row before modifying
+		newRow := make(Row, len(kr.Row))
+		copy(newRow, kr.Row)
 
 		for _, set := range stmt.Sets {
 			col, err := info.FindColumn(set.Column)
@@ -291,33 +295,16 @@ func (e *Executor) executeUpdate(stmt *ast.UpdateStmt) (*Result, error) {
 				return nil, err
 			}
 
-			if val == nil {
-				if col.NotNull {
-					return nil, fmt.Errorf("column %q cannot be NULL", col.Name)
-				}
-			} else {
-				switch col.DataType {
-				case "INT":
-					if _, ok := val.(int64); !ok {
-						return nil, fmt.Errorf("column %q expects INT, got %T", col.Name, val)
-					}
-				case "FLOAT":
-					switch v := val.(type) {
-					case float64:
-						// ok
-					case int64:
-						val = float64(v)
-					default:
-						return nil, fmt.Errorf("column %q expects FLOAT, got %T", col.Name, val)
-					}
-				case "TEXT":
-					if _, ok := val.(string); !ok {
-						return nil, fmt.Errorf("column %q expects TEXT, got %T", col.Name, val)
-					}
-				}
+			val, err = validateAndCoerceValue(val, info.Columns[col.Index])
+			if err != nil {
+				return nil, err
 			}
 
-			row[col.Index] = val
+			newRow[col.Index] = val
+		}
+
+		if err := e.storage.UpdateRow(stmt.TableName, kr.Key, newRow); err != nil {
+			return nil, err
 		}
 		updated++
 	}
@@ -336,31 +323,30 @@ func (e *Executor) executeDelete(stmt *ast.DeleteStmt) (*Result, error) {
 		return nil, err
 	}
 
-	allRows, err := e.storage.Scan(stmt.TableName)
+	allRows, err := e.storage.ScanWithKeys(stmt.TableName)
 	if err != nil {
 		return nil, err
 	}
 
-	keepIndices := make(map[int]bool)
-	deleted := 0
-	for i, row := range allRows {
+	var keysToDelete []int64
+	for _, kr := range allRows {
 		if stmt.Where != nil {
-			match, err := evalWhere(stmt.Where, row, info)
+			match, err := evalWhere(stmt.Where, kr.Row, info)
 			if err != nil {
 				return nil, err
 			}
 			if !match {
-				keepIndices[i] = true
 				continue
 			}
 		}
-		deleted++
+		keysToDelete = append(keysToDelete, kr.Key)
 	}
 
-	if err := e.storage.DeleteRows(stmt.TableName, keepIndices); err != nil {
+	if err := e.storage.DeleteByKeys(stmt.TableName, keysToDelete); err != nil {
 		return nil, err
 	}
 
+	deleted := len(keysToDelete)
 	msg := fmt.Sprintf("%d rows deleted", deleted)
 	if deleted == 1 {
 		msg = "1 row deleted"

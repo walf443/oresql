@@ -13,14 +13,16 @@ type ColumnInfo struct {
 	DataType   string // "INT" or "TEXT"
 	Index      int    // ordinal position in the row
 	NotNull    bool
+	PrimaryKey bool
 	HasDefault bool  // true if DEFAULT clause was specified
 	Default    Value // default value (nil means NULL default)
 }
 
 // TableInfo describes a table's schema.
 type TableInfo struct {
-	Name    string
-	Columns []ColumnInfo
+	Name          string
+	Columns       []ColumnInfo
+	PrimaryKeyCol int // index of PK column, -1 if no PK
 }
 
 // FindColumn returns the column info for the given name, or an error if not found.
@@ -49,13 +51,28 @@ func (c *Catalog) CreateTable(name string, columnDefs []ast.ColumnDef) (*TableIn
 		return nil, fmt.Errorf("table %q already exists", name)
 	}
 
+	// Validate PRIMARY KEY constraints
+	pkCol := -1
+	for i, cd := range columnDefs {
+		if cd.PrimaryKey {
+			if pkCol >= 0 {
+				return nil, fmt.Errorf("multiple PRIMARY KEY columns are not allowed")
+			}
+			if cd.DataType != "INT" {
+				return nil, fmt.Errorf("PRIMARY KEY must be INT type, got %s", cd.DataType)
+			}
+			pkCol = i
+		}
+	}
+
 	columns := make([]ColumnInfo, len(columnDefs))
 	for i, cd := range columnDefs {
 		col := ColumnInfo{
-			Name:     cd.Name,
-			DataType: cd.DataType,
-			Index:    i,
-			NotNull:  cd.NotNull,
+			Name:       cd.Name,
+			DataType:   cd.DataType,
+			Index:      i,
+			NotNull:    cd.NotNull,
+			PrimaryKey: cd.PrimaryKey,
 		}
 		if cd.Default != nil {
 			col.HasDefault = true
@@ -93,7 +110,7 @@ func (c *Catalog) CreateTable(name string, columnDefs []ast.ColumnDef) (*TableIn
 		columns[i] = col
 	}
 
-	info := &TableInfo{Name: lower, Columns: columns}
+	info := &TableInfo{Name: lower, Columns: columns, PrimaryKeyCol: pkCol}
 	c.tables[lower] = info
 	return info, nil
 }

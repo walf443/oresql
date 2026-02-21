@@ -156,6 +156,16 @@ func (p *Parser) parseColumnDef() (ast.ColumnDef, error) {
 		notNull = true
 	}
 
+	primaryKey := false
+	if p.curToken.Type == token.PRIMARY {
+		p.nextToken() // skip PRIMARY
+		if err := p.expectToken(token.KEY); err != nil {
+			return ast.ColumnDef{}, err
+		}
+		primaryKey = true
+		notNull = true // PRIMARY KEY implies NOT NULL
+	}
+
 	var defaultExpr ast.Expr
 	if p.curToken.Type == token.DEFAULT {
 		p.nextToken() // skip DEFAULT
@@ -166,7 +176,7 @@ func (p *Parser) parseColumnDef() (ast.ColumnDef, error) {
 		}
 	}
 
-	return ast.ColumnDef{Name: name, DataType: dataType, NotNull: notNull, Default: defaultExpr}, nil
+	return ast.ColumnDef{Name: name, DataType: dataType, NotNull: notNull, PrimaryKey: primaryKey, Default: defaultExpr}, nil
 }
 
 // parseInsert parses: INSERT INTO <table> [(<columns>)] VALUES (<expr>, ...) [, (<expr>, ...) ...]

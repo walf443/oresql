@@ -200,6 +200,17 @@ type InExpr struct {
 func (e *InExpr) NodeType() string { return "In" }
 func (e *InExpr) exprNode()        {}
 
+// BetweenExpr represents <expr> [NOT] BETWEEN <low> AND <high>.
+type BetweenExpr struct {
+	Left Expr // target expression
+	Low  Expr // lower bound
+	High Expr // upper bound
+	Not  bool // true for NOT BETWEEN
+}
+
+func (e *BetweenExpr) NodeType() string { return "Between" }
+func (e *BetweenExpr) exprNode()        {}
+
 // BinaryExpr represents a comparison: left <op> right.
 type BinaryExpr struct {
 	Left  Expr

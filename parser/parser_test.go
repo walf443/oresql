@@ -1201,6 +1201,54 @@ func TestParseCreateTableNotNullPrimaryKey(t *testing.T) {
 	}
 }
 
+func TestParseSelectWhereBetween(t *testing.T) {
+	stmt := parse(t, "SELECT * FROM t WHERE id BETWEEN 1 AND 10")
+	sel := stmt.(*ast.SelectStmt)
+	betweenExpr, ok := sel.Where.(*ast.BetweenExpr)
+	if !ok {
+		t.Fatalf("expected BetweenExpr, got %T", sel.Where)
+	}
+	if betweenExpr.Not {
+		t.Errorf("expected Not=false, got true")
+	}
+	ident := betweenExpr.Left.(*ast.IdentExpr)
+	if ident.Name != "id" {
+		t.Errorf("expected column 'id', got %q", ident.Name)
+	}
+	low := betweenExpr.Low.(*ast.IntLitExpr)
+	if low.Value != 1 {
+		t.Errorf("expected low=1, got %d", low.Value)
+	}
+	high := betweenExpr.High.(*ast.IntLitExpr)
+	if high.Value != 10 {
+		t.Errorf("expected high=10, got %d", high.Value)
+	}
+}
+
+func TestParseSelectWhereNotBetween(t *testing.T) {
+	stmt := parse(t, "SELECT * FROM t WHERE id NOT BETWEEN 1 AND 10")
+	sel := stmt.(*ast.SelectStmt)
+	betweenExpr, ok := sel.Where.(*ast.BetweenExpr)
+	if !ok {
+		t.Fatalf("expected BetweenExpr, got %T", sel.Where)
+	}
+	if !betweenExpr.Not {
+		t.Errorf("expected Not=true, got false")
+	}
+	ident := betweenExpr.Left.(*ast.IdentExpr)
+	if ident.Name != "id" {
+		t.Errorf("expected column 'id', got %q", ident.Name)
+	}
+	low := betweenExpr.Low.(*ast.IntLitExpr)
+	if low.Value != 1 {
+		t.Errorf("expected low=1, got %d", low.Value)
+	}
+	high := betweenExpr.High.(*ast.IntLitExpr)
+	if high.Value != 10 {
+		t.Errorf("expected high=10, got %d", high.Value)
+	}
+}
+
 func TestParseError(t *testing.T) {
 	inputs := []string{
 		"CREATE",

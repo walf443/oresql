@@ -59,7 +59,7 @@
 ## 演算子・条件式
 
 - [x] IN (`WHERE id IN (1, 2, 3)`)
-- [ ] BETWEEN (`WHERE id BETWEEN 1 AND 10`)
+- [x] BETWEEN (`WHERE id BETWEEN 1 AND 10`)
 - [ ] LIKE (`WHERE name LIKE '%alice%'`)
 - [ ] NOT（一般的な否定。現状は IS NOT NULL のみ）
 - [ ] CASE WHEN ... THEN ... ELSE ... END

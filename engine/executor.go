@@ -912,6 +912,35 @@ func evalGroupExpr(expr ast.Expr, row Row, groupRows []Row, info *TableInfo) (Va
 	case *ast.CallExpr:
 		val, _, err := evalAggregate(e, groupRows, info)
 		return val, err
+	case *ast.BetweenExpr:
+		left, err := evalGroupExpr(e.Left, row, groupRows, info)
+		if err != nil {
+			return nil, err
+		}
+		if left == nil {
+			return false, nil
+		}
+		low, err := evalGroupExpr(e.Low, row, groupRows, info)
+		if err != nil {
+			return nil, err
+		}
+		high, err := evalGroupExpr(e.High, row, groupRows, info)
+		if err != nil {
+			return nil, err
+		}
+		geq, err := evalComparison(left, ">=", low)
+		if err != nil {
+			return nil, err
+		}
+		leq, err := evalComparison(left, "<=", high)
+		if err != nil {
+			return nil, err
+		}
+		result := geq && leq
+		if e.Not {
+			return !result, nil
+		}
+		return result, nil
 	case *ast.BinaryExpr:
 		left, err := evalGroupExpr(e.Left, row, groupRows, info)
 		if err != nil {
@@ -1265,6 +1294,35 @@ func evalExpr(expr ast.Expr, row Row, info *TableInfo) (Value, error) {
 			}
 		}
 		return e.Not, nil
+	case *ast.BetweenExpr:
+		left, err := evalExpr(e.Left, row, info)
+		if err != nil {
+			return nil, err
+		}
+		if left == nil {
+			return false, nil
+		}
+		low, err := evalExpr(e.Low, row, info)
+		if err != nil {
+			return nil, err
+		}
+		high, err := evalExpr(e.High, row, info)
+		if err != nil {
+			return nil, err
+		}
+		geq, err := evalComparison(left, ">=", low)
+		if err != nil {
+			return nil, err
+		}
+		leq, err := evalComparison(left, "<=", high)
+		if err != nil {
+			return nil, err
+		}
+		result := geq && leq
+		if e.Not {
+			return !result, nil
+		}
+		return result, nil
 	case *ast.ArithmeticExpr:
 		left, err := evalExpr(e.Left, row, info)
 		if err != nil {

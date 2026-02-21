@@ -1936,3 +1936,98 @@ func TestInsertWithColumnsMultipleRows(t *testing.T) {
 		}
 	}
 }
+
+func TestSelectWhereBetween(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
+	run(t, exec, "INSERT INTO users VALUES (4, 'dave')")
+	run(t, exec, "INSERT INTO users VALUES (5, 'eve')")
+
+	result := run(t, exec, "SELECT * FROM users WHERE id BETWEEN 2 AND 4")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(2) {
+		t.Errorf("row 0: expected id=2, got %v", result.Rows[0][0])
+	}
+	if result.Rows[1][0] != int64(3) {
+		t.Errorf("row 1: expected id=3, got %v", result.Rows[1][0])
+	}
+	if result.Rows[2][0] != int64(4) {
+		t.Errorf("row 2: expected id=4, got %v", result.Rows[2][0])
+	}
+}
+
+func TestSelectWhereNotBetween(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
+	run(t, exec, "INSERT INTO users VALUES (4, 'dave')")
+	run(t, exec, "INSERT INTO users VALUES (5, 'eve')")
+
+	result := run(t, exec, "SELECT * FROM users WHERE id NOT BETWEEN 2 AND 4")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(1) {
+		t.Errorf("row 0: expected id=1, got %v", result.Rows[0][0])
+	}
+	if result.Rows[1][0] != int64(5) {
+		t.Errorf("row 1: expected id=5, got %v", result.Rows[1][0])
+	}
+}
+
+func TestSelectWhereBetweenNoMatch(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+
+	result := run(t, exec, "SELECT * FROM users WHERE id BETWEEN 10 AND 20")
+	if len(result.Rows) != 0 {
+		t.Fatalf("expected 0 rows, got %d", len(result.Rows))
+	}
+}
+
+func TestSelectWhereBetweenNull(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (NULL, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+
+	result := run(t, exec, "SELECT * FROM users WHERE id BETWEEN 1 AND 10")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(2) {
+		t.Errorf("expected id=2, got %v", result.Rows[0][0])
+	}
+}
+
+func TestSelectWhereBetweenText(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
+	run(t, exec, "INSERT INTO users VALUES (4, 'dave')")
+
+	result := run(t, exec, "SELECT * FROM users WHERE name BETWEEN 'bob' AND 'dave'")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][1] != "bob" {
+		t.Errorf("row 0: expected name='bob', got %v", result.Rows[0][1])
+	}
+	if result.Rows[1][1] != "charlie" {
+		t.Errorf("row 1: expected name='charlie', got %v", result.Rows[1][1])
+	}
+	if result.Rows[2][1] != "dave" {
+		t.Errorf("row 2: expected name='dave', got %v", result.Rows[2][1])
+	}
+}

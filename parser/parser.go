@@ -796,6 +796,39 @@ func (p *Parser) parseComparison() (ast.Expr, error) {
 		return &ast.InExpr{Left: left, Values: values, Not: true}, nil
 	}
 
+	// Handle [NOT] BETWEEN expr AND expr
+	if p.curToken.Type == token.BETWEEN {
+		p.nextToken() // skip BETWEEN
+		low, err := p.parseAdditive()
+		if err != nil {
+			return nil, err
+		}
+		if err := p.expectToken(token.AND); err != nil {
+			return nil, err
+		}
+		high, err := p.parseAdditive()
+		if err != nil {
+			return nil, err
+		}
+		return &ast.BetweenExpr{Left: left, Low: low, High: high, Not: false}, nil
+	}
+	if p.curToken.Type == token.NOT && p.peekToken.Type == token.BETWEEN {
+		p.nextToken() // skip NOT
+		p.nextToken() // skip BETWEEN
+		low, err := p.parseAdditive()
+		if err != nil {
+			return nil, err
+		}
+		if err := p.expectToken(token.AND); err != nil {
+			return nil, err
+		}
+		high, err := p.parseAdditive()
+		if err != nil {
+			return nil, err
+		}
+		return &ast.BetweenExpr{Left: left, Low: low, High: high, Not: true}, nil
+	}
+
 	// Handle IS [NOT] NULL
 	if p.curToken.Type == token.IS {
 		p.nextToken() // skip IS

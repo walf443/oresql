@@ -9,8 +9,6 @@ import (
 
 	"github.com/chzyer/readline"
 	"github.com/walf443/oresql/engine"
-	"github.com/walf443/oresql/lexer"
-	"github.com/walf443/oresql/parser"
 	"github.com/walf443/oresql/repl"
 )
 
@@ -31,7 +29,25 @@ func main() {
 	}
 	defer rl.Close()
 
-	exec := engine.NewExecutor()
+	var opts []engine.Option
+	if len(os.Args) > 1 {
+		walPath := os.Args[1]
+		wal, err := engine.NewWAL(walPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to open WAL: %s\n", err)
+			os.Exit(1)
+		}
+		defer wal.Close()
+		opts = append(opts, engine.WithWAL(wal))
+	}
+
+	exec := engine.NewExecutor(opts...)
+
+	if err := exec.ReplayWAL(); err != nil {
+		fmt.Fprintf(os.Stderr, "WAL replay failed: %s\n", err)
+		os.Exit(1)
+	}
+
 	writer := repl.NewWriter(rl.Stdout())
 
 	writer.Println("Welcome to oresql. Type SQL statements or 'exit' to quit.")
@@ -53,15 +69,7 @@ func main() {
 			break
 		}
 
-		l := lexer.New(line)
-		p := parser.New(l)
-		stmt, err := p.Parse()
-		if err != nil {
-			writer.Println(fmt.Sprintf("Parse error: %s", err))
-			continue
-		}
-
-		result, err := exec.Execute(stmt)
+		result, err := exec.ExecuteSQL(line)
 		if err != nil {
 			writer.PrintError(err.Error())
 			continue

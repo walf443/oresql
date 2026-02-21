@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/walf443/oresql/ast"
+	"github.com/walf443/oresql/lexer"
+	"github.com/walf443/oresql/parser"
 )
 
 // Result holds the output of a query execution.
@@ -14,17 +16,69 @@ type Result struct {
 	Message string   // status message for CREATE/INSERT
 }
 
+// Option configures an Executor.
+type Option func(*Executor)
+
+// WithWAL sets the WAL for the Executor.
+func WithWAL(w *WAL) Option {
+	return func(e *Executor) {
+		e.wal = w
+	}
+}
+
 // Executor runs SQL statements.
 type Executor struct {
 	catalog *Catalog
 	storage *Storage
+	wal     *WAL
 }
 
-func NewExecutor() *Executor {
-	return &Executor{
+func NewExecutor(opts ...Option) *Executor {
+	e := &Executor{
 		catalog: NewCatalog(),
 		storage: NewStorage(),
 	}
+	for _, opt := range opts {
+		opt(e)
+	}
+	return e
+}
+
+// ExecuteSQL parses and executes a SQL string, logging mutating statements to WAL.
+func (e *Executor) ExecuteSQL(sql string) (*Result, error) {
+	l := lexer.New(sql)
+	p := parser.New(l)
+	stmt, err := p.Parse()
+	if err != nil {
+		return nil, err
+	}
+	result, err := e.Execute(stmt)
+	if err != nil {
+		return nil, err
+	}
+	if e.wal != nil {
+		if _, ok := stmt.(*ast.SelectStmt); !ok {
+			if err := e.wal.Append(sql); err != nil {
+				return nil, fmt.Errorf("WAL write error: %w", err)
+			}
+		}
+	}
+	return result, nil
+}
+
+// ReplayWAL replays the WAL file to restore state.
+func (e *Executor) ReplayWAL() error {
+	if e.wal == nil {
+		return nil
+	}
+	wal := e.wal
+	e.wal = nil
+	defer func() { e.wal = wal }()
+
+	return wal.Replay(func(sql string) error {
+		_, err := e.ExecuteSQL(sql)
+		return err
+	})
 }
 
 func (e *Executor) Execute(stmt ast.Statement) (*Result, error) {

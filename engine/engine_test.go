@@ -2285,3 +2285,138 @@ func TestSelectWithIndexAndCondition(t *testing.T) {
 		t.Errorf("expected id=1, got %v", result.Rows[0][0])
 	}
 }
+
+func TestCreateCompositeIndex(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT, age INT)")
+	result := run(t, exec, "CREATE INDEX idx_name_age ON users(name, age)")
+	if result.Message != "index created" {
+		t.Errorf("expected 'index created', got %q", result.Message)
+	}
+}
+
+func TestSelectWithCompositeIndex(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT, age INT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice', 30)")
+	run(t, exec, "INSERT INTO users VALUES (2, 'alice', 25)")
+	run(t, exec, "INSERT INTO users VALUES (3, 'bob', 30)")
+	run(t, exec, "CREATE INDEX idx_name_age ON users(name, age)")
+
+	// Both columns in equality condition → use composite index
+	result := run(t, exec, "SELECT * FROM users WHERE name = 'alice' AND age = 30")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(1) {
+		t.Errorf("expected id=1, got %v", result.Rows[0][0])
+	}
+}
+
+func TestSelectWithCompositeIndexPartialMatch(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT, age INT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice', 30)")
+	run(t, exec, "INSERT INTO users VALUES (2, 'alice', 25)")
+	run(t, exec, "INSERT INTO users VALUES (3, 'bob', 30)")
+	run(t, exec, "CREATE INDEX idx_name_age ON users(name, age)")
+
+	// Only one column → composite index not used, falls back to full scan
+	result := run(t, exec, "SELECT * FROM users WHERE name = 'alice'")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+}
+
+func TestCompositeIndexMaintainedOnInsert(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT, age INT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice', 30)")
+	run(t, exec, "CREATE INDEX idx_name_age ON users(name, age)")
+
+	// Insert after index creation
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob', 25)")
+
+	result := run(t, exec, "SELECT * FROM users WHERE name = 'bob' AND age = 25")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(2) {
+		t.Errorf("expected id=2, got %v", result.Rows[0][0])
+	}
+}
+
+func TestCompositeIndexMaintainedOnDelete(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT, age INT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice', 30)")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob', 25)")
+	run(t, exec, "CREATE INDEX idx_name_age ON users(name, age)")
+
+	run(t, exec, "DELETE FROM users WHERE id = 2")
+
+	result := run(t, exec, "SELECT * FROM users WHERE name = 'bob' AND age = 25")
+	if len(result.Rows) != 0 {
+		t.Fatalf("expected 0 rows after delete, got %d", len(result.Rows))
+	}
+}
+
+func TestCompositeIndexMaintainedOnUpdate(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT, age INT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice', 30)")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob', 25)")
+	run(t, exec, "CREATE INDEX idx_name_age ON users(name, age)")
+
+	run(t, exec, "UPDATE users SET age = 35 WHERE id = 2")
+
+	// Old value should not be found
+	result := run(t, exec, "SELECT * FROM users WHERE name = 'bob' AND age = 25")
+	if len(result.Rows) != 0 {
+		t.Fatalf("expected 0 rows for old value, got %d", len(result.Rows))
+	}
+
+	// New value should be found
+	result = run(t, exec, "SELECT * FROM users WHERE name = 'bob' AND age = 35")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row for new value, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(2) {
+		t.Errorf("expected id=2, got %v", result.Rows[0][0])
+	}
+}
+
+func TestCompositeIndexWithNull(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT, age INT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice', 30)")
+	run(t, exec, "INSERT INTO users VALUES (2, NULL, 25)")
+	run(t, exec, "INSERT INTO users VALUES (3, 'bob', NULL)")
+	run(t, exec, "CREATE INDEX idx_name_age ON users(name, age)")
+
+	// NULL rows are excluded from index; non-NULL row should still be found
+	result := run(t, exec, "SELECT * FROM users WHERE name = 'alice' AND age = 30")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(1) {
+		t.Errorf("expected id=1, got %v", result.Rows[0][0])
+	}
+}
+
+func TestCreateCompositeIndexOnExistingData(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT, age INT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice', 30)")
+	run(t, exec, "INSERT INTO users VALUES (2, 'alice', 30)")
+	run(t, exec, "INSERT INTO users VALUES (3, 'bob', 25)")
+
+	// Create composite index after data is inserted
+	run(t, exec, "CREATE INDEX idx_name_age ON users(name, age)")
+
+	// Index should find multiple matching rows
+	result := run(t, exec, "SELECT * FROM users WHERE name = 'alice' AND age = 30")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+}

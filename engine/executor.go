@@ -137,18 +137,24 @@ func (e *Executor) executeCreateIndex(stmt *ast.CreateIndexStmt) (*Result, error
 	if err != nil {
 		return nil, err
 	}
-	col, err := info.FindColumn(stmt.ColumnName)
-	if err != nil {
-		return nil, err
-	}
 	if e.storage.HasIndex(stmt.IndexName) {
 		return nil, fmt.Errorf("index %q already exists", stmt.IndexName)
 	}
+	columnNames := make([]string, len(stmt.ColumnNames))
+	columnIdxs := make([]int, len(stmt.ColumnNames))
+	for i, name := range stmt.ColumnNames {
+		col, err := info.FindColumn(name)
+		if err != nil {
+			return nil, err
+		}
+		columnNames[i] = col.Name
+		columnIdxs[i] = col.Index
+	}
 	idxInfo := &IndexInfo{
-		Name:       stmt.IndexName,
-		TableName:  info.Name,
-		ColumnName: col.Name,
-		ColumnIdx:  col.Index,
+		Name:        stmt.IndexName,
+		TableName:   info.Name,
+		ColumnNames: columnNames,
+		ColumnIdxs:  columnIdxs,
 	}
 	if err := e.storage.CreateIndex(idxInfo); err != nil {
 		return nil, err
@@ -168,62 +174,75 @@ func (e *Executor) tryIndexLookup(stmt *ast.SelectStmt, info *TableInfo) ([]Row,
 	if stmt.Where == nil {
 		return nil, false
 	}
-	colName, val := extractEqualityCondition(stmt.Where)
-	if colName == "" {
+	eqConds := extractEqualityConditions(stmt.Where)
+	if len(eqConds) == 0 {
 		return nil, false
 	}
-	col, err := info.FindColumn(colName)
-	if err != nil {
-		return nil, false
+
+	// Try all indexes on this table, pick one where all columns have equality conditions
+	indexes := e.storage.GetIndexes(info.Name)
+	for _, idx := range indexes {
+		vals := make([]Value, len(idx.Info.ColumnNames))
+		allFound := true
+		for i, colName := range idx.Info.ColumnNames {
+			val, ok := eqConds[strings.ToLower(colName)]
+			if !ok {
+				allFound = false
+				break
+			}
+			vals[i] = val
+		}
+		if !allFound {
+			continue
+		}
+		keys := idx.Lookup(vals)
+		if keys == nil {
+			return []Row{}, true
+		}
+		rows, err := e.storage.GetByKeys(info.Name, keys)
+		if err != nil {
+			return nil, false
+		}
+		return rows, true
 	}
-	idx := e.storage.LookupIndex(info.Name, col.Index)
-	if idx == nil {
-		return nil, false
-	}
-	keys := idx.Lookup(val)
-	if keys == nil {
-		return []Row{}, true
-	}
-	rows, err := e.storage.GetByKeys(info.Name, keys)
-	if err != nil {
-		return nil, false
-	}
-	return rows, true
+	return nil, false
 }
 
-// extractEqualityCondition extracts a column = literal condition from a WHERE expression.
-// For AND chains, it returns the first equality condition found.
-func extractEqualityCondition(expr ast.Expr) (string, Value) {
+// extractEqualityConditions extracts all column = literal conditions from a WHERE expression.
+// For AND chains, it collects all equality conditions. Returns map[lowercase_col_name]Value.
+func extractEqualityConditions(expr ast.Expr) map[string]Value {
+	result := make(map[string]Value)
+	collectEqualities(expr, result)
+	return result
+}
+
+func collectEqualities(expr ast.Expr, result map[string]Value) {
 	switch e := expr.(type) {
 	case *ast.BinaryExpr:
 		if e.Op != "=" {
-			return "", nil
+			return
 		}
 		ident, ok := e.Left.(*ast.IdentExpr)
 		if !ok {
-			return "", nil
+			return
 		}
+		var val Value
 		switch lit := e.Right.(type) {
 		case *ast.IntLitExpr:
-			return ident.Name, lit.Value
+			val = lit.Value
 		case *ast.FloatLitExpr:
-			return ident.Name, lit.Value
+			val = lit.Value
 		case *ast.StringLitExpr:
-			return ident.Name, lit.Value
+			val = lit.Value
 		default:
-			return "", nil
+			return
 		}
+		result[strings.ToLower(ident.Name)] = val
 	case *ast.LogicalExpr:
 		if e.Op == "AND" {
-			colName, val := extractEqualityCondition(e.Left)
-			if colName != "" {
-				return colName, val
-			}
-			return extractEqualityCondition(e.Right)
+			collectEqualities(e.Left, result)
+			collectEqualities(e.Right, result)
 		}
-		return "", nil
-	default:
-		return "", nil
 	}
 }
 

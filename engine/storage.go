@@ -25,12 +25,32 @@ type SecondaryIndex struct {
 	entries map[string]map[int64]struct{} // encoded value -> set of BTree keys
 }
 
-// Lookup returns the BTree keys matching the given value.
-func (si *SecondaryIndex) Lookup(val Value) []int64 {
-	if val == nil {
-		return nil
+// encodeCompositeKey encodes multiple column values into a single string key.
+// Returns empty string and false if any value is nil (NULL).
+func encodeCompositeKey(row Row, columnIdxs []int) (string, bool) {
+	parts := make([]string, len(columnIdxs))
+	for i, idx := range columnIdxs {
+		val := row[idx]
+		if val == nil {
+			return "", false
+		}
+		parts[i] = fmt.Sprintf("%v", val)
 	}
-	encoded := fmt.Sprintf("%v", val)
+	return strings.Join(parts, "\x00"), true
+}
+
+// Lookup returns the BTree keys matching the given composite values.
+func (si *SecondaryIndex) Lookup(vals []Value) []int64 {
+	for _, v := range vals {
+		if v == nil {
+			return nil
+		}
+	}
+	parts := make([]string, len(vals))
+	for i, v := range vals {
+		parts[i] = fmt.Sprintf("%v", v)
+	}
+	encoded := strings.Join(parts, "\x00")
 	keySet, ok := si.entries[encoded]
 	if !ok {
 		return nil
@@ -42,22 +62,22 @@ func (si *SecondaryIndex) Lookup(val Value) []int64 {
 	return keys
 }
 
-func (si *SecondaryIndex) add(key int64, val Value) {
-	if val == nil {
+func (si *SecondaryIndex) addRow(key int64, row Row) {
+	encoded, ok := encodeCompositeKey(row, si.Info.ColumnIdxs)
+	if !ok {
 		return
 	}
-	encoded := fmt.Sprintf("%v", val)
 	if si.entries[encoded] == nil {
 		si.entries[encoded] = make(map[int64]struct{})
 	}
 	si.entries[encoded][key] = struct{}{}
 }
 
-func (si *SecondaryIndex) remove(key int64, val Value) {
-	if val == nil {
+func (si *SecondaryIndex) removeRow(key int64, row Row) {
+	encoded, ok := encodeCompositeKey(row, si.Info.ColumnIdxs)
+	if !ok {
 		return
 	}
-	encoded := fmt.Sprintf("%v", val)
 	if keySet, ok := si.entries[encoded]; ok {
 		delete(keySet, key)
 		if len(keySet) == 0 {
@@ -120,7 +140,7 @@ func (s *Storage) Insert(tableName string, row Row) error {
 
 	// Update secondary indexes
 	for _, idx := range tbl.indexes {
-		idx.add(key, row[idx.Info.ColumnIdx])
+		idx.addRow(key, row)
 	}
 
 	return nil
@@ -141,7 +161,7 @@ func (s *Storage) DeleteByKeys(tableName string, keys []int64) error {
 			if found {
 				row := val.(Row)
 				for _, idx := range tbl.indexes {
-					idx.remove(key, row[idx.Info.ColumnIdx])
+					idx.removeRow(key, row)
 				}
 			}
 		}
@@ -164,7 +184,7 @@ func (s *Storage) UpdateRow(tableName string, key int64, row Row) error {
 		if found {
 			oldRow := oldVal.(Row)
 			for _, idx := range tbl.indexes {
-				idx.remove(key, oldRow[idx.Info.ColumnIdx])
+				idx.removeRow(key, oldRow)
 			}
 		}
 	}
@@ -173,7 +193,7 @@ func (s *Storage) UpdateRow(tableName string, key int64, row Row) error {
 
 	// Add new index entries
 	for _, idx := range tbl.indexes {
-		idx.add(key, row[idx.Info.ColumnIdx])
+		idx.addRow(key, row)
 	}
 
 	return nil
@@ -218,7 +238,7 @@ func (s *Storage) CreateIndex(info *IndexInfo) error {
 	// Build index from existing data
 	tbl.tree.ForEach(func(key int64, value any) bool {
 		row := value.(Row)
-		idx.add(key, row[info.ColumnIdx])
+		idx.addRow(key, row)
 		return true
 	})
 
@@ -240,19 +260,43 @@ func (s *Storage) DropIndex(indexName string) error {
 	return nil
 }
 
-// LookupIndex finds a secondary index on the given table and column index.
-func (s *Storage) LookupIndex(tableName string, columnIdx int) *SecondaryIndex {
+// LookupIndex finds a secondary index on the given table matching the given column indexes.
+func (s *Storage) LookupIndex(tableName string, columnIdxs []int) *SecondaryIndex {
 	lower := strings.ToLower(tableName)
 	tbl, ok := s.tables[lower]
 	if !ok {
 		return nil
 	}
 	for _, idx := range tbl.indexes {
-		if idx.Info.ColumnIdx == columnIdx {
+		if len(idx.Info.ColumnIdxs) != len(columnIdxs) {
+			continue
+		}
+		match := true
+		for i := range columnIdxs {
+			if idx.Info.ColumnIdxs[i] != columnIdxs[i] {
+				match = false
+				break
+			}
+		}
+		if match {
 			return idx
 		}
 	}
 	return nil
+}
+
+// GetIndexes returns all secondary indexes for the given table.
+func (s *Storage) GetIndexes(tableName string) []*SecondaryIndex {
+	lower := strings.ToLower(tableName)
+	tbl, ok := s.tables[lower]
+	if !ok {
+		return nil
+	}
+	var indexes []*SecondaryIndex
+	for _, idx := range tbl.indexes {
+		indexes = append(indexes, idx)
+	}
+	return indexes
 }
 
 // HasIndex checks if an index with the given name exists.

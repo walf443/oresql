@@ -1261,8 +1261,31 @@ func TestParseCreateIndex(t *testing.T) {
 	if ci.TableName != "users" {
 		t.Errorf("table name: expected %q, got %q", "users", ci.TableName)
 	}
-	if ci.ColumnName != "name" {
-		t.Errorf("column name: expected %q, got %q", "name", ci.ColumnName)
+	if len(ci.ColumnNames) != 1 || ci.ColumnNames[0] != "name" {
+		t.Errorf("column names: expected [\"name\"], got %v", ci.ColumnNames)
+	}
+}
+
+func TestParseCreateCompositeIndex(t *testing.T) {
+	stmt := parse(t, "CREATE INDEX idx_name_age ON users(name, age)")
+	ci, ok := stmt.(*ast.CreateIndexStmt)
+	if !ok {
+		t.Fatalf("expected CreateIndexStmt, got %T", stmt)
+	}
+	if ci.IndexName != "idx_name_age" {
+		t.Errorf("index name: expected %q, got %q", "idx_name_age", ci.IndexName)
+	}
+	if ci.TableName != "users" {
+		t.Errorf("table name: expected %q, got %q", "users", ci.TableName)
+	}
+	if len(ci.ColumnNames) != 2 {
+		t.Fatalf("expected 2 columns, got %d", len(ci.ColumnNames))
+	}
+	if ci.ColumnNames[0] != "name" {
+		t.Errorf("column 0: expected %q, got %q", "name", ci.ColumnNames[0])
+	}
+	if ci.ColumnNames[1] != "age" {
+		t.Errorf("column 1: expected %q, got %q", "age", ci.ColumnNames[1])
 	}
 }
 

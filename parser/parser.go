@@ -1011,20 +1011,19 @@ func (p *Parser) parseCreateIndex() (ast.Statement, error) {
 		return nil, err
 	}
 
-	if !p.isIdent() {
-		return nil, fmt.Errorf("expected column name, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+	columnNames, err := p.parseIdentList()
+	if err != nil {
+		return nil, err
 	}
-	columnName := p.curToken.Literal
-	p.nextToken()
 
 	if err := p.expectToken(token.RPAREN); err != nil {
 		return nil, err
 	}
 
 	return &ast.CreateIndexStmt{
-		IndexName:  indexName,
-		TableName:  tableName,
-		ColumnName: columnName,
+		IndexName:   indexName,
+		TableName:   tableName,
+		ColumnNames: columnNames,
 	}, nil
 }
 

@@ -211,11 +211,11 @@ type BetweenExpr struct {
 func (e *BetweenExpr) NodeType() string { return "Between" }
 func (e *BetweenExpr) exprNode()        {}
 
-// CreateIndexStmt represents CREATE INDEX <name> ON <table>(<column>).
+// CreateIndexStmt represents CREATE INDEX <name> ON <table>(<column>, ...).
 type CreateIndexStmt struct {
-	IndexName  string
-	TableName  string
-	ColumnName string
+	IndexName   string
+	TableName   string
+	ColumnNames []string
 }
 
 func (s *CreateIndexStmt) NodeType() string { return "CreateIndex" }

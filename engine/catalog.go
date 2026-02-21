@@ -38,10 +38,10 @@ func (t *TableInfo) FindColumn(name string) (*ColumnInfo, error) {
 
 // IndexInfo describes a secondary index on a table.
 type IndexInfo struct {
-	Name       string
-	TableName  string
-	ColumnName string
-	ColumnIdx  int
+	Name        string
+	TableName   string
+	ColumnNames []string
+	ColumnIdxs  []int
 }
 
 // Catalog holds all table schemas.

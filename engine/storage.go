@@ -1,7 +1,9 @@
 package engine
 
 import (
+	"encoding/binary"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/walf443/oresql/btree"
@@ -19,38 +21,59 @@ type KeyRow struct {
 	Row Row
 }
 
+// KeyEncoding is a binary-encoded index key.
+// Each value is prefixed with a type byte (NULL=0x00, INT=0x01, FLOAT=0x02, TEXT=0x03)
+// followed by fixed-size or length-prefixed data, making the encoding self-delimiting.
+type KeyEncoding string
+
 // SecondaryIndex is a BTree-based secondary index on one or more columns.
 type SecondaryIndex struct {
 	Info *IndexInfo
-	tree *btree.BTree[string] // encoded value -> map[int64]struct{} (set of BTree keys)
+	tree *btree.BTree[KeyEncoding] // encoded value -> map[int64]struct{} (set of BTree keys)
 }
 
-// encodeCompositeKey encodes multiple column values into a single string key.
-// Returns empty string and false if any value is nil (NULL).
-func encodeCompositeKey(row Row, columnIdxs []int) (string, bool) {
-	parts := make([]string, len(columnIdxs))
-	for i, idx := range columnIdxs {
-		val := row[idx]
-		if val == nil {
-			return "", false
-		}
-		parts[i] = fmt.Sprintf("%v", val)
+// encodeValue encodes a single value with a type prefix into the builder.
+// NULL=0x00, INT=0x01+8-byte big-endian, FLOAT=0x02+8-byte IEEE754, TEXT=0x03+4-byte length+bytes.
+func encodeValue(buf *strings.Builder, val Value) {
+	switch v := val.(type) {
+	case nil:
+		buf.WriteByte(0x00)
+	case int64:
+		buf.WriteByte(0x01)
+		var b [8]byte
+		binary.BigEndian.PutUint64(b[:], uint64(v))
+		buf.Write(b[:])
+	case float64:
+		buf.WriteByte(0x02)
+		var b [8]byte
+		binary.BigEndian.PutUint64(b[:], math.Float64bits(v))
+		buf.Write(b[:])
+	case string:
+		buf.WriteByte(0x03)
+		var b [4]byte
+		binary.BigEndian.PutUint32(b[:], uint32(len(v)))
+		buf.Write(b[:])
+		buf.WriteString(v)
 	}
-	return strings.Join(parts, "\x00"), true
+}
+
+// encodeCompositeKey encodes multiple column values into a single binary key.
+// NULL values are encoded (prefix 0x00), so all rows are indexable.
+func encodeCompositeKey(row Row, columnIdxs []int) KeyEncoding {
+	var buf strings.Builder
+	for _, idx := range columnIdxs {
+		encodeValue(&buf, row[idx])
+	}
+	return KeyEncoding(buf.String())
 }
 
 // Lookup returns the BTree keys matching the given composite values.
 func (si *SecondaryIndex) Lookup(vals []Value) []int64 {
+	var buf strings.Builder
 	for _, v := range vals {
-		if v == nil {
-			return nil
-		}
+		encodeValue(&buf, v)
 	}
-	parts := make([]string, len(vals))
-	for i, v := range vals {
-		parts[i] = fmt.Sprintf("%v", v)
-	}
-	encoded := strings.Join(parts, "\x00")
+	encoded := KeyEncoding(buf.String())
 	val, ok := si.tree.Get(encoded)
 	if !ok {
 		return nil
@@ -64,10 +87,7 @@ func (si *SecondaryIndex) Lookup(vals []Value) []int64 {
 }
 
 func (si *SecondaryIndex) addRow(key int64, row Row) {
-	encoded, ok := encodeCompositeKey(row, si.Info.ColumnIdxs)
-	if !ok {
-		return
-	}
+	encoded := encodeCompositeKey(row, si.Info.ColumnIdxs)
 	val, found := si.tree.Get(encoded)
 	if found {
 		keySet := val.(map[int64]struct{})
@@ -78,10 +98,7 @@ func (si *SecondaryIndex) addRow(key int64, row Row) {
 }
 
 func (si *SecondaryIndex) removeRow(key int64, row Row) {
-	encoded, ok := encodeCompositeKey(row, si.Info.ColumnIdxs)
-	if !ok {
-		return
-	}
+	encoded := encodeCompositeKey(row, si.Info.ColumnIdxs)
 	val, found := si.tree.Get(encoded)
 	if found {
 		keySet := val.(map[int64]struct{})
@@ -212,7 +229,7 @@ func (s *Storage) TruncateTable(name string) {
 		tbl.nextRowID = 1
 		// Clear index entries but keep index structure
 		for _, idx := range tbl.indexes {
-			idx.tree = btree.New[string](32)
+			idx.tree = btree.New[KeyEncoding](32)
 		}
 	}
 }
@@ -238,7 +255,7 @@ func (s *Storage) CreateIndex(info *IndexInfo) error {
 
 	idx := &SecondaryIndex{
 		Info: info,
-		tree: btree.New[string](32),
+		tree: btree.New[KeyEncoding](32),
 	}
 
 	// Build index from existing data

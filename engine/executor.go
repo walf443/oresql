@@ -239,6 +239,15 @@ func collectEqualities(expr ast.Expr, result map[string]Value) {
 			return
 		}
 		result[strings.ToLower(ident.Name)] = val
+	case *ast.IsNullExpr:
+		if e.Not {
+			return
+		}
+		ident, ok := e.Expr.(*ast.IdentExpr)
+		if !ok {
+			return
+		}
+		result[strings.ToLower(ident.Name)] = nil
 	case *ast.LogicalExpr:
 		if e.Op == "AND" {
 			collectEqualities(e.Left, result)

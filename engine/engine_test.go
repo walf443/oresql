@@ -2227,13 +2227,22 @@ func TestIndexWithNullValues(t *testing.T) {
 	run(t, exec, "INSERT INTO users VALUES (3, 'bob')")
 	run(t, exec, "CREATE INDEX idx_name ON users(name)")
 
-	// NULL values should not be in the index
+	// NULL values are stored in the index via binary encoding
 	result := run(t, exec, "SELECT * FROM users WHERE name = 'alice'")
 	if len(result.Rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(result.Rows))
 	}
 	if result.Rows[0][0] != int64(1) {
 		t.Errorf("expected id=1, got %v", result.Rows[0][0])
+	}
+
+	// WHERE name IS NULL should use index and find the NULL row
+	result = run(t, exec, "SELECT * FROM users WHERE name IS NULL")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row for IS NULL, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(2) {
+		t.Errorf("expected id=2, got %v", result.Rows[0][0])
 	}
 }
 
@@ -2394,13 +2403,22 @@ func TestCompositeIndexWithNull(t *testing.T) {
 	run(t, exec, "INSERT INTO users VALUES (3, 'bob', NULL)")
 	run(t, exec, "CREATE INDEX idx_name_age ON users(name, age)")
 
-	// NULL rows are excluded from index; non-NULL row should still be found
+	// NULL values are stored in composite index; non-NULL row should still be found
 	result := run(t, exec, "SELECT * FROM users WHERE name = 'alice' AND age = 30")
 	if len(result.Rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(result.Rows))
 	}
 	if result.Rows[0][0] != int64(1) {
 		t.Errorf("expected id=1, got %v", result.Rows[0][0])
+	}
+
+	// WHERE name IS NULL AND age = 25 should use composite index
+	result = run(t, exec, "SELECT * FROM users WHERE name IS NULL AND age = 25")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row for IS NULL composite, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(2) {
+		t.Errorf("expected id=2, got %v", result.Rows[0][0])
 	}
 }
 
@@ -2418,5 +2436,37 @@ func TestCreateCompositeIndexOnExistingData(t *testing.T) {
 	result := run(t, exec, "SELECT * FROM users WHERE name = 'alice' AND age = 30")
 	if len(result.Rows) != 2 {
 		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+}
+
+func TestSelectWithIndexIsNull(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE products (id INT, name TEXT, category TEXT)")
+	run(t, exec, "INSERT INTO products VALUES (1, 'Widget', 'tools')")
+	run(t, exec, "INSERT INTO products VALUES (2, 'Gadget', NULL)")
+	run(t, exec, "INSERT INTO products VALUES (3, 'Doohickey', NULL)")
+	run(t, exec, "INSERT INTO products VALUES (4, 'Thingamajig', 'toys')")
+	run(t, exec, "CREATE INDEX idx_category ON products(category)")
+
+	// IS NULL should use index and find rows with NULL category
+	result := run(t, exec, "SELECT * FROM products WHERE category IS NULL")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows for IS NULL, got %d", len(result.Rows))
+	}
+	ids := map[int64]bool{}
+	for _, row := range result.Rows {
+		ids[row[0].(int64)] = true
+	}
+	if !ids[2] || !ids[3] {
+		t.Errorf("expected ids 2 and 3, got %v", ids)
+	}
+
+	// Non-NULL lookup should still work
+	result = run(t, exec, "SELECT * FROM products WHERE category = 'tools'")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(1) {
+		t.Errorf("expected id=1, got %v", result.Rows[0][0])
 	}
 }

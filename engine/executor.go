@@ -67,9 +67,12 @@ func (e *Executor) executeInsert(stmt *ast.InsertStmt) (*Result, error) {
 				return nil, err
 			}
 
-			// Type check (NULL is allowed for any column)
-			if val != nil {
-				col := info.Columns[i]
+			col := info.Columns[i]
+			if val == nil {
+				if col.NotNull {
+					return nil, fmt.Errorf("column %q cannot be NULL", col.Name)
+				}
+			} else {
 				switch col.DataType {
 				case "INT":
 					if _, ok := val.(int64); !ok {

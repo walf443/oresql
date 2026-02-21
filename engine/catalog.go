@@ -12,6 +12,7 @@ type ColumnInfo struct {
 	Name     string
 	DataType string // "INT" or "TEXT"
 	Index    int    // ordinal position in the row
+	NotNull  bool
 }
 
 // TableInfo describes a table's schema.
@@ -52,6 +53,7 @@ func (c *Catalog) CreateTable(name string, columnDefs []ast.ColumnDef) (*TableIn
 			Name:     cd.Name,
 			DataType: cd.DataType,
 			Index:    i,
+			NotNull:  cd.NotNull,
 		}
 	}
 

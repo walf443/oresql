@@ -562,6 +562,38 @@ func TestNullComparisonReturnsFalse(t *testing.T) {
 	}
 }
 
+func TestInsertNotNullSuccess(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT NOT NULL, name TEXT)")
+	result := run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	if result.Message != "1 row inserted" {
+		t.Errorf("expected '1 row inserted', got %q", result.Message)
+	}
+}
+
+func TestInsertNotNullViolation(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT NOT NULL, name TEXT)")
+	runExpectError(t, exec, "INSERT INTO users VALUES (NULL, 'alice')")
+}
+
+func TestInsertNullableColumnStillAllowsNull(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT NOT NULL, name TEXT)")
+	result := run(t, exec, "INSERT INTO users VALUES (1, NULL)")
+	if result.Message != "1 row inserted" {
+		t.Errorf("expected '1 row inserted', got %q", result.Message)
+	}
+
+	result = run(t, exec, "SELECT * FROM users")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][1] != nil {
+		t.Errorf("expected name=nil, got %v", result.Rows[0][1])
+	}
+}
+
 func TestErrorSelectNonexistentColumn(t *testing.T) {
 	exec := NewExecutor()
 	run(t, exec, "CREATE TABLE users (id INT)")

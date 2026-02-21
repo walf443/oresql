@@ -21,6 +21,7 @@ type Expr interface {
 type ColumnDef struct {
 	Name     string
 	DataType string // "INT" or "TEXT"
+	NotNull  bool
 }
 
 // CreateTableStmt represents CREATE TABLE <name> (<columns>).

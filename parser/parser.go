@@ -138,7 +138,17 @@ func (p *Parser) parseColumnDef() (ast.ColumnDef, error) {
 	dataType := p.curToken.Type.String()
 	p.nextToken()
 
-	return ast.ColumnDef{Name: name, DataType: dataType}, nil
+	notNull := false
+	if p.curToken.Type == token.NOT {
+		p.nextToken() // skip NOT
+		if p.curToken.Type != token.NULL {
+			return ast.ColumnDef{}, fmt.Errorf("expected NULL after NOT, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+		}
+		p.nextToken() // skip NULL
+		notNull = true
+	}
+
+	return ast.ColumnDef{Name: name, DataType: dataType, NotNull: notNull}, nil
 }
 
 // parseInsert parses: INSERT INTO <table> VALUES (<expr>, ...) [, (<expr>, ...) ...]

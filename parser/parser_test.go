@@ -482,6 +482,23 @@ func TestParseSelectUnaryMinus(t *testing.T) {
 	}
 }
 
+func TestParseCreateTableNotNull(t *testing.T) {
+	stmt := parse(t, "CREATE TABLE t (id INT NOT NULL, name TEXT)")
+	ct, ok := stmt.(*ast.CreateTableStmt)
+	if !ok {
+		t.Fatalf("expected CreateTableStmt, got %T", stmt)
+	}
+	if len(ct.Columns) != 2 {
+		t.Fatalf("expected 2 columns, got %d", len(ct.Columns))
+	}
+	if ct.Columns[0].Name != "id" || ct.Columns[0].DataType != "INT" || !ct.Columns[0].NotNull {
+		t.Errorf("column 0: expected (id, INT, NOT NULL), got (%s, %s, NotNull=%v)", ct.Columns[0].Name, ct.Columns[0].DataType, ct.Columns[0].NotNull)
+	}
+	if ct.Columns[1].Name != "name" || ct.Columns[1].DataType != "TEXT" || ct.Columns[1].NotNull {
+		t.Errorf("column 1: expected (name, TEXT, nullable), got (%s, %s, NotNull=%v)", ct.Columns[1].Name, ct.Columns[1].DataType, ct.Columns[1].NotNull)
+	}
+}
+
 func TestParseError(t *testing.T) {
 	inputs := []string{
 		"CREATE",

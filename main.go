@@ -1,28 +1,48 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/chzyer/readline"
 	"github.com/walf443/oresql/engine"
 	"github.com/walf443/oresql/lexer"
 	"github.com/walf443/oresql/parser"
 )
 
 func main() {
-	exec := engine.NewExecutor()
-	scanner := bufio.NewScanner(os.Stdin)
+	historyFile := filepath.Join(os.TempDir(), ".oresql_history")
+	if home, err := os.UserHomeDir(); err == nil {
+		historyFile = filepath.Join(home, ".oresql_history")
+	}
 
-	fmt.Println("oresql> Welcome to oresql. Type SQL statements or 'exit' to quit.")
+	rl, err := readline.NewEx(&readline.Config{
+		Prompt:       "oresql> ",
+		HistoryFile:  historyFile,
+		HistoryLimit: 1000,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to initialize readline: %s\n", err)
+		os.Exit(1)
+	}
+	defer rl.Close()
+
+	exec := engine.NewExecutor()
+
+	fmt.Println("Welcome to oresql. Type SQL statements or 'exit' to quit.")
 
 	for {
-		fmt.Print("oresql> ")
-		if !scanner.Scan() {
+		line, err := rl.Readline()
+		if err == readline.ErrInterrupt {
+			continue
+		}
+		if err == io.EOF {
 			break
 		}
-		line := strings.TrimSpace(scanner.Text())
+		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}

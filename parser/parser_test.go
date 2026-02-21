@@ -47,22 +47,55 @@ func TestParseInsert(t *testing.T) {
 	if ins.TableName != "users" {
 		t.Errorf("table name: expected %q, got %q", "users", ins.TableName)
 	}
-	if len(ins.Values) != 2 {
-		t.Fatalf("expected 2 values, got %d", len(ins.Values))
+	if len(ins.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(ins.Rows))
 	}
-	intVal, ok := ins.Values[0].(*ast.IntLitExpr)
+	if len(ins.Rows[0]) != 2 {
+		t.Fatalf("expected 2 values, got %d", len(ins.Rows[0]))
+	}
+	intVal, ok := ins.Rows[0][0].(*ast.IntLitExpr)
 	if !ok {
-		t.Fatalf("value 0: expected IntLitExpr, got %T", ins.Values[0])
+		t.Fatalf("value 0: expected IntLitExpr, got %T", ins.Rows[0][0])
 	}
 	if intVal.Value != 1 {
 		t.Errorf("value 0: expected 1, got %d", intVal.Value)
 	}
-	strVal, ok := ins.Values[1].(*ast.StringLitExpr)
+	strVal, ok := ins.Rows[0][1].(*ast.StringLitExpr)
 	if !ok {
-		t.Fatalf("value 1: expected StringLitExpr, got %T", ins.Values[1])
+		t.Fatalf("value 1: expected StringLitExpr, got %T", ins.Rows[0][1])
 	}
 	if strVal.Value != "alice" {
 		t.Errorf("value 1: expected %q, got %q", "alice", strVal.Value)
+	}
+}
+
+func TestParseInsertMultipleRows(t *testing.T) {
+	stmt := parse(t, "INSERT INTO users VALUES (1, 'alice'), (2, 'bob'), (3, 'charlie')")
+	ins, ok := stmt.(*ast.InsertStmt)
+	if !ok {
+		t.Fatalf("expected InsertStmt, got %T", stmt)
+	}
+	if ins.TableName != "users" {
+		t.Errorf("table name: expected %q, got %q", "users", ins.TableName)
+	}
+	if len(ins.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(ins.Rows))
+	}
+	// Check each row has 2 values
+	for i, row := range ins.Rows {
+		if len(row) != 2 {
+			t.Errorf("row %d: expected 2 values, got %d", i, len(row))
+		}
+	}
+	// Spot check values
+	if ins.Rows[0][0].(*ast.IntLitExpr).Value != 1 {
+		t.Errorf("row 0 value 0: expected 1")
+	}
+	if ins.Rows[1][1].(*ast.StringLitExpr).Value != "bob" {
+		t.Errorf("row 1 value 1: expected 'bob'")
+	}
+	if ins.Rows[2][0].(*ast.IntLitExpr).Value != 3 {
+		t.Errorf("row 2 value 0: expected 3")
 	}
 }
 

@@ -225,6 +225,35 @@ func TestSelectCountStarEmpty(t *testing.T) {
 	}
 }
 
+func TestInsertMultipleRows(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+
+	result := run(t, exec, "INSERT INTO users VALUES (1, 'alice'), (2, 'bob'), (3, 'charlie')")
+	if result.Message != "3 rows inserted" {
+		t.Errorf("expected '3 rows inserted', got %q", result.Message)
+	}
+
+	result = run(t, exec, "SELECT COUNT(*) FROM users")
+	if result.Rows[0][0] != int64(3) {
+		t.Errorf("expected COUNT(*)=3, got %v", result.Rows[0][0])
+	}
+
+	result = run(t, exec, "SELECT * FROM users")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][1] != "alice" {
+		t.Errorf("row 0: expected 'alice', got %v", result.Rows[0][1])
+	}
+	if result.Rows[1][1] != "bob" {
+		t.Errorf("row 1: expected 'bob', got %v", result.Rows[1][1])
+	}
+	if result.Rows[2][1] != "charlie" {
+		t.Errorf("row 2: expected 'charlie', got %v", result.Rows[2][1])
+	}
+}
+
 func TestErrorDuplicateTable(t *testing.T) {
 	exec := NewExecutor()
 	run(t, exec, "CREATE TABLE users (id INT)")

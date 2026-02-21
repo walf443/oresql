@@ -136,7 +136,7 @@ func (p *Parser) parseColumnDef() (ast.ColumnDef, error) {
 	return ast.ColumnDef{Name: name, DataType: dataType}, nil
 }
 
-// parseInsert parses: INSERT INTO <table> VALUES (<expr>, ...)
+// parseInsert parses: INSERT INTO <table> VALUES (<expr>, ...) [, (<expr>, ...) ...]
 func (p *Parser) parseInsert() (*ast.InsertStmt, error) {
 	if err := p.expectToken(token.INSERT); err != nil {
 		return nil, err
@@ -154,6 +154,30 @@ func (p *Parser) parseInsert() (*ast.InsertStmt, error) {
 	if err := p.expectToken(token.VALUES); err != nil {
 		return nil, err
 	}
+
+	row, err := p.parseValueRow()
+	if err != nil {
+		return nil, err
+	}
+	rows := [][]ast.Expr{row}
+
+	for p.curToken.Type == token.COMMA {
+		p.nextToken() // skip comma
+		row, err := p.parseValueRow()
+		if err != nil {
+			return nil, err
+		}
+		rows = append(rows, row)
+	}
+
+	return &ast.InsertStmt{
+		TableName: tableName,
+		Rows:      rows,
+	}, nil
+}
+
+// parseValueRow parses a single parenthesized value list: (<expr>, ...)
+func (p *Parser) parseValueRow() ([]ast.Expr, error) {
 	if err := p.expectToken(token.LPAREN); err != nil {
 		return nil, err
 	}
@@ -167,10 +191,7 @@ func (p *Parser) parseInsert() (*ast.InsertStmt, error) {
 		return nil, err
 	}
 
-	return &ast.InsertStmt{
-		TableName: tableName,
-		Values:    values,
-	}, nil
+	return values, nil
 }
 
 func (p *Parser) parseExprList() ([]ast.Expr, error) {

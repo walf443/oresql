@@ -55,38 +55,46 @@ func (e *Executor) executeInsert(stmt *ast.InsertStmt) (*Result, error) {
 		return nil, err
 	}
 
-	if len(stmt.Values) != len(info.Columns) {
-		return nil, fmt.Errorf("expected %d values, got %d", len(info.Columns), len(stmt.Values))
-	}
+	for _, values := range stmt.Rows {
+		if len(values) != len(info.Columns) {
+			return nil, fmt.Errorf("expected %d values, got %d", len(info.Columns), len(values))
+		}
 
-	row := make(Row, len(info.Columns))
-	for i, valExpr := range stmt.Values {
-		val, err := evalLiteral(valExpr)
-		if err != nil {
+		row := make(Row, len(info.Columns))
+		for i, valExpr := range values {
+			val, err := evalLiteral(valExpr)
+			if err != nil {
+				return nil, err
+			}
+
+			// Type check
+			col := info.Columns[i]
+			switch col.DataType {
+			case "INT":
+				if _, ok := val.(int64); !ok {
+					return nil, fmt.Errorf("column %q expects INT, got %T", col.Name, val)
+				}
+			case "TEXT":
+				if _, ok := val.(string); !ok {
+					return nil, fmt.Errorf("column %q expects TEXT, got %T", col.Name, val)
+				}
+			}
+
+			row[i] = val
+		}
+
+		if err := e.storage.Insert(stmt.TableName, row); err != nil {
 			return nil, err
 		}
-
-		// Type check
-		col := info.Columns[i]
-		switch col.DataType {
-		case "INT":
-			if _, ok := val.(int64); !ok {
-				return nil, fmt.Errorf("column %q expects INT, got %T", col.Name, val)
-			}
-		case "TEXT":
-			if _, ok := val.(string); !ok {
-				return nil, fmt.Errorf("column %q expects TEXT, got %T", col.Name, val)
-			}
-		}
-
-		row[i] = val
 	}
 
-	if err := e.storage.Insert(stmt.TableName, row); err != nil {
-		return nil, err
+	n := len(stmt.Rows)
+	msg := fmt.Sprintf("%d rows inserted", n)
+	if n == 1 {
+		msg = "1 row inserted"
 	}
 
-	return &Result{Message: "1 row inserted"}, nil
+	return &Result{Message: msg}, nil
 }
 
 func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {

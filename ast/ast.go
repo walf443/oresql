@@ -32,10 +32,10 @@ type CreateTableStmt struct {
 func (s *CreateTableStmt) NodeType() string { return "CreateTable" }
 func (s *CreateTableStmt) statementNode()   {}
 
-// InsertStmt represents INSERT INTO <table> VALUES (<values>).
+// InsertStmt represents INSERT INTO <table> VALUES (<values>), ...
 type InsertStmt struct {
 	TableName string
-	Values    []Expr
+	Rows      [][]Expr
 }
 
 func (s *InsertStmt) NodeType() string { return "Insert" }

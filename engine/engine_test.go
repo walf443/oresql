@@ -1535,6 +1535,71 @@ func TestFloatUpdateSet(t *testing.T) {
 	}
 }
 
+func TestSelectDistinctBasic(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO users VALUES (3, 'alice')")
+
+	result := run(t, exec, "SELECT DISTINCT name FROM users")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != "alice" {
+		t.Errorf("row 0: expected 'alice', got %v", result.Rows[0][0])
+	}
+	if result.Rows[1][0] != "bob" {
+		t.Errorf("row 1: expected 'bob', got %v", result.Rows[1][0])
+	}
+}
+
+func TestSelectDistinctStar(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+
+	result := run(t, exec, "SELECT DISTINCT * FROM users")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+}
+
+func TestSelectDistinctOrderBy(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'bob')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (3, 'bob')")
+
+	result := run(t, exec, "SELECT DISTINCT name FROM users ORDER BY name")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != "alice" {
+		t.Errorf("row 0: expected 'alice', got %v", result.Rows[0][0])
+	}
+	if result.Rows[1][0] != "bob" {
+		t.Errorf("row 1: expected 'bob', got %v", result.Rows[1][0])
+	}
+}
+
+func TestSelectDistinctLimit(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO users VALUES (3, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (4, 'charlie')")
+
+	result := run(t, exec, "SELECT DISTINCT name FROM users LIMIT 2")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+}
+
 func TestErrorSelectNonexistentColumn(t *testing.T) {
 	exec := NewExecutor()
 	run(t, exec, "CREATE TABLE users (id INT)")

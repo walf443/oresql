@@ -69,6 +69,7 @@ const (
 	TRUNCATE // TRUNCATE keyword
 	GROUP    // GROUP keyword
 	HAVING   // HAVING keyword
+	DISTINCT // DISTINCT keyword
 )
 
 var tokenNames = map[TokenType]string{
@@ -129,6 +130,7 @@ var tokenNames = map[TokenType]string{
 	TRUNCATE:     "TRUNCATE",
 	GROUP:        "GROUP",
 	HAVING:       "HAVING",
+	DISTINCT:     "DISTINCT",
 }
 
 func (t TokenType) String() string {
@@ -179,6 +181,7 @@ var keywords = map[string]TokenType{
 	"TRUNCATE": TRUNCATE,
 	"GROUP":    GROUP,
 	"HAVING":   HAVING,
+	"DISTINCT": DISTINCT,
 }
 
 // LookupIdent returns the keyword TokenType if the identifier is a keyword,

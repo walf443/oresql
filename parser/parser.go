@@ -390,6 +390,12 @@ func (p *Parser) parseSelect() (*ast.SelectStmt, error) {
 		return nil, err
 	}
 
+	distinct := false
+	if p.curToken.Type == token.DISTINCT {
+		distinct = true
+		p.nextToken()
+	}
+
 	columns, err := p.parseSelectList()
 	if err != nil {
 		return nil, err
@@ -478,6 +484,7 @@ func (p *Parser) parseSelect() (*ast.SelectStmt, error) {
 	}
 
 	return &ast.SelectStmt{
+		Distinct:  distinct,
 		Columns:   columns,
 		TableName: tableName,
 		Where:     where,

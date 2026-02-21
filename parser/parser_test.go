@@ -968,6 +968,32 @@ func TestParseCreateTableFloat(t *testing.T) {
 	}
 }
 
+func TestParseSelectDistinct(t *testing.T) {
+	stmt := parse(t, "SELECT DISTINCT name FROM users")
+	sel := stmt.(*ast.SelectStmt)
+	if !sel.Distinct {
+		t.Errorf("expected Distinct=true, got false")
+	}
+	if len(sel.Columns) != 1 {
+		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
+	}
+	ident, ok := sel.Columns[0].(*ast.IdentExpr)
+	if !ok {
+		t.Fatalf("expected IdentExpr, got %T", sel.Columns[0])
+	}
+	if ident.Name != "name" {
+		t.Errorf("expected column 'name', got %q", ident.Name)
+	}
+}
+
+func TestParseSelectWithoutDistinct(t *testing.T) {
+	stmt := parse(t, "SELECT name FROM users")
+	sel := stmt.(*ast.SelectStmt)
+	if sel.Distinct {
+		t.Errorf("expected Distinct=false, got true")
+	}
+}
+
 func TestParseError(t *testing.T) {
 	inputs := []string{
 		"CREATE",

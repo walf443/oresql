@@ -48,8 +48,9 @@ type OrderByClause struct {
 	Desc bool // true for DESC, false for ASC (default)
 }
 
-// SelectStmt represents SELECT <columns> FROM <table> [WHERE <condition>] [GROUP BY ...] [HAVING ...] [ORDER BY ...] [LIMIT <n>] [OFFSET <n>].
+// SelectStmt represents SELECT [DISTINCT] <columns> FROM <table> [WHERE <condition>] [GROUP BY ...] [HAVING ...] [ORDER BY ...] [LIMIT <n>] [OFFSET <n>].
 type SelectStmt struct {
+	Distinct  bool
 	Columns   []Expr
 	TableName string
 	Where     Expr            // nil if no WHERE clause

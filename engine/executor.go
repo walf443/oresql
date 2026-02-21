@@ -468,7 +468,26 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 		}
 	}
 
+	// Apply DISTINCT
+	if stmt.Distinct {
+		resultRows = dedup(resultRows)
+	}
+
 	return &Result{Columns: colNames, Rows: resultRows}, nil
+}
+
+// dedup removes duplicate rows, preserving order of first occurrence.
+func dedup(rows []Row) []Row {
+	seen := make(map[string]bool)
+	var result []Row
+	for _, row := range rows {
+		key := fmt.Sprintf("%v", []Value(row))
+		if !seen[key] {
+			seen[key] = true
+			result = append(result, row)
+		}
+	}
+	return result
 }
 
 // compareValues compares two values for ORDER BY sorting.
@@ -822,6 +841,11 @@ func (e *Executor) executeGroupBySelect(stmt *ast.SelectStmt, info *TableInfo) (
 		if lim < len(resultRows) {
 			resultRows = resultRows[:lim]
 		}
+	}
+
+	// Apply DISTINCT
+	if stmt.Distinct {
+		resultRows = dedup(resultRows)
 	}
 
 	return &Result{Columns: colNames, Rows: resultRows}, nil

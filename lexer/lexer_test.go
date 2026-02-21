@@ -163,6 +163,17 @@ func TestQuotedIdentEscaped(t *testing.T) {
 	}
 }
 
+func TestArithmeticOperators(t *testing.T) {
+	input := `+ - /`
+	expected := []token.Token{
+		{token.PLUS, "+"},
+		{token.MINUS, "-"},
+		{token.SLASH, "/"},
+		{token.EOF, ""},
+	}
+	testTokens(t, input, expected)
+}
+
 func testTokens(t *testing.T, input string, expected []token.Token) {
 	t.Helper()
 	l := New(input)

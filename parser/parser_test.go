@@ -417,6 +417,50 @@ func TestParseCreateTableQuotedIdent(t *testing.T) {
 	}
 }
 
+func TestParseSelectArithmetic(t *testing.T) {
+	stmt := parse(t, "SELECT 1 * 2")
+	sel := stmt.(*ast.SelectStmt)
+	if len(sel.Columns) != 1 {
+		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
+	}
+	arith, ok := sel.Columns[0].(*ast.ArithmeticExpr)
+	if !ok {
+		t.Fatalf("expected ArithmeticExpr, got %T", sel.Columns[0])
+	}
+	if arith.Op != "*" {
+		t.Errorf("expected op '*', got %q", arith.Op)
+	}
+	if arith.Left.(*ast.IntLitExpr).Value != 1 {
+		t.Errorf("expected left=1")
+	}
+	if arith.Right.(*ast.IntLitExpr).Value != 2 {
+		t.Errorf("expected right=2")
+	}
+}
+
+func TestParseSelectArithmeticPrecedence(t *testing.T) {
+	// 1 + 2 * 3 should parse as 1 + (2 * 3)
+	stmt := parse(t, "SELECT 1 + 2 * 3")
+	sel := stmt.(*ast.SelectStmt)
+	arith, ok := sel.Columns[0].(*ast.ArithmeticExpr)
+	if !ok {
+		t.Fatalf("expected ArithmeticExpr, got %T", sel.Columns[0])
+	}
+	if arith.Op != "+" {
+		t.Errorf("expected top-level op '+', got %q", arith.Op)
+	}
+	if arith.Left.(*ast.IntLitExpr).Value != 1 {
+		t.Errorf("expected left=1")
+	}
+	right, ok := arith.Right.(*ast.ArithmeticExpr)
+	if !ok {
+		t.Fatalf("expected right to be ArithmeticExpr, got %T", arith.Right)
+	}
+	if right.Op != "*" {
+		t.Errorf("expected right op '*', got %q", right.Op)
+	}
+}
+
 func TestParseError(t *testing.T) {
 	inputs := []string{
 		"CREATE",

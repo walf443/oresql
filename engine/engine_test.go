@@ -382,6 +382,73 @@ func TestSelectQuotedIdent(t *testing.T) {
 	}
 }
 
+func TestSelectArithmetic(t *testing.T) {
+	exec := NewExecutor()
+
+	// SELECT 1 * 2 → 2
+	result := run(t, exec, "SELECT 1 * 2")
+	if result.Rows[0][0] != int64(2) {
+		t.Errorf("expected 1*2=2, got %v", result.Rows[0][0])
+	}
+
+	// SELECT 1 + 2 * 3 → 7 (precedence)
+	result = run(t, exec, "SELECT 1 + 2 * 3")
+	if result.Rows[0][0] != int64(7) {
+		t.Errorf("expected 1+2*3=7, got %v", result.Rows[0][0])
+	}
+
+	// SELECT 10 / 3 → 3 (integer division)
+	result = run(t, exec, "SELECT 10 / 3")
+	if result.Rows[0][0] != int64(3) {
+		t.Errorf("expected 10/3=3, got %v", result.Rows[0][0])
+	}
+
+	// SELECT 10 - 3 → 7
+	result = run(t, exec, "SELECT 10 - 3")
+	if result.Rows[0][0] != int64(7) {
+		t.Errorf("expected 10-3=7, got %v", result.Rows[0][0])
+	}
+}
+
+func TestSelectArithmeticWithTable(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE items (price INT)")
+	run(t, exec, "INSERT INTO items VALUES (10)")
+	run(t, exec, "INSERT INTO items VALUES (20)")
+
+	result := run(t, exec, "SELECT price * 2 FROM items")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(20) {
+		t.Errorf("expected 10*2=20, got %v", result.Rows[0][0])
+	}
+	if result.Rows[1][0] != int64(40) {
+		t.Errorf("expected 20*2=40, got %v", result.Rows[1][0])
+	}
+}
+
+func TestSelectArithmeticInWhere(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE items (price INT)")
+	run(t, exec, "INSERT INTO items VALUES (5)")
+	run(t, exec, "INSERT INTO items VALUES (10)")
+	run(t, exec, "INSERT INTO items VALUES (20)")
+
+	result := run(t, exec, "SELECT price FROM items WHERE price * 2 > 15")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(10) {
+		t.Errorf("expected 10, got %v", result.Rows[0][0])
+	}
+}
+
+func TestErrorDivisionByZero(t *testing.T) {
+	exec := NewExecutor()
+	runExpectError(t, exec, "SELECT 1 / 0")
+}
+
 func TestErrorDuplicateTable(t *testing.T) {
 	exec := NewExecutor()
 	run(t, exec, "CREATE TABLE users (id INT)")

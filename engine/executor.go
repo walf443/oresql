@@ -115,20 +115,21 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 		return e.executeAggregateSelect(stmt, info)
 	}
 
-	// Resolve columns
-	var colIndices []int
+	// Resolve column names and expressions
 	var colNames []string
+	var colExprs []ast.Expr // nil means use StarExpr expansion
+	isStar := false
 
 	if len(stmt.Columns) == 1 {
 		if _, ok := stmt.Columns[0].(*ast.StarExpr); ok {
+			isStar = true
 			for _, col := range info.Columns {
-				colIndices = append(colIndices, col.Index)
 				colNames = append(colNames, col.Name)
 			}
 		}
 	}
 
-	if colNames == nil {
+	if !isStar {
 		for _, colExpr := range stmt.Columns {
 			alias := ""
 			inner := colExpr
@@ -136,22 +137,20 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 				alias = a.Alias
 				inner = a.Expr
 			}
-			ident, ok := inner.(*ast.IdentExpr)
-			if !ok {
-				return nil, fmt.Errorf("expected column name in SELECT, got %T", inner)
-			}
-			if err := validateTableRef(ident.Table, stmt.TableName); err != nil {
-				return nil, err
-			}
-			col, err := info.FindColumn(ident.Name)
-			if err != nil {
-				return nil, err
-			}
-			colIndices = append(colIndices, col.Index)
+			colExprs = append(colExprs, inner)
 			if alias != "" {
 				colNames = append(colNames, alias)
-			} else {
+			} else if ident, ok := inner.(*ast.IdentExpr); ok {
+				if err := validateTableRef(ident.Table, stmt.TableName); err != nil {
+					return nil, err
+				}
+				col, err := info.FindColumn(ident.Name)
+				if err != nil {
+					return nil, err
+				}
 				colNames = append(colNames, col.Name)
+			} else {
+				colNames = append(colNames, formatExpr(inner))
 			}
 		}
 	}
@@ -177,11 +176,23 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 		}
 
 		// Project columns
-		projected := make(Row, len(colIndices))
-		for i, idx := range colIndices {
-			projected[i] = row[idx]
+		if isStar {
+			projected := make(Row, len(info.Columns))
+			for i, col := range info.Columns {
+				projected[i] = row[col.Index]
+			}
+			resultRows = append(resultRows, projected)
+		} else {
+			projected := make(Row, len(colExprs))
+			for i, expr := range colExprs {
+				val, err := evalExpr(expr, row, info)
+				if err != nil {
+					return nil, err
+				}
+				projected[i] = val
+			}
+			resultRows = append(resultRows, projected)
 		}
-		resultRows = append(resultRows, projected)
 	}
 
 	return &Result{Columns: colNames, Rows: resultRows}, nil
@@ -228,6 +239,8 @@ func formatExpr(expr ast.Expr) string {
 			return e.Table + "." + e.Name
 		}
 		return e.Name
+	case *ast.ArithmeticExpr:
+		return formatExpr(e.Left) + " " + e.Op + " " + formatExpr(e.Right)
 	default:
 		return "?"
 	}
@@ -360,7 +373,7 @@ func formatCallExpr(call *ast.CallExpr) string {
 	return call.Name + "(" + strings.Join(args, ", ") + ")"
 }
 
-// evalLiteral evaluates a literal expression (for INSERT VALUES).
+// evalLiteral evaluates a literal expression (for INSERT VALUES and SELECT without FROM).
 func evalLiteral(expr ast.Expr) (Value, error) {
 	switch e := expr.(type) {
 	case *ast.IntLitExpr:
@@ -369,6 +382,16 @@ func evalLiteral(expr ast.Expr) (Value, error) {
 		return e.Value, nil
 	case *ast.NullLitExpr:
 		return nil, nil
+	case *ast.ArithmeticExpr:
+		left, err := evalLiteral(e.Left)
+		if err != nil {
+			return nil, err
+		}
+		right, err := evalLiteral(e.Right)
+		if err != nil {
+			return nil, err
+		}
+		return evalArithmetic(left, e.Op, right)
 	default:
 		return nil, fmt.Errorf("expected literal value, got %T", expr)
 	}
@@ -401,6 +424,16 @@ func evalExpr(expr ast.Expr, row Row, info *TableInfo) (Value, error) {
 			return val != nil, nil
 		}
 		return val == nil, nil
+	case *ast.ArithmeticExpr:
+		left, err := evalExpr(e.Left, row, info)
+		if err != nil {
+			return nil, err
+		}
+		right, err := evalExpr(e.Right, row, info)
+		if err != nil {
+			return nil, err
+		}
+		return evalArithmetic(left, e.Op, right)
 	case *ast.BinaryExpr:
 		left, err := evalExpr(e.Left, row, info)
 		if err != nil {
@@ -438,6 +471,35 @@ func evalExpr(expr ast.Expr, row Row, info *TableInfo) (Value, error) {
 		}
 	default:
 		return nil, fmt.Errorf("cannot evaluate expression: %T", expr)
+	}
+}
+
+func evalArithmetic(left Value, op string, right Value) (Value, error) {
+	if left == nil || right == nil {
+		return nil, nil
+	}
+	lv, ok := left.(int64)
+	if !ok {
+		return nil, fmt.Errorf("arithmetic requires INT operands, got %T", left)
+	}
+	rv, ok := right.(int64)
+	if !ok {
+		return nil, fmt.Errorf("arithmetic requires INT operands, got %T", right)
+	}
+	switch op {
+	case "+":
+		return lv + rv, nil
+	case "-":
+		return lv - rv, nil
+	case "*":
+		return lv * rv, nil
+	case "/":
+		if rv == 0 {
+			return nil, fmt.Errorf("division by zero")
+		}
+		return lv / rv, nil
+	default:
+		return nil, fmt.Errorf("unknown arithmetic operator: %s", op)
 	}
 }
 

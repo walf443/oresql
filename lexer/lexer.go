@@ -91,6 +91,15 @@ func (l *Lexer) NextToken() token.Token {
 	case '*':
 		tok = token.Token{Type: token.ASTERISK, Literal: "*"}
 		l.readChar()
+	case '+':
+		tok = token.Token{Type: token.PLUS, Literal: "+"}
+		l.readChar()
+	case '-':
+		tok = token.Token{Type: token.MINUS, Literal: "-"}
+		l.readChar()
+	case '/':
+		tok = token.Token{Type: token.SLASH, Literal: "/"}
+		l.readChar()
 	case ',':
 		tok = token.Token{Type: token.COMMA, Literal: ","}
 		l.readChar()

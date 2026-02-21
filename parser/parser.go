@@ -293,10 +293,8 @@ func (p *Parser) parseSelectItem() (ast.Expr, error) {
 
 	if p.curToken.Type == token.COUNT {
 		expr, err = p.parseCallExpr()
-	} else if p.curToken.Type == token.INT_LIT || p.curToken.Type == token.STRING_LIT || p.curToken.Type == token.NULL {
-		expr, err = p.parsePrimary()
 	} else {
-		expr, err = p.parseColumnIdent()
+		expr, err = p.parseAdditive()
 	}
 	if err != nil {
 		return nil, err
@@ -407,7 +405,7 @@ func (p *Parser) parseAndExpr() (ast.Expr, error) {
 }
 
 func (p *Parser) parseComparison() (ast.Expr, error) {
-	left, err := p.parsePrimary()
+	left, err := p.parseAdditive()
 	if err != nil {
 		return nil, err
 	}
@@ -446,12 +444,50 @@ func (p *Parser) parseComparison() (ast.Expr, error) {
 	}
 
 	p.nextToken() // skip operator
-	right, err := p.parsePrimary()
+	right, err := p.parseAdditive()
 	if err != nil {
 		return nil, err
 	}
 
 	return &ast.BinaryExpr{Left: left, Op: op, Right: right}, nil
+}
+
+func (p *Parser) parseAdditive() (ast.Expr, error) {
+	left, err := p.parseMultiplicative()
+	if err != nil {
+		return nil, err
+	}
+
+	for p.curToken.Type == token.PLUS || p.curToken.Type == token.MINUS {
+		op := p.curToken.Literal
+		p.nextToken() // skip operator
+		right, err := p.parseMultiplicative()
+		if err != nil {
+			return nil, err
+		}
+		left = &ast.ArithmeticExpr{Left: left, Op: op, Right: right}
+	}
+
+	return left, nil
+}
+
+func (p *Parser) parseMultiplicative() (ast.Expr, error) {
+	left, err := p.parsePrimary()
+	if err != nil {
+		return nil, err
+	}
+
+	for p.curToken.Type == token.ASTERISK || p.curToken.Type == token.SLASH {
+		op := p.curToken.Literal
+		p.nextToken() // skip operator
+		right, err := p.parsePrimary()
+		if err != nil {
+			return nil, err
+		}
+		left = &ast.ArithmeticExpr{Left: left, Op: op, Right: right}
+	}
+
+	return left, nil
 }
 
 func (p *Parser) parsePrimary() (ast.Expr, error) {

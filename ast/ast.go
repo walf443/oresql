@@ -115,6 +115,16 @@ type AliasExpr struct {
 func (e *AliasExpr) NodeType() string { return "Alias" }
 func (e *AliasExpr) exprNode()        {}
 
+// ArithmeticExpr represents an arithmetic operation: left <op> right.
+type ArithmeticExpr struct {
+	Left  Expr
+	Op    string // "+", "-", "*", "/"
+	Right Expr
+}
+
+func (e *ArithmeticExpr) NodeType() string { return "Arithmetic" }
+func (e *ArithmeticExpr) exprNode()        {}
+
 // BinaryExpr represents a comparison: left <op> right.
 type BinaryExpr struct {
 	Left  Expr

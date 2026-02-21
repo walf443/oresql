@@ -17,6 +17,9 @@ const (
 
 	// Operators and delimiters
 	ASTERISK  // *
+	PLUS      // +
+	MINUS     // -
+	SLASH     // /
 	COMMA     // ,
 	LPAREN    // (
 	RPAREN    // )
@@ -57,6 +60,9 @@ var tokenNames = map[TokenType]string{
 	INT_LIT:      "INT_LIT",
 	STRING_LIT:   "STRING_LIT",
 	ASTERISK:     "ASTERISK",
+	PLUS:         "PLUS",
+	MINUS:        "MINUS",
+	SLASH:        "SLASH",
 	COMMA:        "COMMA",
 	LPAREN:       "LPAREN",
 	RPAREN:       "RPAREN",

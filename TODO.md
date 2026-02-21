@@ -25,7 +25,7 @@
 
 - [ ] DISTINCT
 - [x] ORDER BY (ASC / DESC)
-- [ ] LIMIT / OFFSET
+- [x] LIMIT / OFFSET
 - [ ] GROUP BY
 - [ ] HAVING
 

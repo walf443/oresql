@@ -894,6 +894,95 @@ func TestSelectOrderByWithNull(t *testing.T) {
 	}
 }
 
+func TestSelectLimitOnly(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
+
+	result := run(t, exec, "SELECT * FROM users LIMIT 2")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(1) {
+		t.Errorf("row 0: expected id=1, got %v", result.Rows[0][0])
+	}
+	if result.Rows[1][0] != int64(2) {
+		t.Errorf("row 1: expected id=2, got %v", result.Rows[1][0])
+	}
+}
+
+func TestSelectOffsetOnly(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
+
+	result := run(t, exec, "SELECT * FROM users OFFSET 1")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(2) {
+		t.Errorf("row 0: expected id=2, got %v", result.Rows[0][0])
+	}
+	if result.Rows[1][0] != int64(3) {
+		t.Errorf("row 1: expected id=3, got %v", result.Rows[1][0])
+	}
+}
+
+func TestSelectLimitOffset(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
+	run(t, exec, "INSERT INTO users VALUES (4, 'dave')")
+
+	result := run(t, exec, "SELECT * FROM users LIMIT 2 OFFSET 1")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(2) {
+		t.Errorf("row 0: expected id=2, got %v", result.Rows[0][0])
+	}
+	if result.Rows[1][0] != int64(3) {
+		t.Errorf("row 1: expected id=3, got %v", result.Rows[1][0])
+	}
+}
+
+func TestSelectOrderByLimit(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+
+	result := run(t, exec, "SELECT * FROM users ORDER BY id ASC LIMIT 2")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(1) {
+		t.Errorf("row 0: expected id=1, got %v", result.Rows[0][0])
+	}
+	if result.Rows[1][0] != int64(2) {
+		t.Errorf("row 1: expected id=2, got %v", result.Rows[1][0])
+	}
+}
+
+func TestSelectOffsetExceedsRowCount(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+
+	result := run(t, exec, "SELECT * FROM users OFFSET 10")
+	if len(result.Rows) != 0 {
+		t.Fatalf("expected 0 rows, got %d", len(result.Rows))
+	}
+}
+
 func TestErrorSelectNonexistentColumn(t *testing.T) {
 	exec := NewExecutor()
 	run(t, exec, "CREATE TABLE users (id INT)")

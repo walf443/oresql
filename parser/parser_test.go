@@ -679,6 +679,65 @@ func TestParseSelectWhereOrderBy(t *testing.T) {
 	}
 }
 
+func TestParseSelectLimitOnly(t *testing.T) {
+	stmt := parse(t, "SELECT * FROM users LIMIT 10")
+	sel := stmt.(*ast.SelectStmt)
+	if sel.Limit == nil {
+		t.Fatal("expected LIMIT clause")
+	}
+	if *sel.Limit != 10 {
+		t.Errorf("expected LIMIT 10, got %d", *sel.Limit)
+	}
+	if sel.Offset != nil {
+		t.Errorf("expected no OFFSET, got %d", *sel.Offset)
+	}
+}
+
+func TestParseSelectOffsetOnly(t *testing.T) {
+	stmt := parse(t, "SELECT * FROM users OFFSET 5")
+	sel := stmt.(*ast.SelectStmt)
+	if sel.Offset == nil {
+		t.Fatal("expected OFFSET clause")
+	}
+	if *sel.Offset != 5 {
+		t.Errorf("expected OFFSET 5, got %d", *sel.Offset)
+	}
+	if sel.Limit != nil {
+		t.Errorf("expected no LIMIT, got %d", *sel.Limit)
+	}
+}
+
+func TestParseSelectLimitOffset(t *testing.T) {
+	stmt := parse(t, "SELECT * FROM users LIMIT 10 OFFSET 5")
+	sel := stmt.(*ast.SelectStmt)
+	if sel.Limit == nil {
+		t.Fatal("expected LIMIT clause")
+	}
+	if *sel.Limit != 10 {
+		t.Errorf("expected LIMIT 10, got %d", *sel.Limit)
+	}
+	if sel.Offset == nil {
+		t.Fatal("expected OFFSET clause")
+	}
+	if *sel.Offset != 5 {
+		t.Errorf("expected OFFSET 5, got %d", *sel.Offset)
+	}
+}
+
+func TestParseSelectOrderByLimitOffset(t *testing.T) {
+	stmt := parse(t, "SELECT * FROM users ORDER BY id ASC LIMIT 2 OFFSET 1")
+	sel := stmt.(*ast.SelectStmt)
+	if len(sel.OrderBy) != 1 {
+		t.Fatalf("expected 1 order by clause, got %d", len(sel.OrderBy))
+	}
+	if sel.Limit == nil || *sel.Limit != 2 {
+		t.Errorf("expected LIMIT 2")
+	}
+	if sel.Offset == nil || *sel.Offset != 1 {
+		t.Errorf("expected OFFSET 1")
+	}
+}
+
 func TestParseError(t *testing.T) {
 	inputs := []string{
 		"CREATE",

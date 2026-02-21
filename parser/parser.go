@@ -388,11 +388,41 @@ func (p *Parser) parseSelect() (*ast.SelectStmt, error) {
 		}
 	}
 
+	var limit *int64
+	if p.curToken.Type == token.LIMIT {
+		p.nextToken() // skip LIMIT
+		if p.curToken.Type != token.INT_LIT {
+			return nil, fmt.Errorf("expected integer after LIMIT, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+		}
+		val, err := strconv.ParseInt(p.curToken.Literal, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid integer for LIMIT: %s", p.curToken.Literal)
+		}
+		limit = &val
+		p.nextToken()
+	}
+
+	var offset *int64
+	if p.curToken.Type == token.OFFSET {
+		p.nextToken() // skip OFFSET
+		if p.curToken.Type != token.INT_LIT {
+			return nil, fmt.Errorf("expected integer after OFFSET, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+		}
+		val, err := strconv.ParseInt(p.curToken.Literal, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid integer for OFFSET: %s", p.curToken.Literal)
+		}
+		offset = &val
+		p.nextToken()
+	}
+
 	return &ast.SelectStmt{
 		Columns:   columns,
 		TableName: tableName,
 		Where:     where,
 		OrderBy:   orderBy,
+		Limit:     limit,
+		Offset:    offset,
 	}, nil
 }
 

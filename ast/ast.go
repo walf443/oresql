@@ -48,12 +48,14 @@ type OrderByClause struct {
 	Desc bool // true for DESC, false for ASC (default)
 }
 
-// SelectStmt represents SELECT <columns> FROM <table> [WHERE <condition>] [ORDER BY ...].
+// SelectStmt represents SELECT <columns> FROM <table> [WHERE <condition>] [ORDER BY ...] [LIMIT <n>] [OFFSET <n>].
 type SelectStmt struct {
 	Columns   []Expr
 	TableName string
 	Where     Expr            // nil if no WHERE clause
 	OrderBy   []OrderByClause // nil if no ORDER BY clause
+	Limit     *int64          // nil if no LIMIT clause
+	Offset    *int64          // nil if no OFFSET clause
 }
 
 func (s *SelectStmt) NodeType() string { return "Select" }

@@ -57,6 +57,8 @@ const (
 	BY     // BY keyword
 	ASC    // ASC keyword
 	DESC   // DESC keyword
+	LIMIT  // LIMIT keyword
+	OFFSET // OFFSET keyword
 )
 
 var tokenNames = map[TokenType]string{
@@ -105,6 +107,8 @@ var tokenNames = map[TokenType]string{
 	BY:           "BY",
 	ASC:          "ASC",
 	DESC:         "DESC",
+	LIMIT:        "LIMIT",
+	OFFSET:       "OFFSET",
 }
 
 func (t TokenType) String() string {
@@ -144,6 +148,8 @@ var keywords = map[string]TokenType{
 	"BY":     BY,
 	"ASC":    ASC,
 	"DESC":   DESC,
+	"LIMIT":  LIMIT,
+	"OFFSET": OFFSET,
 }
 
 // LookupIdent returns the keyword TokenType if the identifier is a keyword,

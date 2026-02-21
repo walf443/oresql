@@ -385,6 +385,24 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 		}
 	}
 
+	// Apply OFFSET
+	if stmt.Offset != nil {
+		off := int(*stmt.Offset)
+		if off >= len(filtered) {
+			filtered = nil
+		} else {
+			filtered = filtered[off:]
+		}
+	}
+
+	// Apply LIMIT
+	if stmt.Limit != nil {
+		lim := int(*stmt.Limit)
+		if lim < len(filtered) {
+			filtered = filtered[:lim]
+		}
+	}
+
 	// Project columns
 	var resultRows []Row
 	for _, row := range filtered {

@@ -143,6 +143,9 @@ func (l *Lexer) NextToken() token.Token {
 	case '\'':
 		str := l.readString()
 		tok = token.Token{Type: token.STRING_LIT, Literal: str}
+	case '`':
+		ident := l.readQuotedIdent()
+		tok = token.Token{Type: token.QUOTED_IDENT, Literal: ident}
 	default:
 		if isLetter(l.ch) {
 			literal := l.readIdentifier()
@@ -158,6 +161,30 @@ func (l *Lexer) NextToken() token.Token {
 	}
 
 	return tok
+}
+
+func (l *Lexer) readQuotedIdent() string {
+	l.readChar() // skip opening backtick
+	var result []byte
+	for {
+		if l.ch == 0 {
+			break
+		}
+		if l.ch == '`' {
+			if l.peekChar() == '`' {
+				// escaped backtick
+				result = append(result, '`')
+				l.readChar() // skip first backtick
+				l.readChar() // skip second backtick
+				continue
+			}
+			l.readChar() // skip closing backtick
+			break
+		}
+		result = append(result, l.ch)
+		l.readChar()
+	}
+	return string(result)
 }
 
 func isLetter(ch byte) bool {

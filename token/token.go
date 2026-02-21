@@ -10,9 +10,10 @@ const (
 	EOF
 
 	// Literals
-	IDENT      // column names, table names
-	INT_LIT    // integer literals like 42
-	STRING_LIT // string literals like 'hello'
+	IDENT        // column names, table names
+	QUOTED_IDENT // backtick-quoted identifiers like `count`
+	INT_LIT      // integer literals like 42
+	STRING_LIT   // string literals like 'hello'
 
 	// Operators and delimiters
 	ASTERISK  // *
@@ -49,40 +50,41 @@ const (
 )
 
 var tokenNames = map[TokenType]string{
-	ILLEGAL:    "ILLEGAL",
-	EOF:        "EOF",
-	IDENT:      "IDENT",
-	INT_LIT:    "INT_LIT",
-	STRING_LIT: "STRING_LIT",
-	ASTERISK:   "ASTERISK",
-	COMMA:      "COMMA",
-	LPAREN:     "LPAREN",
-	RPAREN:     "RPAREN",
-	SEMICOLON:  "SEMICOLON",
-	DOT:        "DOT",
-	EQ:         "EQ",
-	NEQ:        "NEQ",
-	LT:         "LT",
-	GT:         "GT",
-	LT_EQ:      "LT_EQ",
-	GT_EQ:      "GT_EQ",
-	CREATE:     "CREATE",
-	TABLE:      "TABLE",
-	INSERT:     "INSERT",
-	INTO:       "INTO",
-	VALUES:     "VALUES",
-	SELECT:     "SELECT",
-	FROM:       "FROM",
-	WHERE:      "WHERE",
-	AND:        "AND",
-	OR:         "OR",
-	NOT:        "NOT",
-	INT:        "INT",
-	TEXT:       "TEXT",
-	COUNT:      "COUNT",
-	IS:         "IS",
-	NULL:       "NULL",
-	AS:         "AS",
+	ILLEGAL:      "ILLEGAL",
+	EOF:          "EOF",
+	IDENT:        "IDENT",
+	QUOTED_IDENT: "QUOTED_IDENT",
+	INT_LIT:      "INT_LIT",
+	STRING_LIT:   "STRING_LIT",
+	ASTERISK:     "ASTERISK",
+	COMMA:        "COMMA",
+	LPAREN:       "LPAREN",
+	RPAREN:       "RPAREN",
+	SEMICOLON:    "SEMICOLON",
+	DOT:          "DOT",
+	EQ:           "EQ",
+	NEQ:          "NEQ",
+	LT:           "LT",
+	GT:           "GT",
+	LT_EQ:        "LT_EQ",
+	GT_EQ:        "GT_EQ",
+	CREATE:       "CREATE",
+	TABLE:        "TABLE",
+	INSERT:       "INSERT",
+	INTO:         "INTO",
+	VALUES:       "VALUES",
+	SELECT:       "SELECT",
+	FROM:         "FROM",
+	WHERE:        "WHERE",
+	AND:          "AND",
+	OR:           "OR",
+	NOT:          "NOT",
+	INT:          "INT",
+	TEXT:         "TEXT",
+	COUNT:        "COUNT",
+	IS:           "IS",
+	NULL:         "NULL",
+	AS:           "AS",
 }
 
 func (t TokenType) String() string {

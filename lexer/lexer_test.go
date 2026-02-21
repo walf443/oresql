@@ -139,6 +139,30 @@ func TestDotToken(t *testing.T) {
 	testTokens(t, input, expected)
 }
 
+func TestQuotedIdent(t *testing.T) {
+	input := "`count`"
+	l := New(input)
+	tok := l.NextToken()
+	if tok.Type != token.QUOTED_IDENT {
+		t.Fatalf("expected QUOTED_IDENT, got %s", tok.Type)
+	}
+	if tok.Literal != "count" {
+		t.Fatalf("expected literal %q, got %q", "count", tok.Literal)
+	}
+}
+
+func TestQuotedIdentEscaped(t *testing.T) {
+	input := "`back``tick`"
+	l := New(input)
+	tok := l.NextToken()
+	if tok.Type != token.QUOTED_IDENT {
+		t.Fatalf("expected QUOTED_IDENT, got %s", tok.Type)
+	}
+	if tok.Literal != "back`tick" {
+		t.Fatalf("expected literal %q, got %q", "back`tick", tok.Literal)
+	}
+}
+
 func testTokens(t *testing.T, input string, expected []token.Token) {
 	t.Helper()
 	l := New(input)

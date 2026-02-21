@@ -365,6 +365,23 @@ func TestSelectLiteralAlias(t *testing.T) {
 	}
 }
 
+func TestSelectQuotedIdent(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (`count` INT)")
+	run(t, exec, "INSERT INTO t VALUES (42)")
+
+	result := run(t, exec, "SELECT `count` FROM t")
+	if len(result.Columns) != 1 || result.Columns[0] != "count" {
+		t.Errorf("expected columns [count], got %v", result.Columns)
+	}
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(42) {
+		t.Errorf("expected 42, got %v", result.Rows[0][0])
+	}
+}
+
 func TestErrorDuplicateTable(t *testing.T) {
 	exec := NewExecutor()
 	run(t, exec, "CREATE TABLE users (id INT)")

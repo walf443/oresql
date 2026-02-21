@@ -391,6 +391,32 @@ func TestParseSelectLiteralAlias(t *testing.T) {
 	}
 }
 
+func TestParseSelectQuotedIdent(t *testing.T) {
+	stmt := parse(t, "SELECT `count` FROM t")
+	sel := stmt.(*ast.SelectStmt)
+	if len(sel.Columns) != 1 {
+		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
+	}
+	ident, ok := sel.Columns[0].(*ast.IdentExpr)
+	if !ok {
+		t.Fatalf("expected IdentExpr, got %T", sel.Columns[0])
+	}
+	if ident.Name != "count" {
+		t.Errorf("expected column name 'count', got %q", ident.Name)
+	}
+}
+
+func TestParseCreateTableQuotedIdent(t *testing.T) {
+	stmt := parse(t, "CREATE TABLE t (`count` INT)")
+	ct := stmt.(*ast.CreateTableStmt)
+	if len(ct.Columns) != 1 {
+		t.Fatalf("expected 1 column, got %d", len(ct.Columns))
+	}
+	if ct.Columns[0].Name != "count" {
+		t.Errorf("expected column name 'count', got %q", ct.Columns[0].Name)
+	}
+}
+
 func TestParseError(t *testing.T) {
 	inputs := []string{
 		"CREATE",

@@ -57,6 +57,11 @@ func (p *Parser) Parse() (ast.Statement, error) {
 	return stmt, nil
 }
 
+// isIdent returns true if the current token is an identifier (plain or backtick-quoted).
+func (p *Parser) isIdent() bool {
+	return p.curToken.Type == token.IDENT || p.curToken.Type == token.QUOTED_IDENT
+}
+
 func (p *Parser) expectToken(t token.TokenType) error {
 	if p.curToken.Type != t {
 		return fmt.Errorf("expected %s, got %s (%q)", t, p.curToken.Type, p.curToken.Literal)
@@ -74,7 +79,7 @@ func (p *Parser) parseCreateTable() (*ast.CreateTableStmt, error) {
 		return nil, err
 	}
 
-	if p.curToken.Type != token.IDENT {
+	if !p.isIdent() {
 		return nil, fmt.Errorf("expected table name, got %s (%q)", p.curToken.Type, p.curToken.Literal)
 	}
 	tableName := p.curToken.Literal
@@ -121,7 +126,7 @@ func (p *Parser) parseColumnDefList() ([]ast.ColumnDef, error) {
 }
 
 func (p *Parser) parseColumnDef() (ast.ColumnDef, error) {
-	if p.curToken.Type != token.IDENT {
+	if !p.isIdent() {
 		return ast.ColumnDef{}, fmt.Errorf("expected column name, got %s (%q)", p.curToken.Type, p.curToken.Literal)
 	}
 	name := p.curToken.Literal
@@ -145,7 +150,7 @@ func (p *Parser) parseInsert() (*ast.InsertStmt, error) {
 		return nil, err
 	}
 
-	if p.curToken.Type != token.IDENT {
+	if !p.isIdent() {
 		return nil, fmt.Errorf("expected table name, got %s (%q)", p.curToken.Type, p.curToken.Literal)
 	}
 	tableName := p.curToken.Literal
@@ -232,7 +237,7 @@ func (p *Parser) parseSelect() (*ast.SelectStmt, error) {
 	if p.curToken.Type == token.FROM {
 		p.nextToken() // skip FROM
 
-		if p.curToken.Type != token.IDENT {
+		if !p.isIdent() {
 			return nil, fmt.Errorf("expected table name, got %s (%q)", p.curToken.Type, p.curToken.Literal)
 		}
 		tableName = p.curToken.Literal
@@ -299,7 +304,7 @@ func (p *Parser) parseSelectItem() (ast.Expr, error) {
 
 	if p.curToken.Type == token.AS {
 		p.nextToken() // skip AS
-		if p.curToken.Type != token.IDENT {
+		if !p.isIdent() {
 			return nil, fmt.Errorf("expected alias name after AS, got %s (%q)", p.curToken.Type, p.curToken.Literal)
 		}
 		alias := p.curToken.Literal
@@ -340,7 +345,7 @@ func (p *Parser) parseCallExpr() (ast.Expr, error) {
 
 // parseColumnIdent parses a column reference: ident or ident.ident
 func (p *Parser) parseColumnIdent() (ast.Expr, error) {
-	if p.curToken.Type != token.IDENT {
+	if !p.isIdent() {
 		return nil, fmt.Errorf("expected column name, got %s (%q)", p.curToken.Type, p.curToken.Literal)
 	}
 	name := p.curToken.Literal
@@ -348,7 +353,7 @@ func (p *Parser) parseColumnIdent() (ast.Expr, error) {
 
 	if p.curToken.Type == token.DOT {
 		p.nextToken() // skip dot
-		if p.curToken.Type != token.IDENT {
+		if !p.isIdent() {
 			return nil, fmt.Errorf("expected column name after '.', got %s (%q)", p.curToken.Type, p.curToken.Literal)
 		}
 		colName := p.curToken.Literal
@@ -451,12 +456,12 @@ func (p *Parser) parseComparison() (ast.Expr, error) {
 
 func (p *Parser) parsePrimary() (ast.Expr, error) {
 	switch p.curToken.Type {
-	case token.IDENT:
+	case token.IDENT, token.QUOTED_IDENT:
 		name := p.curToken.Literal
 		p.nextToken()
 		if p.curToken.Type == token.DOT {
 			p.nextToken() // skip dot
-			if p.curToken.Type != token.IDENT {
+			if !p.isIdent() {
 				return nil, fmt.Errorf("expected column name after '.', got %s (%q)", p.curToken.Type, p.curToken.Literal)
 			}
 			colName := p.curToken.Literal

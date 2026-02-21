@@ -126,6 +126,22 @@ type ArithmeticExpr struct {
 func (e *ArithmeticExpr) NodeType() string { return "Arithmetic" }
 func (e *ArithmeticExpr) exprNode()        {}
 
+// SetClause represents a single column = value assignment in UPDATE.
+type SetClause struct {
+	Column string
+	Value  Expr
+}
+
+// UpdateStmt represents UPDATE <table> SET <col> = <expr>, ... [WHERE <condition>].
+type UpdateStmt struct {
+	TableName string
+	Sets      []SetClause
+	Where     Expr // nil if no WHERE clause
+}
+
+func (s *UpdateStmt) NodeType() string { return "Update" }
+func (s *UpdateStmt) statementNode()   {}
+
 // BinaryExpr represents a comparison: left <op> right.
 type BinaryExpr struct {
 	Left  Expr

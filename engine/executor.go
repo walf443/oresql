@@ -89,6 +89,8 @@ func (e *Executor) Execute(stmt ast.Statement) (*Result, error) {
 		return e.executeInsert(s)
 	case *ast.SelectStmt:
 		return e.executeSelect(s)
+	case *ast.UpdateStmt:
+		return e.executeUpdate(s)
 	default:
 		return nil, fmt.Errorf("unknown statement type: %T", stmt)
 	}
@@ -151,6 +153,70 @@ func (e *Executor) executeInsert(stmt *ast.InsertStmt) (*Result, error) {
 	msg := fmt.Sprintf("%d rows inserted", n)
 	if n == 1 {
 		msg = "1 row inserted"
+	}
+
+	return &Result{Message: msg}, nil
+}
+
+func (e *Executor) executeUpdate(stmt *ast.UpdateStmt) (*Result, error) {
+	info, err := e.catalog.GetTable(stmt.TableName)
+	if err != nil {
+		return nil, err
+	}
+
+	allRows, err := e.storage.Scan(stmt.TableName)
+	if err != nil {
+		return nil, err
+	}
+
+	updated := 0
+	for _, row := range allRows {
+		if stmt.Where != nil {
+			match, err := evalWhere(stmt.Where, row, info)
+			if err != nil {
+				return nil, err
+			}
+			if !match {
+				continue
+			}
+		}
+
+		for _, set := range stmt.Sets {
+			col, err := info.FindColumn(set.Column)
+			if err != nil {
+				return nil, err
+			}
+
+			val, err := evalLiteral(set.Value)
+			if err != nil {
+				return nil, err
+			}
+
+			if val == nil {
+				if col.NotNull {
+					return nil, fmt.Errorf("column %q cannot be NULL", col.Name)
+				}
+			} else {
+				switch col.DataType {
+				case "INT":
+					if _, ok := val.(int64); !ok {
+						return nil, fmt.Errorf("column %q expects INT, got %T", col.Name, val)
+					}
+				case "TEXT":
+					if _, ok := val.(string); !ok {
+						return nil, fmt.Errorf("column %q expects TEXT, got %T", col.Name, val)
+					}
+				}
+			}
+
+			row[col.Index] = val
+		}
+		updated++
+	}
+
+	msg := fmt.Sprintf("%d rows updated", updated)
+	if updated == 1 {
+		msg = "1 row updated"
 	}
 
 	return &Result{Message: msg}, nil

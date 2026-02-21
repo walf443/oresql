@@ -41,6 +41,8 @@ func (p *Parser) Parse() (ast.Statement, error) {
 		stmt, err = p.parseInsert()
 	case token.SELECT:
 		stmt, err = p.parseSelect()
+	case token.UPDATE:
+		stmt, err = p.parseUpdate()
 	default:
 		return nil, fmt.Errorf("unexpected token %s (%q)", p.curToken.Type, p.curToken.Literal)
 	}
@@ -228,6 +230,85 @@ func (p *Parser) parseExprList() ([]ast.Expr, error) {
 	}
 
 	return exprs, nil
+}
+
+// parseUpdate parses: UPDATE <table> SET <col> = <expr> [, <col> = <expr> ...] [WHERE <expr>]
+func (p *Parser) parseUpdate() (*ast.UpdateStmt, error) {
+	if err := p.expectToken(token.UPDATE); err != nil {
+		return nil, err
+	}
+
+	if !p.isIdent() {
+		return nil, fmt.Errorf("expected table name, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+	}
+	tableName := p.curToken.Literal
+	p.nextToken()
+
+	if err := p.expectToken(token.SET); err != nil {
+		return nil, err
+	}
+
+	sets, err := p.parseSetList()
+	if err != nil {
+		return nil, err
+	}
+
+	var where ast.Expr
+	if p.curToken.Type == token.WHERE {
+		p.nextToken() // skip WHERE
+		where, err = p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &ast.UpdateStmt{
+		TableName: tableName,
+		Sets:      sets,
+		Where:     where,
+	}, nil
+}
+
+// parseSetList parses: <col> = <expr> [, <col> = <expr> ...]
+func (p *Parser) parseSetList() ([]ast.SetClause, error) {
+	var sets []ast.SetClause
+
+	set, err := p.parseSetClause()
+	if err != nil {
+		return nil, err
+	}
+	sets = append(sets, set)
+
+	for p.curToken.Type == token.COMMA {
+		p.nextToken() // skip comma
+		set, err := p.parseSetClause()
+		if err != nil {
+			return nil, err
+		}
+		sets = append(sets, set)
+	}
+
+	return sets, nil
+}
+
+// parseSetClause parses: <col> = <expr>
+func (p *Parser) parseSetClause() (ast.SetClause, error) {
+	if !p.isIdent() {
+		return ast.SetClause{}, fmt.Errorf("expected column name, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+	}
+	column := p.curToken.Literal
+	p.nextToken()
+
+	if err := p.expectToken(token.EQ); err != nil {
+		return ast.SetClause{}, err
+	}
+
+	value, err := p.parseExpr()
+	if err != nil {
+		return ast.SetClause{}, err
+	}
+
+	return ast.SetClause{Column: column, Value: value}, nil
 }
 
 // parseSelect parses: SELECT <columns> FROM <table> [WHERE <expr>]

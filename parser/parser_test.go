@@ -499,6 +499,77 @@ func TestParseCreateTableNotNull(t *testing.T) {
 	}
 }
 
+func TestParseUpdate(t *testing.T) {
+	stmt := parse(t, "UPDATE users SET name = 'bob' WHERE id = 1")
+	upd, ok := stmt.(*ast.UpdateStmt)
+	if !ok {
+		t.Fatalf("expected UpdateStmt, got %T", stmt)
+	}
+	if upd.TableName != "users" {
+		t.Errorf("table name: expected %q, got %q", "users", upd.TableName)
+	}
+	if len(upd.Sets) != 1 {
+		t.Fatalf("expected 1 set clause, got %d", len(upd.Sets))
+	}
+	if upd.Sets[0].Column != "name" {
+		t.Errorf("set column: expected %q, got %q", "name", upd.Sets[0].Column)
+	}
+	strVal, ok := upd.Sets[0].Value.(*ast.StringLitExpr)
+	if !ok {
+		t.Fatalf("set value: expected StringLitExpr, got %T", upd.Sets[0].Value)
+	}
+	if strVal.Value != "bob" {
+		t.Errorf("set value: expected %q, got %q", "bob", strVal.Value)
+	}
+	if upd.Where == nil {
+		t.Fatal("expected WHERE clause")
+	}
+	bin := upd.Where.(*ast.BinaryExpr)
+	if bin.Left.(*ast.IdentExpr).Name != "id" {
+		t.Errorf("where left: expected 'id'")
+	}
+	if bin.Right.(*ast.IntLitExpr).Value != 1 {
+		t.Errorf("where right: expected 1")
+	}
+}
+
+func TestParseUpdateMultipleSet(t *testing.T) {
+	stmt := parse(t, "UPDATE users SET name = 'bob', age = 30 WHERE id = 1")
+	upd := stmt.(*ast.UpdateStmt)
+	if len(upd.Sets) != 2 {
+		t.Fatalf("expected 2 set clauses, got %d", len(upd.Sets))
+	}
+	if upd.Sets[0].Column != "name" {
+		t.Errorf("set 0 column: expected %q, got %q", "name", upd.Sets[0].Column)
+	}
+	if upd.Sets[0].Value.(*ast.StringLitExpr).Value != "bob" {
+		t.Errorf("set 0 value: expected 'bob'")
+	}
+	if upd.Sets[1].Column != "age" {
+		t.Errorf("set 1 column: expected %q, got %q", "age", upd.Sets[1].Column)
+	}
+	if upd.Sets[1].Value.(*ast.IntLitExpr).Value != 30 {
+		t.Errorf("set 1 value: expected 30")
+	}
+	if upd.Where == nil {
+		t.Fatal("expected WHERE clause")
+	}
+}
+
+func TestParseUpdateNoWhere(t *testing.T) {
+	stmt := parse(t, "UPDATE users SET name = 'bob'")
+	upd := stmt.(*ast.UpdateStmt)
+	if upd.TableName != "users" {
+		t.Errorf("table name: expected %q, got %q", "users", upd.TableName)
+	}
+	if len(upd.Sets) != 1 {
+		t.Fatalf("expected 1 set clause, got %d", len(upd.Sets))
+	}
+	if upd.Where != nil {
+		t.Errorf("expected no WHERE, got %v", upd.Where)
+	}
+}
+
 func TestParseError(t *testing.T) {
 	inputs := []string{
 		"CREATE",

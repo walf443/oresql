@@ -594,6 +594,110 @@ func TestInsertNullableColumnStillAllowsNull(t *testing.T) {
 	}
 }
 
+func TestUpdateBasic(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+
+	result := run(t, exec, "UPDATE users SET name = 'ALICE' WHERE id = 1")
+	if result.Message != "1 row updated" {
+		t.Errorf("expected '1 row updated', got %q", result.Message)
+	}
+
+	result = run(t, exec, "SELECT name FROM users WHERE id = 1")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != "ALICE" {
+		t.Errorf("expected 'ALICE', got %v", result.Rows[0][0])
+	}
+}
+
+func TestUpdateMultipleRows(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
+
+	result := run(t, exec, "UPDATE users SET name = 'updated' WHERE id > 1")
+	if result.Message != "2 rows updated" {
+		t.Errorf("expected '2 rows updated', got %q", result.Message)
+	}
+
+	result = run(t, exec, "SELECT name FROM users WHERE id > 1")
+	for _, row := range result.Rows {
+		if row[0] != "updated" {
+			t.Errorf("expected 'updated', got %v", row[0])
+		}
+	}
+}
+
+func TestUpdateNoMatch(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+
+	result := run(t, exec, "UPDATE users SET name = 'bob' WHERE id = 999")
+	if result.Message != "0 rows updated" {
+		t.Errorf("expected '0 rows updated', got %q", result.Message)
+	}
+}
+
+func TestUpdateNoWhere(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+
+	result := run(t, exec, "UPDATE users SET name = 'updated'")
+	if result.Message != "2 rows updated" {
+		t.Errorf("expected '2 rows updated', got %q", result.Message)
+	}
+
+	result = run(t, exec, "SELECT name FROM users")
+	for _, row := range result.Rows {
+		if row[0] != "updated" {
+			t.Errorf("expected 'updated', got %v", row[0])
+		}
+	}
+}
+
+func TestUpdateMultipleSets(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT, age INT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice', 20)")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob', 25)")
+
+	result := run(t, exec, "UPDATE users SET name = 'ALICE', age = 30 WHERE id = 1")
+	if result.Message != "1 row updated" {
+		t.Errorf("expected '1 row updated', got %q", result.Message)
+	}
+
+	result = run(t, exec, "SELECT name, age FROM users WHERE id = 1")
+	if result.Rows[0][0] != "ALICE" {
+		t.Errorf("expected 'ALICE', got %v", result.Rows[0][0])
+	}
+	if result.Rows[0][1] != int64(30) {
+		t.Errorf("expected 30, got %v", result.Rows[0][1])
+	}
+}
+
+func TestErrorUpdateTypeMismatch(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	runExpectError(t, exec, "UPDATE users SET id = 'not_int' WHERE id = 1")
+}
+
+func TestErrorUpdateNotNull(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT NOT NULL, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	runExpectError(t, exec, "UPDATE users SET id = NULL WHERE id = 1")
+}
+
 func TestErrorSelectNonexistentColumn(t *testing.T) {
 	exec := NewExecutor()
 	run(t, exec, "CREATE TABLE users (id INT)")

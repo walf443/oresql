@@ -212,7 +212,7 @@ func (e *Executor) executeAggregateSelect(stmt *ast.SelectStmt, info *TableInfo)
 		if !ok {
 			return nil, fmt.Errorf("mixed aggregate and non-aggregate columns are not supported")
 		}
-		val, colName, err := evalAggregate(call, filtered)
+		val, colName, err := evalAggregate(call, filtered, info)
 		if err != nil {
 			return nil, err
 		}
@@ -224,10 +224,30 @@ func (e *Executor) executeAggregateSelect(stmt *ast.SelectStmt, info *TableInfo)
 }
 
 // evalAggregate evaluates a single aggregate function call against a set of rows.
-func evalAggregate(call *ast.CallExpr, rows []Row) (Value, string, error) {
+func evalAggregate(call *ast.CallExpr, rows []Row, info *TableInfo) (Value, string, error) {
 	switch call.Name {
 	case "COUNT":
 		colName := formatCallExpr(call)
+		// COUNT(*) counts all rows; COUNT(column) excludes NULLs
+		if len(call.Args) == 1 {
+			if _, ok := call.Args[0].(*ast.StarExpr); !ok {
+				ident, ok := call.Args[0].(*ast.IdentExpr)
+				if !ok {
+					return nil, "", fmt.Errorf("COUNT expects * or column name, got %T", call.Args[0])
+				}
+				col, err := info.FindColumn(ident.Name)
+				if err != nil {
+					return nil, "", err
+				}
+				count := int64(0)
+				for _, row := range rows {
+					if row[col.Index] != nil {
+						count++
+					}
+				}
+				return count, colName, nil
+			}
+		}
 		return int64(len(rows)), colName, nil
 	default:
 		return nil, "", fmt.Errorf("unknown aggregate function: %s", call.Name)

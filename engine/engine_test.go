@@ -225,6 +225,30 @@ func TestSelectCountStarEmpty(t *testing.T) {
 	}
 }
 
+func TestSelectCountColumnExcludesNull(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, NULL)")
+	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
+	run(t, exec, "INSERT INTO users VALUES (4, NULL)")
+
+	// COUNT(*) counts all rows including NULLs
+	result := run(t, exec, "SELECT COUNT(*) FROM users")
+	if result.Rows[0][0] != int64(4) {
+		t.Errorf("expected COUNT(*)=4, got %v", result.Rows[0][0])
+	}
+
+	// COUNT(name) excludes NULLs
+	result = run(t, exec, "SELECT COUNT(name) FROM users")
+	if result.Columns[0] != "COUNT(name)" {
+		t.Errorf("expected column name COUNT(name), got %s", result.Columns[0])
+	}
+	if result.Rows[0][0] != int64(2) {
+		t.Errorf("expected COUNT(name)=2, got %v", result.Rows[0][0])
+	}
+}
+
 func TestInsertMultipleRows(t *testing.T) {
 	exec := NewExecutor()
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")

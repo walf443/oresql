@@ -279,3 +279,11 @@ type LogicalExpr struct {
 
 func (e *LogicalExpr) NodeType() string { return "Logical" }
 func (e *LogicalExpr) exprNode()        {}
+
+// NotExpr represents NOT <expr>.
+type NotExpr struct {
+	Expr Expr
+}
+
+func (e *NotExpr) NodeType() string { return "Not" }
+func (e *NotExpr) exprNode()        {}

@@ -3848,3 +3848,53 @@ func TestFloatColumnPrimaryKey(t *testing.T) {
 		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
 	}
 }
+
+func TestNotOperator(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE items (id INT, active INT)")
+	run(t, exec, "INSERT INTO items VALUES (1, 1)")
+	run(t, exec, "INSERT INTO items VALUES (2, 0)")
+	run(t, exec, "INSERT INTO items VALUES (3, 1)")
+
+	// NOT (id = 1)
+	result := run(t, exec, "SELECT id FROM items WHERE NOT (id = 1)")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+
+	// NOT (id > 1)
+	result = run(t, exec, "SELECT id FROM items WHERE NOT (id > 1)")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(1) {
+		t.Errorf("expected id=1, got %v", result.Rows[0][0])
+	}
+
+	// NOT with AND
+	result = run(t, exec, "SELECT id FROM items WHERE NOT (id = 1) AND NOT (id = 3)")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(2) {
+		t.Errorf("expected id=2, got %v", result.Rows[0][0])
+	}
+
+	// NOT with OR
+	result = run(t, exec, "SELECT id FROM items WHERE NOT (id = 1 OR id = 2)")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(3) {
+		t.Errorf("expected id=3, got %v", result.Rows[0][0])
+	}
+
+	// Double NOT
+	result = run(t, exec, "SELECT id FROM items WHERE NOT NOT (id = 1)")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(1) {
+		t.Errorf("expected id=1, got %v", result.Rows[0][0])
+	}
+}

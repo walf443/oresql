@@ -782,14 +782,14 @@ func (p *Parser) parseOrExpr() (ast.Expr, error) {
 }
 
 func (p *Parser) parseAndExpr() (ast.Expr, error) {
-	left, err := p.parseComparison()
+	left, err := p.parseNotExpr()
 	if err != nil {
 		return nil, err
 	}
 
 	for p.curToken.Type == token.AND {
 		p.nextToken() // skip AND
-		right, err := p.parseComparison()
+		right, err := p.parseNotExpr()
 		if err != nil {
 			return nil, err
 		}
@@ -797,6 +797,21 @@ func (p *Parser) parseAndExpr() (ast.Expr, error) {
 	}
 
 	return left, nil
+}
+
+func (p *Parser) parseNotExpr() (ast.Expr, error) {
+	if p.curToken.Type == token.NOT {
+		// Check that NOT is not followed by IN/BETWEEN/LIKE (those are handled in parseComparison)
+		if p.peekToken.Type != token.IN && p.peekToken.Type != token.BETWEEN && p.peekToken.Type != token.LIKE {
+			p.nextToken() // skip NOT
+			expr, err := p.parseNotExpr()
+			if err != nil {
+				return nil, err
+			}
+			return &ast.NotExpr{Expr: expr}, nil
+		}
+	}
+	return p.parseComparison()
 }
 
 func (p *Parser) parseComparison() (ast.Expr, error) {

@@ -1600,6 +1600,16 @@ func evalGroupExpr(expr ast.Expr, row Row, groupRows []Row, info *TableInfo) (Va
 		default:
 			return nil, fmt.Errorf("unknown logical operator: %s", e.Op)
 		}
+	case *ast.NotExpr:
+		val, err := evalGroupExpr(e.Expr, row, groupRows, info)
+		if err != nil {
+			return nil, err
+		}
+		b, ok := val.(bool)
+		if !ok {
+			return nil, fmt.Errorf("NOT requires boolean operand, got %T", val)
+		}
+		return !b, nil
 	default:
 		return evalExpr(expr, row, info)
 	}
@@ -2017,6 +2027,16 @@ func evalExpr(expr ast.Expr, row Row, info *TableInfo) (Value, error) {
 		default:
 			return nil, fmt.Errorf("unknown logical operator: %s", e.Op)
 		}
+	case *ast.NotExpr:
+		val, err := evalExpr(e.Expr, row, info)
+		if err != nil {
+			return nil, err
+		}
+		b, ok := val.(bool)
+		if !ok {
+			return nil, fmt.Errorf("NOT requires boolean operand, got %T", val)
+		}
+		return !b, nil
 	default:
 		return nil, fmt.Errorf("cannot evaluate expression: %T", expr)
 	}

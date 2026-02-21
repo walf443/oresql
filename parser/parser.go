@@ -498,6 +498,8 @@ func (p *Parser) parseSelect() (*ast.SelectStmt, error) {
 	}
 
 	var tableName string
+	var tableAlias string
+	var joins []ast.JoinClause
 	var where ast.Expr
 
 	if p.curToken.Type == token.FROM {
@@ -508,6 +510,38 @@ func (p *Parser) parseSelect() (*ast.SelectStmt, error) {
 		}
 		tableName = p.curToken.Literal
 		p.nextToken()
+
+		tableAlias = p.parseTableAlias()
+
+		// Parse JOIN clauses
+		for p.curToken.Type == token.JOIN || p.curToken.Type == token.INNER {
+			if p.curToken.Type == token.INNER {
+				p.nextToken() // skip INNER
+			}
+			if err := p.expectToken(token.JOIN); err != nil {
+				return nil, err
+			}
+			if !p.isIdent() {
+				return nil, fmt.Errorf("expected table name after JOIN, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+			}
+			joinTable := p.curToken.Literal
+			p.nextToken()
+
+			joinAlias := p.parseTableAlias()
+
+			if err := p.expectToken(token.ON); err != nil {
+				return nil, err
+			}
+			onExpr, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			joins = append(joins, ast.JoinClause{
+				TableName:  joinTable,
+				TableAlias: joinAlias,
+				On:         onExpr,
+			})
+		}
 
 		if p.curToken.Type == token.WHERE {
 			p.nextToken() // skip WHERE
@@ -580,16 +614,39 @@ func (p *Parser) parseSelect() (*ast.SelectStmt, error) {
 	}
 
 	return &ast.SelectStmt{
-		Distinct:  distinct,
-		Columns:   columns,
-		TableName: tableName,
-		Where:     where,
-		GroupBy:   groupBy,
-		Having:    having,
-		OrderBy:   orderBy,
-		Limit:     limit,
-		Offset:    offset,
+		Distinct:   distinct,
+		Columns:    columns,
+		TableName:  tableName,
+		TableAlias: tableAlias,
+		Joins:      joins,
+		Where:      where,
+		GroupBy:    groupBy,
+		Having:     having,
+		OrderBy:    orderBy,
+		Limit:      limit,
+		Offset:     offset,
 	}, nil
+}
+
+// parseTableAlias parses an optional table alias: [AS] ident
+// Returns empty string if no alias is present.
+func (p *Parser) parseTableAlias() string {
+	if p.curToken.Type == token.AS {
+		p.nextToken() // skip AS
+		if p.isIdent() {
+			alias := p.curToken.Literal
+			p.nextToken()
+			return alias
+		}
+		return ""
+	}
+	// Bare alias (no AS keyword): next token is an identifier that is not a keyword
+	if p.isIdent() {
+		alias := p.curToken.Literal
+		p.nextToken()
+		return alias
+	}
+	return ""
 }
 
 // parseGroupByList parses: <expr> [, <expr> ...]

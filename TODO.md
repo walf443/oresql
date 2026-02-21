@@ -32,10 +32,10 @@
 
 ## JOIN
 
-- [ ] INNER JOIN ... ON
+- [x] INNER JOIN ... ON
 - [ ] LEFT JOIN / RIGHT JOIN
 - [ ] CROSS JOIN
-- [ ] テーブル別名 (`FROM users u`)
+- [x] テーブル別名 (`FROM users u`)
 
 ## 集合演算
 

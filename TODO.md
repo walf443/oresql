@@ -12,7 +12,7 @@
 - [x] DEFAULT 値
 - [ ] CHECK 制約
 - [ ] FOREIGN KEY 制約
-- [ ] CREATE INDEX / DROP INDEX
+- [x] CREATE INDEX / DROP INDEX
 - [ ] AUTO INCREMENT / SERIAL
 
 ## DML（データ操作）

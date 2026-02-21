@@ -36,6 +36,14 @@ func (t *TableInfo) FindColumn(name string) (*ColumnInfo, error) {
 	return nil, fmt.Errorf("column %q not found in table %q", name, t.Name)
 }
 
+// IndexInfo describes a secondary index on a table.
+type IndexInfo struct {
+	Name       string
+	TableName  string
+	ColumnName string
+	ColumnIdx  int
+}
+
 // Catalog holds all table schemas.
 type Catalog struct {
 	tables map[string]*TableInfo // key: lowercase table name

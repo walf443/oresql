@@ -1249,6 +1249,34 @@ func TestParseSelectWhereNotBetween(t *testing.T) {
 	}
 }
 
+func TestParseCreateIndex(t *testing.T) {
+	stmt := parse(t, "CREATE INDEX idx_name ON users(name)")
+	ci, ok := stmt.(*ast.CreateIndexStmt)
+	if !ok {
+		t.Fatalf("expected CreateIndexStmt, got %T", stmt)
+	}
+	if ci.IndexName != "idx_name" {
+		t.Errorf("index name: expected %q, got %q", "idx_name", ci.IndexName)
+	}
+	if ci.TableName != "users" {
+		t.Errorf("table name: expected %q, got %q", "users", ci.TableName)
+	}
+	if ci.ColumnName != "name" {
+		t.Errorf("column name: expected %q, got %q", "name", ci.ColumnName)
+	}
+}
+
+func TestParseDropIndex(t *testing.T) {
+	stmt := parse(t, "DROP INDEX idx_name")
+	di, ok := stmt.(*ast.DropIndexStmt)
+	if !ok {
+		t.Fatalf("expected DropIndexStmt, got %T", stmt)
+	}
+	if di.IndexName != "idx_name" {
+		t.Errorf("index name: expected %q, got %q", "idx_name", di.IndexName)
+	}
+}
+
 func TestParseError(t *testing.T) {
 	inputs := []string{
 		"CREATE",

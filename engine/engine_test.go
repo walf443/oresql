@@ -2031,3 +2031,257 @@ func TestSelectWhereBetweenText(t *testing.T) {
 		t.Errorf("row 2: expected name='dave', got %v", result.Rows[2][1])
 	}
 }
+
+func TestCreateIndex(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	result := run(t, exec, "CREATE INDEX idx_name ON users(name)")
+	if result.Message != "index created" {
+		t.Errorf("expected 'index created', got %q", result.Message)
+	}
+}
+
+func TestCreateIndexTableNotExists(t *testing.T) {
+	exec := NewExecutor()
+	runExpectError(t, exec, "CREATE INDEX idx_name ON nonexistent(name)")
+}
+
+func TestCreateIndexColumnNotExists(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	runExpectError(t, exec, "CREATE INDEX idx_foo ON users(foo)")
+}
+
+func TestCreateIndexDuplicateName(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "CREATE INDEX idx_name ON users(name)")
+	runExpectError(t, exec, "CREATE INDEX idx_name ON users(name)")
+}
+
+func TestDropIndex(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "CREATE INDEX idx_name ON users(name)")
+	result := run(t, exec, "DROP INDEX idx_name")
+	if result.Message != "index dropped" {
+		t.Errorf("expected 'index dropped', got %q", result.Message)
+	}
+}
+
+func TestDropIndexNotExists(t *testing.T) {
+	exec := NewExecutor()
+	runExpectError(t, exec, "DROP INDEX nonexistent")
+}
+
+func TestSelectWithIndexEquality(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
+	run(t, exec, "CREATE INDEX idx_name ON users(name)")
+
+	result := run(t, exec, "SELECT * FROM users WHERE name = 'bob'")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(2) {
+		t.Errorf("expected id=2, got %v", result.Rows[0][0])
+	}
+	if result.Rows[0][1] != "bob" {
+		t.Errorf("expected name='bob', got %v", result.Rows[0][1])
+	}
+}
+
+func TestSelectWithIndexNoMatch(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "CREATE INDEX idx_name ON users(name)")
+
+	result := run(t, exec, "SELECT * FROM users WHERE name = 'nonexistent'")
+	if len(result.Rows) != 0 {
+		t.Fatalf("expected 0 rows, got %d", len(result.Rows))
+	}
+}
+
+func TestIndexMaintainedOnInsert(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "CREATE INDEX idx_name ON users(name)")
+
+	// Insert after index creation
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+
+	result := run(t, exec, "SELECT * FROM users WHERE name = 'bob'")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(2) {
+		t.Errorf("expected id=2, got %v", result.Rows[0][0])
+	}
+}
+
+func TestIndexMaintainedOnDelete(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "CREATE INDEX idx_name ON users(name)")
+
+	run(t, exec, "DELETE FROM users WHERE id = 2")
+
+	result := run(t, exec, "SELECT * FROM users WHERE name = 'bob'")
+	if len(result.Rows) != 0 {
+		t.Fatalf("expected 0 rows after delete, got %d", len(result.Rows))
+	}
+}
+
+func TestIndexMaintainedOnUpdate(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "CREATE INDEX idx_name ON users(name)")
+
+	run(t, exec, "UPDATE users SET name = 'bobby' WHERE id = 2")
+
+	// Old value should not be found
+	result := run(t, exec, "SELECT * FROM users WHERE name = 'bob'")
+	if len(result.Rows) != 0 {
+		t.Fatalf("expected 0 rows for old value, got %d", len(result.Rows))
+	}
+
+	// New value should be found
+	result = run(t, exec, "SELECT * FROM users WHERE name = 'bobby'")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row for new value, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(2) {
+		t.Errorf("expected id=2, got %v", result.Rows[0][0])
+	}
+}
+
+func TestIndexClearedOnTruncate(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "CREATE INDEX idx_name ON users(name)")
+
+	run(t, exec, "TRUNCATE TABLE users")
+
+	result := run(t, exec, "SELECT * FROM users WHERE name = 'alice'")
+	if len(result.Rows) != 0 {
+		t.Fatalf("expected 0 rows after truncate, got %d", len(result.Rows))
+	}
+
+	// Index still works after reinserting
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	result = run(t, exec, "SELECT * FROM users WHERE name = 'bob'")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row after reinsert, got %d", len(result.Rows))
+	}
+}
+
+func TestIndexOnIntColumn(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
+	run(t, exec, "CREATE INDEX idx_id ON users(id)")
+
+	result := run(t, exec, "SELECT * FROM users WHERE id = 2")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][1] != "bob" {
+		t.Errorf("expected name='bob', got %v", result.Rows[0][1])
+	}
+}
+
+func TestIndexOnFloatColumn(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, val FLOAT)")
+	run(t, exec, "INSERT INTO t VALUES (1, 1.5)")
+	run(t, exec, "INSERT INTO t VALUES (2, 2.5)")
+	run(t, exec, "INSERT INTO t VALUES (3, 3.5)")
+	run(t, exec, "CREATE INDEX idx_val ON t(val)")
+
+	result := run(t, exec, "SELECT * FROM t WHERE val = 2.5")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(2) {
+		t.Errorf("expected id=2, got %v", result.Rows[0][0])
+	}
+}
+
+func TestIndexWithNullValues(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, NULL)")
+	run(t, exec, "INSERT INTO users VALUES (3, 'bob')")
+	run(t, exec, "CREATE INDEX idx_name ON users(name)")
+
+	// NULL values should not be in the index
+	result := run(t, exec, "SELECT * FROM users WHERE name = 'alice'")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(1) {
+		t.Errorf("expected id=1, got %v", result.Rows[0][0])
+	}
+}
+
+func TestCreateIndexOnExistingData(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO users VALUES (3, 'alice')")
+
+	// Create index after data is inserted
+	run(t, exec, "CREATE INDEX idx_name ON users(name)")
+
+	// Index should find multiple rows
+	result := run(t, exec, "SELECT * FROM users WHERE name = 'alice'")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+}
+
+func TestDropTableRemovesIndexes(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "CREATE INDEX idx_name ON users(name)")
+	run(t, exec, "DROP TABLE users")
+
+	// Re-create table and try to create index with same name
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	result := run(t, exec, "CREATE INDEX idx_name ON users(name)")
+	if result.Message != "index created" {
+		t.Errorf("expected 'index created', got %q", result.Message)
+	}
+}
+
+func TestSelectWithIndexAndCondition(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT, age INT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice', 30)")
+	run(t, exec, "INSERT INTO users VALUES (2, 'alice', 25)")
+	run(t, exec, "INSERT INTO users VALUES (3, 'bob', 30)")
+	run(t, exec, "CREATE INDEX idx_name ON users(name)")
+
+	// Index used for name = 'alice', then age > 28 is applied as filter
+	result := run(t, exec, "SELECT * FROM users WHERE name = 'alice' AND age > 28")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(1) {
+		t.Errorf("expected id=1, got %v", result.Rows[0][0])
+	}
+}

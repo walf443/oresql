@@ -98,6 +98,10 @@ func (e *Executor) Execute(stmt ast.Statement) (*Result, error) {
 		return e.executeDropTable(s)
 	case *ast.TruncateTableStmt:
 		return e.executeTruncateTable(s)
+	case *ast.CreateIndexStmt:
+		return e.executeCreateIndex(s)
+	case *ast.DropIndexStmt:
+		return e.executeDropIndex(s)
 	default:
 		return nil, fmt.Errorf("unknown statement type: %T", stmt)
 	}
@@ -126,6 +130,101 @@ func (e *Executor) executeTruncateTable(stmt *ast.TruncateTableStmt) (*Result, e
 	}
 	e.storage.TruncateTable(stmt.TableName)
 	return &Result{Message: "table truncated"}, nil
+}
+
+func (e *Executor) executeCreateIndex(stmt *ast.CreateIndexStmt) (*Result, error) {
+	info, err := e.catalog.GetTable(stmt.TableName)
+	if err != nil {
+		return nil, err
+	}
+	col, err := info.FindColumn(stmt.ColumnName)
+	if err != nil {
+		return nil, err
+	}
+	if e.storage.HasIndex(stmt.IndexName) {
+		return nil, fmt.Errorf("index %q already exists", stmt.IndexName)
+	}
+	idxInfo := &IndexInfo{
+		Name:       stmt.IndexName,
+		TableName:  info.Name,
+		ColumnName: col.Name,
+		ColumnIdx:  col.Index,
+	}
+	if err := e.storage.CreateIndex(idxInfo); err != nil {
+		return nil, err
+	}
+	return &Result{Message: "index created"}, nil
+}
+
+func (e *Executor) executeDropIndex(stmt *ast.DropIndexStmt) (*Result, error) {
+	if err := e.storage.DropIndex(stmt.IndexName); err != nil {
+		return nil, err
+	}
+	return &Result{Message: "index dropped"}, nil
+}
+
+// tryIndexLookup attempts to use an index for equality conditions in WHERE.
+func (e *Executor) tryIndexLookup(stmt *ast.SelectStmt, info *TableInfo) ([]Row, bool) {
+	if stmt.Where == nil {
+		return nil, false
+	}
+	colName, val := extractEqualityCondition(stmt.Where)
+	if colName == "" {
+		return nil, false
+	}
+	col, err := info.FindColumn(colName)
+	if err != nil {
+		return nil, false
+	}
+	idx := e.storage.LookupIndex(info.Name, col.Index)
+	if idx == nil {
+		return nil, false
+	}
+	keys := idx.Lookup(val)
+	if keys == nil {
+		return []Row{}, true
+	}
+	rows, err := e.storage.GetByKeys(info.Name, keys)
+	if err != nil {
+		return nil, false
+	}
+	return rows, true
+}
+
+// extractEqualityCondition extracts a column = literal condition from a WHERE expression.
+// For AND chains, it returns the first equality condition found.
+func extractEqualityCondition(expr ast.Expr) (string, Value) {
+	switch e := expr.(type) {
+	case *ast.BinaryExpr:
+		if e.Op != "=" {
+			return "", nil
+		}
+		ident, ok := e.Left.(*ast.IdentExpr)
+		if !ok {
+			return "", nil
+		}
+		switch lit := e.Right.(type) {
+		case *ast.IntLitExpr:
+			return ident.Name, lit.Value
+		case *ast.FloatLitExpr:
+			return ident.Name, lit.Value
+		case *ast.StringLitExpr:
+			return ident.Name, lit.Value
+		default:
+			return "", nil
+		}
+	case *ast.LogicalExpr:
+		if e.Op == "AND" {
+			colName, val := extractEqualityCondition(e.Left)
+			if colName != "" {
+				return colName, val
+			}
+			return extractEqualityCondition(e.Right)
+		}
+		return "", nil
+	default:
+		return "", nil
+	}
 }
 
 // validateAndCoerceValue validates a value against a column definition, coercing types as needed.
@@ -416,10 +515,15 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 		}
 	}
 
-	// Scan all rows
-	allRows, err := e.storage.Scan(stmt.TableName)
-	if err != nil {
-		return nil, err
+	// Try index lookup, fall back to full scan
+	var allRows []Row
+	if indexedRows, indexUsed := e.tryIndexLookup(stmt, info); indexUsed {
+		allRows = indexedRows
+	} else {
+		allRows, err = e.storage.Scan(stmt.TableName)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Filter rows

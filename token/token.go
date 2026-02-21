@@ -75,6 +75,8 @@ const (
 	PRIMARY  // PRIMARY keyword
 	KEY      // KEY keyword
 	BETWEEN  // BETWEEN keyword
+	INDEX    // INDEX keyword
+	ON       // ON keyword
 )
 
 var tokenNames = map[TokenType]string{
@@ -141,6 +143,8 @@ var tokenNames = map[TokenType]string{
 	PRIMARY:      "PRIMARY",
 	KEY:          "KEY",
 	BETWEEN:      "BETWEEN",
+	INDEX:        "INDEX",
+	ON:           "ON",
 }
 
 func (t TokenType) String() string {
@@ -197,6 +201,8 @@ var keywords = map[string]TokenType{
 	"PRIMARY":  PRIMARY,
 	"KEY":      KEY,
 	"BETWEEN":  BETWEEN,
+	"INDEX":    INDEX,
+	"ON":       ON,
 }
 
 // LookupIdent returns the keyword TokenType if the identifier is a keyword,

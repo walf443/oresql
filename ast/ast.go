@@ -211,6 +211,24 @@ type BetweenExpr struct {
 func (e *BetweenExpr) NodeType() string { return "Between" }
 func (e *BetweenExpr) exprNode()        {}
 
+// CreateIndexStmt represents CREATE INDEX <name> ON <table>(<column>).
+type CreateIndexStmt struct {
+	IndexName  string
+	TableName  string
+	ColumnName string
+}
+
+func (s *CreateIndexStmt) NodeType() string { return "CreateIndex" }
+func (s *CreateIndexStmt) statementNode()   {}
+
+// DropIndexStmt represents DROP INDEX <name>.
+type DropIndexStmt struct {
+	IndexName string
+}
+
+func (s *DropIndexStmt) NodeType() string { return "DropIndex" }
+func (s *DropIndexStmt) statementNode()   {}
+
 // BinaryExpr represents a comparison: left <op> right.
 type BinaryExpr struct {
 	Left  Expr

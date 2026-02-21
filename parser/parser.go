@@ -156,10 +156,20 @@ func (p *Parser) parseColumnDef() (ast.ColumnDef, error) {
 		notNull = true
 	}
 
-	return ast.ColumnDef{Name: name, DataType: dataType, NotNull: notNull}, nil
+	var defaultExpr ast.Expr
+	if p.curToken.Type == token.DEFAULT {
+		p.nextToken() // skip DEFAULT
+		var err error
+		defaultExpr, err = p.parsePrimary()
+		if err != nil {
+			return ast.ColumnDef{}, fmt.Errorf("invalid DEFAULT value: %w", err)
+		}
+	}
+
+	return ast.ColumnDef{Name: name, DataType: dataType, NotNull: notNull, Default: defaultExpr}, nil
 }
 
-// parseInsert parses: INSERT INTO <table> VALUES (<expr>, ...) [, (<expr>, ...) ...]
+// parseInsert parses: INSERT INTO <table> [(<columns>)] VALUES (<expr>, ...) [, (<expr>, ...) ...]
 func (p *Parser) parseInsert() (*ast.InsertStmt, error) {
 	if err := p.expectToken(token.INSERT); err != nil {
 		return nil, err
@@ -173,6 +183,19 @@ func (p *Parser) parseInsert() (*ast.InsertStmt, error) {
 	}
 	tableName := p.curToken.Literal
 	p.nextToken()
+
+	var columns []string
+	if p.curToken.Type == token.LPAREN {
+		p.nextToken() // skip (
+		var err error
+		columns, err = p.parseIdentList()
+		if err != nil {
+			return nil, err
+		}
+		if err := p.expectToken(token.RPAREN); err != nil {
+			return nil, err
+		}
+	}
 
 	if err := p.expectToken(token.VALUES); err != nil {
 		return nil, err
@@ -195,8 +218,31 @@ func (p *Parser) parseInsert() (*ast.InsertStmt, error) {
 
 	return &ast.InsertStmt{
 		TableName: tableName,
+		Columns:   columns,
 		Rows:      rows,
 	}, nil
+}
+
+// parseIdentList parses: ident [, ident ...]
+func (p *Parser) parseIdentList() ([]string, error) {
+	var idents []string
+
+	if !p.isIdent() {
+		return nil, fmt.Errorf("expected identifier, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+	}
+	idents = append(idents, p.curToken.Literal)
+	p.nextToken()
+
+	for p.curToken.Type == token.COMMA {
+		p.nextToken() // skip comma
+		if !p.isIdent() {
+			return nil, fmt.Errorf("expected identifier, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+		}
+		idents = append(idents, p.curToken.Literal)
+		p.nextToken()
+	}
+
+	return idents, nil
 }
 
 // parseValueRow parses a single parenthesized value list: (<expr>, ...)

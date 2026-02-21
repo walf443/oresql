@@ -9,7 +9,7 @@
 - [ ] ALTER TABLE (ADD COLUMN, DROP COLUMN, MODIFY COLUMN)
 - [ ] PRIMARY KEY 制約
 - [ ] UNIQUE 制約
-- [ ] DEFAULT 値
+- [x] DEFAULT 値
 - [ ] CHECK 制約
 - [ ] FOREIGN KEY 制約
 - [ ] CREATE INDEX / DROP INDEX
@@ -19,7 +19,7 @@
 
 - [x] UPDATE ... SET ... WHERE
 - [x] DELETE FROM ... WHERE
-- [ ] INSERT でカラムリストを指定 (`INSERT INTO t (col1, col2) VALUES (...)`)
+- [x] INSERT でカラムリストを指定 (`INSERT INTO t (col1, col2) VALUES (...)`)
 - [ ] INSERT ... SELECT
 
 ## SELECT 句

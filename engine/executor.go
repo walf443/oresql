@@ -128,56 +128,123 @@ func (e *Executor) executeTruncateTable(stmt *ast.TruncateTableStmt) (*Result, e
 	return &Result{Message: "table truncated"}, nil
 }
 
+// validateAndCoerceValue validates a value against a column definition, coercing types as needed.
+func validateAndCoerceValue(val Value, col ColumnInfo) (Value, error) {
+	if val == nil {
+		if col.NotNull {
+			return nil, fmt.Errorf("column %q cannot be NULL", col.Name)
+		}
+		return nil, nil
+	}
+	switch col.DataType {
+	case "INT":
+		if _, ok := val.(int64); !ok {
+			return nil, fmt.Errorf("column %q expects INT, got %T", col.Name, val)
+		}
+	case "FLOAT":
+		switch v := val.(type) {
+		case float64:
+			// ok
+		case int64:
+			val = float64(v)
+		default:
+			return nil, fmt.Errorf("column %q expects FLOAT, got %T", col.Name, val)
+		}
+	case "TEXT":
+		if _, ok := val.(string); !ok {
+			return nil, fmt.Errorf("column %q expects TEXT, got %T", col.Name, val)
+		}
+	}
+	return val, nil
+}
+
 func (e *Executor) executeInsert(stmt *ast.InsertStmt) (*Result, error) {
 	info, err := e.catalog.GetTable(stmt.TableName)
 	if err != nil {
 		return nil, err
 	}
 
-	for _, values := range stmt.Rows {
-		if len(values) != len(info.Columns) {
-			return nil, fmt.Errorf("expected %d values, got %d", len(info.Columns), len(values))
-		}
+	if stmt.Columns == nil {
+		// No column list: positional mapping
+		for _, values := range stmt.Rows {
+			if len(values) != len(info.Columns) {
+				return nil, fmt.Errorf("expected %d values, got %d", len(info.Columns), len(values))
+			}
 
-		row := make(Row, len(info.Columns))
-		for i, valExpr := range values {
-			val, err := evalLiteral(valExpr)
+			row := make(Row, len(info.Columns))
+			for i, valExpr := range values {
+				val, err := evalLiteral(valExpr)
+				if err != nil {
+					return nil, err
+				}
+				val, err = validateAndCoerceValue(val, info.Columns[i])
+				if err != nil {
+					return nil, err
+				}
+				row[i] = val
+			}
+
+			if err := e.storage.Insert(stmt.TableName, row); err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		// Column list specified
+		// Resolve column indices and check for duplicates/unknown columns
+		colIndices := make([]int, len(stmt.Columns))
+		seen := make(map[string]bool)
+		for i, colName := range stmt.Columns {
+			col, err := info.FindColumn(colName)
 			if err != nil {
 				return nil, err
 			}
+			lower := strings.ToLower(colName)
+			if seen[lower] {
+				return nil, fmt.Errorf("duplicate column %q in INSERT", colName)
+			}
+			seen[lower] = true
+			colIndices[i] = col.Index
+		}
 
-			col := info.Columns[i]
-			if val == nil {
-				if col.NotNull {
-					return nil, fmt.Errorf("column %q cannot be NULL", col.Name)
+		for _, values := range stmt.Rows {
+			if len(values) != len(stmt.Columns) {
+				return nil, fmt.Errorf("expected %d values, got %d", len(stmt.Columns), len(values))
+			}
+
+			row := make(Row, len(info.Columns))
+
+			// Set specified columns
+			for i, valExpr := range values {
+				val, err := evalLiteral(valExpr)
+				if err != nil {
+					return nil, err
 				}
-			} else {
-				switch col.DataType {
-				case "INT":
-					if _, ok := val.(int64); !ok {
-						return nil, fmt.Errorf("column %q expects INT, got %T", col.Name, val)
+				idx := colIndices[i]
+				val, err = validateAndCoerceValue(val, info.Columns[idx])
+				if err != nil {
+					return nil, err
+				}
+				row[idx] = val
+			}
+
+			// Fill unspecified columns with DEFAULT or NULL
+			for _, col := range info.Columns {
+				if seen[strings.ToLower(col.Name)] {
+					continue
+				}
+				if col.HasDefault {
+					row[col.Index] = col.Default
+				} else {
+					if col.NotNull {
+						return nil, fmt.Errorf("column %q cannot be NULL", col.Name)
 					}
-				case "FLOAT":
-					switch v := val.(type) {
-					case float64:
-						// ok
-					case int64:
-						val = float64(v)
-					default:
-						return nil, fmt.Errorf("column %q expects FLOAT, got %T", col.Name, val)
-					}
-				case "TEXT":
-					if _, ok := val.(string); !ok {
-						return nil, fmt.Errorf("column %q expects TEXT, got %T", col.Name, val)
-					}
+					row[col.Index] = nil
 				}
 			}
 
-			row[i] = val
-		}
-
-		if err := e.storage.Insert(stmt.TableName, row); err != nil {
-			return nil, err
+			if err := e.storage.Insert(stmt.TableName, row); err != nil {
+				return nil, err
+			}
 		}
 	}
 

@@ -22,6 +22,7 @@ type ColumnDef struct {
 	Name     string
 	DataType string // "INT" or "TEXT"
 	NotNull  bool
+	Default  Expr // nil = no DEFAULT clause
 }
 
 // CreateTableStmt represents CREATE TABLE <name> (<columns>).
@@ -33,9 +34,10 @@ type CreateTableStmt struct {
 func (s *CreateTableStmt) NodeType() string { return "CreateTable" }
 func (s *CreateTableStmt) statementNode()   {}
 
-// InsertStmt represents INSERT INTO <table> VALUES (<values>), ...
+// InsertStmt represents INSERT INTO <table> [(<columns>)] VALUES (<values>), ...
 type InsertStmt struct {
 	TableName string
+	Columns   []string // nil = no column list specified
 	Rows      [][]Expr
 }
 

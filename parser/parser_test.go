@@ -994,6 +994,120 @@ func TestParseSelectWithoutDistinct(t *testing.T) {
 	}
 }
 
+func TestParseCreateTableWithDefault(t *testing.T) {
+	stmt := parse(t, "CREATE TABLE t (id INT DEFAULT 0, name TEXT DEFAULT 'unknown')")
+	ct, ok := stmt.(*ast.CreateTableStmt)
+	if !ok {
+		t.Fatalf("expected CreateTableStmt, got %T", stmt)
+	}
+	if len(ct.Columns) != 2 {
+		t.Fatalf("expected 2 columns, got %d", len(ct.Columns))
+	}
+	if ct.Columns[0].Name != "id" || ct.Columns[0].DataType != "INT" {
+		t.Errorf("column 0: expected (id, INT), got (%s, %s)", ct.Columns[0].Name, ct.Columns[0].DataType)
+	}
+	if ct.Columns[0].Default == nil {
+		t.Fatal("column 0: expected DEFAULT expr, got nil")
+	}
+	intLit, ok := ct.Columns[0].Default.(*ast.IntLitExpr)
+	if !ok {
+		t.Fatalf("column 0 default: expected IntLitExpr, got %T", ct.Columns[0].Default)
+	}
+	if intLit.Value != 0 {
+		t.Errorf("column 0 default: expected 0, got %d", intLit.Value)
+	}
+	if ct.Columns[1].Default == nil {
+		t.Fatal("column 1: expected DEFAULT expr, got nil")
+	}
+	strLit, ok := ct.Columns[1].Default.(*ast.StringLitExpr)
+	if !ok {
+		t.Fatalf("column 1 default: expected StringLitExpr, got %T", ct.Columns[1].Default)
+	}
+	if strLit.Value != "unknown" {
+		t.Errorf("column 1 default: expected 'unknown', got %q", strLit.Value)
+	}
+}
+
+func TestParseCreateTableWithDefaultNull(t *testing.T) {
+	stmt := parse(t, "CREATE TABLE t (id INT, name TEXT DEFAULT NULL)")
+	ct := stmt.(*ast.CreateTableStmt)
+	if ct.Columns[0].Default != nil {
+		t.Errorf("column 0: expected no DEFAULT, got %v", ct.Columns[0].Default)
+	}
+	if ct.Columns[1].Default == nil {
+		t.Fatal("column 1: expected DEFAULT NULL, got nil")
+	}
+	if _, ok := ct.Columns[1].Default.(*ast.NullLitExpr); !ok {
+		t.Errorf("column 1 default: expected NullLitExpr, got %T", ct.Columns[1].Default)
+	}
+}
+
+func TestParseCreateTableNotNullDefault(t *testing.T) {
+	stmt := parse(t, "CREATE TABLE t (id INT NOT NULL DEFAULT 1)")
+	ct := stmt.(*ast.CreateTableStmt)
+	if !ct.Columns[0].NotNull {
+		t.Errorf("column 0: expected NOT NULL")
+	}
+	if ct.Columns[0].Default == nil {
+		t.Fatal("column 0: expected DEFAULT expr, got nil")
+	}
+	intLit, ok := ct.Columns[0].Default.(*ast.IntLitExpr)
+	if !ok {
+		t.Fatalf("column 0 default: expected IntLitExpr, got %T", ct.Columns[0].Default)
+	}
+	if intLit.Value != 1 {
+		t.Errorf("column 0 default: expected 1, got %d", intLit.Value)
+	}
+}
+
+func TestParseInsertWithColumns(t *testing.T) {
+	stmt := parse(t, "INSERT INTO users (id, name) VALUES (1, 'alice')")
+	ins, ok := stmt.(*ast.InsertStmt)
+	if !ok {
+		t.Fatalf("expected InsertStmt, got %T", stmt)
+	}
+	if ins.TableName != "users" {
+		t.Errorf("table name: expected %q, got %q", "users", ins.TableName)
+	}
+	if len(ins.Columns) != 2 {
+		t.Fatalf("expected 2 columns, got %d", len(ins.Columns))
+	}
+	if ins.Columns[0] != "id" {
+		t.Errorf("column 0: expected 'id', got %q", ins.Columns[0])
+	}
+	if ins.Columns[1] != "name" {
+		t.Errorf("column 1: expected 'name', got %q", ins.Columns[1])
+	}
+	if len(ins.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(ins.Rows))
+	}
+	if len(ins.Rows[0]) != 2 {
+		t.Fatalf("expected 2 values, got %d", len(ins.Rows[0]))
+	}
+}
+
+func TestParseInsertWithPartialColumns(t *testing.T) {
+	stmt := parse(t, "INSERT INTO users (name) VALUES ('alice')")
+	ins := stmt.(*ast.InsertStmt)
+	if len(ins.Columns) != 1 {
+		t.Fatalf("expected 1 column, got %d", len(ins.Columns))
+	}
+	if ins.Columns[0] != "name" {
+		t.Errorf("column 0: expected 'name', got %q", ins.Columns[0])
+	}
+	if len(ins.Rows[0]) != 1 {
+		t.Fatalf("expected 1 value, got %d", len(ins.Rows[0]))
+	}
+}
+
+func TestParseInsertWithoutColumns(t *testing.T) {
+	stmt := parse(t, "INSERT INTO users VALUES (1, 'alice')")
+	ins := stmt.(*ast.InsertStmt)
+	if ins.Columns != nil {
+		t.Errorf("expected nil columns, got %v", ins.Columns)
+	}
+}
+
 func TestParseError(t *testing.T) {
 	inputs := []string{
 		"CREATE",

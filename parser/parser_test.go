@@ -1623,6 +1623,51 @@ func TestParseCaseNoElse(t *testing.T) {
 	}
 }
 
+func TestParseCoalesce(t *testing.T) {
+	stmt := parse(t, "SELECT COALESCE(a, b, c) FROM t")
+	sel := stmt.(*ast.SelectStmt)
+	if len(sel.Columns) != 1 {
+		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
+	}
+	call, ok := sel.Columns[0].(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr, got %T", sel.Columns[0])
+	}
+	if call.Name != "COALESCE" {
+		t.Errorf("expected function name COALESCE, got %q", call.Name)
+	}
+	if len(call.Args) != 3 {
+		t.Fatalf("expected 3 args, got %d", len(call.Args))
+	}
+	for i, name := range []string{"a", "b", "c"} {
+		ident, ok := call.Args[i].(*ast.IdentExpr)
+		if !ok {
+			t.Fatalf("arg %d: expected IdentExpr, got %T", i, call.Args[i])
+		}
+		if ident.Name != name {
+			t.Errorf("arg %d: expected %q, got %q", i, name, ident.Name)
+		}
+	}
+}
+
+func TestParseNullif(t *testing.T) {
+	stmt := parse(t, "SELECT NULLIF(a, b) FROM t")
+	sel := stmt.(*ast.SelectStmt)
+	if len(sel.Columns) != 1 {
+		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
+	}
+	call, ok := sel.Columns[0].(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr, got %T", sel.Columns[0])
+	}
+	if call.Name != "NULLIF" {
+		t.Errorf("expected function name NULLIF, got %q", call.Name)
+	}
+	if len(call.Args) != 2 {
+		t.Fatalf("expected 2 args, got %d", len(call.Args))
+	}
+}
+
 func TestParseError(t *testing.T) {
 	inputs := []string{
 		"CREATE",

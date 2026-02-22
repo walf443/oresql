@@ -807,7 +807,7 @@ func (p *Parser) parseSelectItem() (ast.Expr, error) {
 	var expr ast.Expr
 	var err error
 
-	if p.curToken.Type == token.COUNT || p.curToken.Type == token.SUM || p.curToken.Type == token.AVG || p.curToken.Type == token.MIN || p.curToken.Type == token.MAX {
+	if p.curToken.Type == token.COUNT || p.curToken.Type == token.SUM || p.curToken.Type == token.AVG || p.curToken.Type == token.MIN || p.curToken.Type == token.MAX || p.curToken.Type == token.COALESCE || p.curToken.Type == token.NULLIF {
 		expr, err = p.parseCallExpr()
 	} else {
 		expr, err = p.parseAdditive()
@@ -1212,7 +1212,7 @@ func (p *Parser) parsePrimary() (ast.Expr, error) {
 	case token.PLUS:
 		p.nextToken() // skip +
 		return p.parsePrimary()
-	case token.COUNT, token.SUM, token.AVG, token.MIN, token.MAX:
+	case token.COUNT, token.SUM, token.AVG, token.MIN, token.MAX, token.COALESCE, token.NULLIF:
 		return p.parseCallExpr()
 	case token.CASE:
 		return p.parseCaseExpr()

@@ -91,6 +91,8 @@ const (
 	THEN     // THEN keyword
 	ELSE     // ELSE keyword
 	END      // END keyword
+	COALESCE // COALESCE function
+	NULLIF   // NULLIF function
 )
 
 var tokenNames = map[TokenType]string{
@@ -173,6 +175,8 @@ var tokenNames = map[TokenType]string{
 	THEN:         "THEN",
 	ELSE:         "ELSE",
 	END:          "END",
+	COALESCE:     "COALESCE",
+	NULLIF:       "NULLIF",
 }
 
 func (t TokenType) String() string {
@@ -245,6 +249,8 @@ var keywords = map[string]TokenType{
 	"THEN":     THEN,
 	"ELSE":     ELSE,
 	"END":      END,
+	"COALESCE": COALESCE,
+	"NULLIF":   NULLIF,
 }
 
 // LookupIdent returns the keyword TokenType if the identifier is a keyword,

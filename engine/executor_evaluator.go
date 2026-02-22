@@ -75,6 +75,9 @@ func newGroupEvaluator(info *TableInfo, groupRows []Row) *groupEvaluator {
 func (ge *groupEvaluator) Eval(expr ast.Expr, row Row) (Value, error) {
 	// Intercept CallExpr for aggregate evaluation
 	if call, ok := expr.(*ast.CallExpr); ok {
+		if isScalarFunc(call.Name) {
+			return evalExprGeneric(expr, row, ge)
+		}
 		val, _, err := evalAggregate(call, ge.groupRows, ge.info)
 		return val, err
 	}
@@ -366,9 +369,50 @@ func evalExprGeneric(expr ast.Expr, row Row, eval ExprEvaluator) (Value, error) 
 		}
 		return nil, nil
 	case *ast.CallExpr:
-		// Default: not in group context, return error
-		return nil, fmt.Errorf("aggregate function %s not allowed in this context", e.Name)
+		return evalScalarFuncGeneric(e, row, eval)
 	default:
 		return nil, fmt.Errorf("cannot evaluate expression: %T", expr)
+	}
+}
+
+// evalScalarFuncGeneric evaluates a scalar function call using the generic evaluator.
+func evalScalarFuncGeneric(call *ast.CallExpr, row Row, eval ExprEvaluator) (Value, error) {
+	switch call.Name {
+	case "COALESCE":
+		for _, arg := range call.Args {
+			val, err := eval.Eval(arg, row)
+			if err != nil {
+				return nil, err
+			}
+			if val != nil {
+				return val, nil
+			}
+		}
+		return nil, nil
+	case "NULLIF":
+		if len(call.Args) != 2 {
+			return nil, fmt.Errorf("NULLIF requires exactly 2 arguments, got %d", len(call.Args))
+		}
+		val1, err := eval.Eval(call.Args[0], row)
+		if err != nil {
+			return nil, err
+		}
+		val2, err := eval.Eval(call.Args[1], row)
+		if err != nil {
+			return nil, err
+		}
+		if val1 == nil || val2 == nil {
+			return val1, nil
+		}
+		eq, err := evalComparison(val1, "=", val2)
+		if err != nil {
+			return val1, nil
+		}
+		if eq {
+			return nil, nil
+		}
+		return val1, nil
+	default:
+		return nil, fmt.Errorf("aggregate function %s not allowed in this context", call.Name)
 	}
 }

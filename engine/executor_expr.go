@@ -58,8 +58,52 @@ func evalLiteral(expr ast.Expr) (Value, error) {
 			return nil, err
 		}
 		return evalArithmetic(left, e.Op, right)
+	case *ast.CallExpr:
+		return evalScalarFuncLiteral(e)
 	default:
 		return nil, fmt.Errorf("expected literal value, got %T", expr)
+	}
+}
+
+// evalScalarFuncLiteral evaluates a scalar function in a literal-only context (no table).
+func evalScalarFuncLiteral(call *ast.CallExpr) (Value, error) {
+	switch call.Name {
+	case "COALESCE":
+		for _, arg := range call.Args {
+			val, err := evalLiteral(arg)
+			if err != nil {
+				return nil, err
+			}
+			if val != nil {
+				return val, nil
+			}
+		}
+		return nil, nil
+	case "NULLIF":
+		if len(call.Args) != 2 {
+			return nil, fmt.Errorf("NULLIF requires exactly 2 arguments, got %d", len(call.Args))
+		}
+		val1, err := evalLiteral(call.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		val2, err := evalLiteral(call.Args[1])
+		if err != nil {
+			return nil, err
+		}
+		if val1 == nil || val2 == nil {
+			return val1, nil
+		}
+		eq, err := evalComparison(val1, "=", val2)
+		if err != nil {
+			return val1, nil
+		}
+		if eq {
+			return nil, nil
+		}
+		return val1, nil
+	default:
+		return nil, fmt.Errorf("function %s not supported in literal context", call.Name)
 	}
 }
 
@@ -264,8 +308,52 @@ func evalExpr(expr ast.Expr, row Row, info *TableInfo) (Value, error) {
 			return evalExpr(e.Else, row, info)
 		}
 		return nil, nil
+	case *ast.CallExpr:
+		return evalScalarFunc(e, row, info)
 	default:
 		return nil, fmt.Errorf("cannot evaluate expression: %T", expr)
+	}
+}
+
+// evalScalarFunc evaluates a scalar function call against a single row.
+func evalScalarFunc(call *ast.CallExpr, row Row, info *TableInfo) (Value, error) {
+	switch call.Name {
+	case "COALESCE":
+		for _, arg := range call.Args {
+			val, err := evalExpr(arg, row, info)
+			if err != nil {
+				return nil, err
+			}
+			if val != nil {
+				return val, nil
+			}
+		}
+		return nil, nil
+	case "NULLIF":
+		if len(call.Args) != 2 {
+			return nil, fmt.Errorf("NULLIF requires exactly 2 arguments, got %d", len(call.Args))
+		}
+		val1, err := evalExpr(call.Args[0], row, info)
+		if err != nil {
+			return nil, err
+		}
+		val2, err := evalExpr(call.Args[1], row, info)
+		if err != nil {
+			return nil, err
+		}
+		if val1 == nil || val2 == nil {
+			return val1, nil
+		}
+		eq, err := evalComparison(val1, "=", val2)
+		if err != nil {
+			return val1, nil
+		}
+		if eq {
+			return nil, nil
+		}
+		return val1, nil
+	default:
+		return nil, fmt.Errorf("aggregate function %s not allowed in this context", call.Name)
 	}
 }
 

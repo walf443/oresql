@@ -78,7 +78,7 @@
 
 - [ ] 文字列関数（LENGTH, UPPER, LOWER, SUBSTRING, TRIM, CONCAT など）
 - [ ] 数値関数（ABS, ROUND, MOD など）
-- [ ] COALESCE / NULLIF
+- [x] COALESCE / NULLIF
 - [ ] CAST（型変換）
 
 ## トランザクション

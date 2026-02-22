@@ -491,15 +491,26 @@ func formatCallExpr(call *ast.CallExpr) string {
 	return call.Name + "(" + strings.Join(args, ", ") + ")"
 }
 
-// hasAggregate returns true if any column expression is a function call.
+// isScalarFunc returns true if the function name is a scalar (non-aggregate) function.
+func isScalarFunc(name string) bool {
+	switch name {
+	case "COALESCE", "NULLIF":
+		return true
+	}
+	return false
+}
+
+// hasAggregate returns true if any column expression is an aggregate function call.
 func hasAggregate(columns []ast.Expr) bool {
 	for _, col := range columns {
 		inner := col
 		if a, ok := col.(*ast.AliasExpr); ok {
 			inner = a.Expr
 		}
-		if _, ok := inner.(*ast.CallExpr); ok {
-			return true
+		if call, ok := inner.(*ast.CallExpr); ok {
+			if !isScalarFunc(call.Name) {
+				return true
+			}
 		}
 	}
 	return false

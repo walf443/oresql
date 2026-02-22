@@ -246,3 +246,143 @@ func TestCaseWithNull(t *testing.T) {
 		t.Errorf("row 1: expected 'positive', got %v", result.Rows[1][1])
 	}
 }
+
+func TestCoalesceFirstNonNull(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, a INT, b INT, c INT)")
+	run(t, exec, "INSERT INTO t VALUES (1, NULL, 20, 30)")
+	run(t, exec, "INSERT INTO t VALUES (2, 10, NULL, 30)")
+
+	result := run(t, exec, "SELECT id, COALESCE(a, b, c) FROM t ORDER BY id")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][1] != int64(20) {
+		t.Errorf("row 0: expected 20, got %v", result.Rows[0][1])
+	}
+	if result.Rows[1][1] != int64(10) {
+		t.Errorf("row 1: expected 10, got %v", result.Rows[1][1])
+	}
+}
+
+func TestCoalesceAllNull(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, a INT, b INT)")
+	run(t, exec, "INSERT INTO t VALUES (1, NULL, NULL)")
+
+	result := run(t, exec, "SELECT COALESCE(a, b) FROM t")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != nil {
+		t.Errorf("expected NULL, got %v", result.Rows[0][0])
+	}
+}
+
+func TestCoalesceSingleArg(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, a INT)")
+	run(t, exec, "INSERT INTO t VALUES (1, 42)")
+	run(t, exec, "INSERT INTO t VALUES (2, NULL)")
+
+	result := run(t, exec, "SELECT id, COALESCE(a) FROM t ORDER BY id")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][1] != int64(42) {
+		t.Errorf("row 0: expected 42, got %v", result.Rows[0][1])
+	}
+	if result.Rows[1][1] != nil {
+		t.Errorf("row 1: expected NULL, got %v", result.Rows[1][1])
+	}
+}
+
+func TestCoalesceInWhere(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, val INT)")
+	run(t, exec, "INSERT INTO t VALUES (1, NULL)")
+	run(t, exec, "INSERT INTO t VALUES (2, 5)")
+	run(t, exec, "INSERT INTO t VALUES (3, NULL)")
+
+	result := run(t, exec, "SELECT id FROM t WHERE COALESCE(val, 0) > 0 ORDER BY id")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(2) {
+		t.Errorf("expected id=2, got %v", result.Rows[0][0])
+	}
+}
+
+func TestCoalesceWithoutFrom(t *testing.T) {
+	exec := NewExecutor()
+
+	result := run(t, exec, "SELECT COALESCE(NULL, NULL, 'hello')")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != "hello" {
+		t.Errorf("expected 'hello', got %v", result.Rows[0][0])
+	}
+}
+
+func TestNullifEqual(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, val INT)")
+	run(t, exec, "INSERT INTO t VALUES (1, 1)")
+
+	result := run(t, exec, "SELECT NULLIF(val, 1) FROM t")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != nil {
+		t.Errorf("expected NULL, got %v", result.Rows[0][0])
+	}
+}
+
+func TestNullifNotEqual(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, val INT)")
+	run(t, exec, "INSERT INTO t VALUES (1, 5)")
+
+	result := run(t, exec, "SELECT NULLIF(val, 1) FROM t")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(5) {
+		t.Errorf("expected 5, got %v", result.Rows[0][0])
+	}
+}
+
+func TestNullifWithNull(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, val INT)")
+	run(t, exec, "INSERT INTO t VALUES (1, NULL)")
+
+	result := run(t, exec, "SELECT NULLIF(val, 1) FROM t")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != nil {
+		t.Errorf("expected NULL (first arg is NULL), got %v", result.Rows[0][0])
+	}
+}
+
+func TestNullifWithoutFrom(t *testing.T) {
+	exec := NewExecutor()
+
+	result := run(t, exec, "SELECT NULLIF(1, 1)")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != nil {
+		t.Errorf("expected NULL, got %v", result.Rows[0][0])
+	}
+
+	result = run(t, exec, "SELECT NULLIF(1, 2)")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(1) {
+		t.Errorf("expected 1, got %v", result.Rows[0][0])
+	}
+}

@@ -500,8 +500,25 @@ func sortTableScores(scores []tableScore) {
 	}
 }
 
-// executeJoinWithGraph executes a multi-table JOIN using the join graph.
-func (e *Executor) executeJoinWithGraph(stmt *ast.SelectStmt, graph *JoinGraph, order []string) (*Result, error) {
+// buildJoinContextFromGraph creates a JoinContext from the graph's table order.
+func buildJoinContextFromGraph(graph *JoinGraph) *JoinContext {
+	jcEntries := make([]struct {
+		info  *TableInfo
+		alias string
+	}, len(graph.TableOrder))
+	for i, tName := range graph.TableOrder {
+		node := graph.Nodes[tName]
+		jcEntries[i] = struct {
+			info  *TableInfo
+			alias string
+		}{info: node.Info, alias: node.Alias}
+	}
+	return newJoinContext(jcEntries)
+}
+
+// executeJoinRows performs the join operation and returns the joined rows and JoinContext.
+// This is the core join logic without post-processing (ORDER BY, projection, etc.).
+func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order []string) ([]Row, *JoinContext, error) {
 	// Compute column offsets for the fixed-slot approach.
 	// Slots are always in the original TableOrder, regardless of join execution order.
 	totalCols := 0
@@ -526,12 +543,12 @@ func (e *Executor) executeJoinWithGraph(stmt *ast.SelectStmt, graph *JoinGraph, 
 		if keys, ok := e.tryIndexScan(stripped, drivingNode.Info); ok {
 			drivingRows, err = e.storage.GetByKeys(drivingNode.Info.Name, keys)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 		} else {
 			drivingRows, err = e.storage.Scan(drivingNode.Info.Name)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 		}
 		// Filter by WHERE
@@ -539,7 +556,7 @@ func (e *Executor) executeJoinWithGraph(stmt *ast.SelectStmt, graph *JoinGraph, 
 		for _, row := range drivingRows {
 			match, mErr := evalWhere(stripped, row, drivingNode.Info)
 			if mErr != nil {
-				return nil, mErr
+				return nil, nil, mErr
 			}
 			if match {
 				filtered = append(filtered, row)
@@ -549,7 +566,7 @@ func (e *Executor) executeJoinWithGraph(stmt *ast.SelectStmt, graph *JoinGraph, 
 	} else {
 		drivingRows, err = e.storage.Scan(drivingNode.Info.Name)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
@@ -615,26 +632,14 @@ func (e *Executor) executeJoinWithGraph(stmt *ast.SelectStmt, graph *JoinGraph, 
 		}
 
 		// Build JoinContext for ON/WHERE evaluation on the merged row
-		// This includes all tables joined so far + the next table
-		jcEntries := make([]struct {
-			info  *TableInfo
-			alias string
-		}, len(graph.TableOrder))
-		for i, tName := range graph.TableOrder {
-			node := graph.Nodes[tName]
-			jcEntries[i] = struct {
-				info  *TableInfo
-				alias string
-			}{info: node.Info, alias: node.Alias}
-		}
-		jc := newJoinContext(jcEntries)
+		jc := buildJoinContextFromGraph(graph)
 
 		// Prepare pre-filtered inner rows for non-index path
 		var preFilteredInner []Row
 		if nextIdx == nil {
 			preFilteredInner, err = e.storage.Scan(nextNode.Info.Name)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			// Apply LocalWhere pushdown on inner table
 			if len(nextNode.LocalWhere) > 0 {
@@ -644,7 +649,7 @@ func (e *Executor) executeJoinWithGraph(stmt *ast.SelectStmt, graph *JoinGraph, 
 				for _, row := range preFilteredInner {
 					match, mErr := evalWhere(stripped, row, nextNode.Info)
 					if mErr != nil {
-						return nil, mErr
+						return nil, nil, mErr
 					}
 					if match {
 						filtered = append(filtered, row)
@@ -678,7 +683,7 @@ func (e *Executor) executeJoinWithGraph(stmt *ast.SelectStmt, graph *JoinGraph, 
 				}
 				innerCandidates, err = e.storage.GetByKeys(nextNode.Info.Name, keys)
 				if err != nil {
-					return nil, err
+					return nil, nil, err
 				}
 				// Apply inner WHERE
 				if innerWhereStripped != nil {
@@ -686,7 +691,7 @@ func (e *Executor) executeJoinWithGraph(stmt *ast.SelectStmt, graph *JoinGraph, 
 					for _, row := range innerCandidates {
 						match, mErr := evalWhere(innerWhereStripped, row, nextNode.Info)
 						if mErr != nil {
-							return nil, mErr
+							return nil, nil, mErr
 						}
 						if match {
 							filtered = append(filtered, row)
@@ -712,7 +717,7 @@ func (e *Executor) executeJoinWithGraph(stmt *ast.SelectStmt, graph *JoinGraph, 
 						if edge.ResidualOn != nil {
 							match, mErr := evalWhereJoin(edge.ResidualOn, mergedRow, jc)
 							if mErr != nil {
-								return nil, mErr
+								return nil, nil, mErr
 							}
 							if !match {
 								continue
@@ -722,7 +727,7 @@ func (e *Executor) executeJoinWithGraph(stmt *ast.SelectStmt, graph *JoinGraph, 
 						// Non-index: evaluate full ON condition
 						match, mErr := evalWhereJoin(edge.OnExpr, mergedRow, jc)
 						if mErr != nil {
-							return nil, mErr
+							return nil, nil, mErr
 						}
 						if !match {
 							continue
@@ -740,25 +745,13 @@ func (e *Executor) executeJoinWithGraph(stmt *ast.SelectStmt, graph *JoinGraph, 
 
 	// Step 3: Apply CrossWhere conditions
 	if len(graph.CrossWhere) > 0 {
-		jcEntries := make([]struct {
-			info  *TableInfo
-			alias string
-		}, len(graph.TableOrder))
-		for i, tName := range graph.TableOrder {
-			node := graph.Nodes[tName]
-			jcEntries[i] = struct {
-				info  *TableInfo
-				alias string
-			}{info: node.Info, alias: node.Alias}
-		}
-		jc := newJoinContext(jcEntries)
-
+		jc := buildJoinContextFromGraph(graph)
 		crossFilter := combineExprsAND(graph.CrossWhere)
 		var filtered []Row
 		for _, row := range currentRows {
 			match, mErr := evalWhereJoin(crossFilter, row, jc)
 			if mErr != nil {
-				return nil, mErr
+				return nil, nil, mErr
 			}
 			if match {
 				filtered = append(filtered, row)
@@ -767,19 +760,21 @@ func (e *Executor) executeJoinWithGraph(stmt *ast.SelectStmt, graph *JoinGraph, 
 		currentRows = filtered
 	}
 
-	// Step 4: Post-join processing (ORDER BY, LIMIT, projection, DISTINCT)
-	jcEntries := make([]struct {
-		info  *TableInfo
-		alias string
-	}, len(graph.TableOrder))
-	for i, tName := range graph.TableOrder {
-		node := graph.Nodes[tName]
-		jcEntries[i] = struct {
-			info  *TableInfo
-			alias string
-		}{info: node.Info, alias: node.Alias}
-	}
-	jc := newJoinContext(jcEntries)
+	jc := buildJoinContextFromGraph(graph)
+	return currentRows, jc, nil
+}
 
-	return e.postJoinProcess(stmt, currentRows, jc)
+// scanSourceJoin handles the JOIN scan path: builds graph, optimizes order, executes join rows.
+// Returns joined rows and a joinEvaluator for the pipeline.
+func (e *Executor) scanSourceJoin(stmt *ast.SelectStmt) ([]Row, ExprEvaluator, error) {
+	graph, err := e.buildJoinGraph(stmt)
+	if err != nil {
+		return nil, nil, err
+	}
+	order := e.OptimizeJoinOrder(graph)
+	rows, jc, err := e.executeJoinRows(stmt, graph, order)
+	if err != nil {
+		return nil, nil, err
+	}
+	return rows, newJoinEvaluator(jc), nil
 }

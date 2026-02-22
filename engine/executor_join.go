@@ -7,16 +7,6 @@ import (
 	"github.com/walf443/oresql/ast"
 )
 
-// executeJoinSelect handles SELECT with JOIN clauses using the graph-based optimizer.
-func (e *Executor) executeJoinSelect(stmt *ast.SelectStmt) (*Result, error) {
-	graph, err := e.buildJoinGraph(stmt)
-	if err != nil {
-		return nil, err
-	}
-	order := e.OptimizeJoinOrder(graph)
-	return e.executeJoinWithGraph(stmt, graph, order)
-}
-
 // tableRange maps a table to its column offset within a merged row.
 type tableRange struct {
 	info     *TableInfo

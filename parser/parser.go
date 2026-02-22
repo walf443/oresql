@@ -570,8 +570,15 @@ func (p *Parser) parseSelect() (*ast.SelectStmt, error) {
 		tableAlias = p.parseTableAlias()
 
 		// Parse JOIN clauses
-		for p.curToken.Type == token.JOIN || p.curToken.Type == token.INNER {
-			if p.curToken.Type == token.INNER {
+		for p.curToken.Type == token.JOIN || p.curToken.Type == token.INNER || p.curToken.Type == token.LEFT {
+			joinType := ast.JoinInner
+			if p.curToken.Type == token.LEFT {
+				joinType = ast.JoinLeft
+				p.nextToken() // skip LEFT
+				if p.curToken.Type == token.OUTER {
+					p.nextToken() // skip OUTER
+				}
+			} else if p.curToken.Type == token.INNER {
 				p.nextToken() // skip INNER
 			}
 			if err := p.expectToken(token.JOIN); err != nil {
@@ -593,6 +600,7 @@ func (p *Parser) parseSelect() (*ast.SelectStmt, error) {
 				return nil, err
 			}
 			joins = append(joins, ast.JoinClause{
+				JoinType:   joinType,
 				TableName:  joinTable,
 				TableAlias: joinAlias,
 				On:         onExpr,

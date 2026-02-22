@@ -1457,6 +1457,62 @@ func TestParseDropIndex(t *testing.T) {
 	}
 }
 
+func TestParseLeftJoin(t *testing.T) {
+	stmt := parse(t, "SELECT * FROM users LEFT JOIN orders ON users.id = orders.user_id")
+	sel, ok := stmt.(*ast.SelectStmt)
+	if !ok {
+		t.Fatalf("expected SelectStmt, got %T", stmt)
+	}
+	if len(sel.Joins) != 1 {
+		t.Fatalf("expected 1 join, got %d", len(sel.Joins))
+	}
+	if sel.Joins[0].JoinType != ast.JoinLeft {
+		t.Errorf("expected JoinType=%q, got %q", ast.JoinLeft, sel.Joins[0].JoinType)
+	}
+	if sel.Joins[0].TableName != "orders" {
+		t.Errorf("expected table name %q, got %q", "orders", sel.Joins[0].TableName)
+	}
+}
+
+func TestParseLeftOuterJoin(t *testing.T) {
+	stmt := parse(t, "SELECT * FROM users LEFT OUTER JOIN orders ON users.id = orders.user_id")
+	sel, ok := stmt.(*ast.SelectStmt)
+	if !ok {
+		t.Fatalf("expected SelectStmt, got %T", stmt)
+	}
+	if len(sel.Joins) != 1 {
+		t.Fatalf("expected 1 join, got %d", len(sel.Joins))
+	}
+	if sel.Joins[0].JoinType != ast.JoinLeft {
+		t.Errorf("expected JoinType=%q, got %q", ast.JoinLeft, sel.Joins[0].JoinType)
+	}
+}
+
+func TestParseInnerJoinType(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{"bare JOIN", "SELECT * FROM t1 JOIN t2 ON t1.id = t2.t1_id"},
+		{"INNER JOIN", "SELECT * FROM t1 INNER JOIN t2 ON t1.id = t2.t1_id"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stmt := parse(t, tt.input)
+			sel, ok := stmt.(*ast.SelectStmt)
+			if !ok {
+				t.Fatalf("expected SelectStmt, got %T", stmt)
+			}
+			if len(sel.Joins) != 1 {
+				t.Fatalf("expected 1 join, got %d", len(sel.Joins))
+			}
+			if sel.Joins[0].JoinType != ast.JoinInner {
+				t.Errorf("expected JoinType=%q, got %q", ast.JoinInner, sel.Joins[0].JoinType)
+			}
+		})
+	}
+}
+
 func TestParseError(t *testing.T) {
 	inputs := []string{
 		"CREATE",

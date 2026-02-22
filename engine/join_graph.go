@@ -25,6 +25,7 @@ func (n *JoinGraphNode) effectiveName() string {
 // JoinGraphEdge represents an ON relationship between two tables.
 type JoinGraphEdge struct {
 	TableA, TableB string         // effective names (alias preferred)
+	JoinType       string         // ast.JoinInner or ast.JoinLeft
 	OnExpr         ast.Expr       // original ON expression
 	EquiJoinPairs  []equiJoinPair // equi-join pairs extracted from ON
 	ResidualOn     ast.Expr       // ON conditions not covered by equi-join pairs
@@ -258,6 +259,7 @@ func (e *Executor) buildJoinGraph(stmt *ast.SelectStmt) (*JoinGraph, error) {
 		edge := &JoinGraphEdge{
 			TableA:        tableAName,
 			TableB:        tableBName,
+			JoinType:      join.JoinType,
 			OnExpr:        join.On,
 			EquiJoinPairs: pairs,
 			ResidualOn:    residual,
@@ -299,8 +301,22 @@ func (e *Executor) buildJoinGraph(stmt *ast.SelectStmt) (*JoinGraph, error) {
 	// 4. Classify WHERE conditions
 	if stmt.Where != nil {
 		localWhereMap, crossWhere := classifyWhereConditionsN(stmt.Where, graph)
+
+		// For LEFT JOIN, WHERE conditions on the inner (right) table must be
+		// applied after the join (as CrossWhere) to see NULL-padded rows.
+		leftJoinInnerTables := make(map[string]bool)
+		for _, edge := range graph.Edges {
+			if edge.JoinType == ast.JoinLeft {
+				leftJoinInnerTables[edge.TableB] = true
+			}
+		}
+
 		for effName, conds := range localWhereMap {
-			graph.Nodes[effName].LocalWhere = conds
+			if leftJoinInnerTables[effName] {
+				crossWhere = append(crossWhere, conds...)
+			} else {
+				graph.Nodes[effName].LocalWhere = conds
+			}
 		}
 		graph.CrossWhere = crossWhere
 	}
@@ -389,8 +405,21 @@ func (e *Executor) OptimizeJoinOrder(graph *JoinGraph) []string {
 		originalOrder[name] = i
 	}
 
+	// Collect tables that are the inner (right) side of a LEFT JOIN.
+	// These cannot be used as driving tables.
+	leftJoinInner := make(map[string]bool)
+	for _, edge := range graph.Edges {
+		if edge.JoinType == ast.JoinLeft {
+			leftJoinInner[edge.TableB] = true
+		}
+	}
+
 	var candidates []tableScore
 	for effName, node := range graph.Nodes {
+		// LEFT JOIN inner tables cannot be driving table
+		if leftJoinInner[effName] {
+			continue
+		}
 		score := 0
 		if len(node.LocalWhere) > 0 {
 			score++
@@ -408,6 +437,11 @@ func (e *Executor) OptimizeJoinOrder(graph *JoinGraph) []string {
 		})
 	}
 
+	// If all tables are LEFT JOIN inner tables, fall back to original order
+	if len(candidates) == 0 {
+		return graph.TableOrder
+	}
+
 	// Sort: highest score first, then by original order
 	sortTableScores(candidates)
 	drivingTable := candidates[0].effName
@@ -421,6 +455,26 @@ func (e *Executor) OptimizeJoinOrder(graph *JoinGraph) []string {
 		for effName, node := range graph.Nodes {
 			if joined[effName] {
 				continue
+			}
+
+			// LEFT JOIN constraint: inner table can only be added when
+			// its outer table has been joined
+			if leftJoinInner[effName] {
+				canAdd := false
+				for _, neighbor := range graph.Adjacency[effName] {
+					if !joined[neighbor] {
+						continue
+					}
+					key := edgeKey(effName, neighbor)
+					edge := graph.Edges[key]
+					if edge != nil && edge.JoinType == ast.JoinLeft && edge.TableB == effName {
+						canAdd = true
+						break
+					}
+				}
+				if !canAdd {
+					continue
+				}
 			}
 
 			score := 0
@@ -667,42 +721,57 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 		}
 
 		// Nested loop join
+		isLeftJoin := edge != nil && edge.JoinType == ast.JoinLeft
 		var joined []Row
 		for _, outerRow := range currentRows {
 			var innerCandidates []Row
+			skipInner := false
 
 			if nextIdx != nil && partnerEquiColIdx >= 0 {
 				// Index nested loop
 				lookupVal := outerRow[partnerEquiColIdx]
 				if lookupVal == nil {
-					continue // NULL = NULL is false
-				}
-				keys := nextIdx.Lookup([]Value{lookupVal})
-				if len(keys) == 0 {
-					continue
-				}
-				innerCandidates, err = e.storage.GetByKeys(nextNode.Info.Name, keys)
-				if err != nil {
-					return nil, nil, err
-				}
-				// Apply inner WHERE
-				if innerWhereStripped != nil {
-					var filtered []Row
-					for _, row := range innerCandidates {
-						match, mErr := evalWhere(innerWhereStripped, row, nextNode.Info)
-						if mErr != nil {
-							return nil, nil, mErr
+					skipInner = true
+				} else {
+					keys := nextIdx.Lookup([]Value{lookupVal})
+					if len(keys) == 0 {
+						skipInner = true
+					} else {
+						innerCandidates, err = e.storage.GetByKeys(nextNode.Info.Name, keys)
+						if err != nil {
+							return nil, nil, err
 						}
-						if match {
-							filtered = append(filtered, row)
+						// Apply inner WHERE
+						if innerWhereStripped != nil {
+							var filtered []Row
+							for _, row := range innerCandidates {
+								match, mErr := evalWhere(innerWhereStripped, row, nextNode.Info)
+								if mErr != nil {
+									return nil, nil, mErr
+								}
+								if match {
+									filtered = append(filtered, row)
+								}
+							}
+							innerCandidates = filtered
 						}
 					}
-					innerCandidates = filtered
 				}
 			} else {
 				innerCandidates = preFilteredInner
 			}
 
+			if skipInner {
+				if isLeftJoin {
+					nullPadded := make(Row, totalCols)
+					copy(nullPadded, outerRow)
+					// inner slots remain nil (NULL)
+					joined = append(joined, nullPadded)
+				}
+				continue
+			}
+
+			matched := false
 			for _, innerRow := range innerCandidates {
 				// Place inner row into the correct slot
 				mergedRow := make(Row, totalCols)
@@ -735,7 +804,15 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 					}
 				}
 
+				matched = true
 				joined = append(joined, mergedRow)
+			}
+
+			if !matched && isLeftJoin {
+				nullPadded := make(Row, totalCols)
+				copy(nullPadded, outerRow)
+				// inner slots remain nil (NULL)
+				joined = append(joined, nullPadded)
 			}
 		}
 

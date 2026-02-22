@@ -53,8 +53,15 @@ type OrderByClause struct {
 	Desc bool // true for DESC, false for ASC (default)
 }
 
+// Join type constants.
+const (
+	JoinInner = "INNER"
+	JoinLeft  = "LEFT"
+)
+
 // JoinClause represents a single JOIN in a SELECT statement.
 type JoinClause struct {
+	JoinType   string // JoinInner or JoinLeft
 	TableName  string
 	TableAlias string
 	On         Expr
@@ -66,7 +73,7 @@ type SelectStmt struct {
 	Columns    []Expr
 	TableName  string
 	TableAlias string          // optional alias for the FROM table
-	Joins      []JoinClause    // INNER JOIN clauses
+	Joins      []JoinClause    // JOIN clauses (INNER, LEFT)
 	Where      Expr            // nil if no WHERE clause
 	GroupBy    []Expr          // nil if no GROUP BY clause
 	Having     Expr            // nil if no HAVING clause

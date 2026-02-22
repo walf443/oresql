@@ -33,7 +33,8 @@
 ## JOIN
 
 - [x] INNER JOIN ... ON
-- [ ] LEFT JOIN / RIGHT JOIN
+- [x] LEFT JOIN
+- [ ] RIGHT JOIN
 - [ ] CROSS JOIN
 - [x] テーブル別名 (`FROM users u`)
 

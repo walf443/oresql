@@ -84,6 +84,8 @@ const (
 	UNIQUE   // UNIQUE keyword
 	JOIN     // JOIN keyword
 	INNER    // INNER keyword
+	LEFT     // LEFT keyword
+	OUTER    // OUTER keyword
 )
 
 var tokenNames = map[TokenType]string{
@@ -159,6 +161,8 @@ var tokenNames = map[TokenType]string{
 	UNIQUE:       "UNIQUE",
 	JOIN:         "JOIN",
 	INNER:        "INNER",
+	LEFT:         "LEFT",
+	OUTER:        "OUTER",
 }
 
 func (t TokenType) String() string {
@@ -224,6 +228,8 @@ var keywords = map[string]TokenType{
 	"UNIQUE":   UNIQUE,
 	"JOIN":     JOIN,
 	"INNER":    INNER,
+	"LEFT":     LEFT,
+	"OUTER":    OUTER,
 }
 
 // LookupIdent returns the keyword TokenType if the identifier is a keyword,

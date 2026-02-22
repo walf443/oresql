@@ -364,10 +364,38 @@ func (p *Parser) parseUpdate() (*ast.UpdateStmt, error) {
 		}
 	}
 
+	var orderBy []ast.OrderByClause
+	if p.curToken.Type == token.ORDER {
+		p.nextToken() // skip ORDER
+		if err := p.expectToken(token.BY); err != nil {
+			return nil, err
+		}
+		orderBy, err = p.parseOrderByList()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	var limit *int64
+	if p.curToken.Type == token.LIMIT {
+		p.nextToken() // skip LIMIT
+		if p.curToken.Type != token.INT_LIT {
+			return nil, fmt.Errorf("expected integer after LIMIT, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+		}
+		val, err := strconv.ParseInt(p.curToken.Literal, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid integer for LIMIT: %s", p.curToken.Literal)
+		}
+		limit = &val
+		p.nextToken()
+	}
+
 	return &ast.UpdateStmt{
 		TableName: tableName,
 		Sets:      sets,
 		Where:     where,
+		OrderBy:   orderBy,
+		Limit:     limit,
 	}, nil
 }
 
@@ -438,9 +466,37 @@ func (p *Parser) parseDelete() (*ast.DeleteStmt, error) {
 		}
 	}
 
+	var orderBy []ast.OrderByClause
+	if p.curToken.Type == token.ORDER {
+		p.nextToken() // skip ORDER
+		if err := p.expectToken(token.BY); err != nil {
+			return nil, err
+		}
+		orderBy, err = p.parseOrderByList()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	var limit *int64
+	if p.curToken.Type == token.LIMIT {
+		p.nextToken() // skip LIMIT
+		if p.curToken.Type != token.INT_LIT {
+			return nil, fmt.Errorf("expected integer after LIMIT, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+		}
+		val, err := strconv.ParseInt(p.curToken.Literal, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid integer for LIMIT: %s", p.curToken.Literal)
+		}
+		limit = &val
+		p.nextToken()
+	}
+
 	return &ast.DeleteStmt{
 		TableName: tableName,
 		Where:     where,
+		OrderBy:   orderBy,
+		Limit:     limit,
 	}, nil
 }
 

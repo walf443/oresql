@@ -21,7 +21,7 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 
 	// Phase 2: WHERE filter (JOIN path handles WHERE internally via scanSource)
 	if len(stmt.Joins) == 0 && stmt.TableAlias == "" {
-		rows, err = filterWhere(rows, stmt.Where, eval)
+		rows, err = filterWhere(rows, stmt.Where, eval, rowIdentity)
 		if err != nil {
 			return nil, err
 		}
@@ -47,7 +47,7 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 	}
 
 	// Phase 4: ORDER BY
-	rows, err = sortRows(rows, stmt.OrderBy, eval)
+	rows, err = sortRows(rows, stmt.OrderBy, eval, rowIdentity)
 	if err != nil {
 		return nil, err
 	}

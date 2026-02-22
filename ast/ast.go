@@ -166,20 +166,24 @@ type SetClause struct {
 	Value  Expr
 }
 
-// UpdateStmt represents UPDATE <table> SET <col> = <expr>, ... [WHERE <condition>].
+// UpdateStmt represents UPDATE <table> SET <col> = <expr>, ... [WHERE <condition>] [ORDER BY ...] [LIMIT <n>].
 type UpdateStmt struct {
 	TableName string
 	Sets      []SetClause
-	Where     Expr // nil if no WHERE clause
+	Where     Expr            // nil if no WHERE clause
+	OrderBy   []OrderByClause // nil if no ORDER BY clause
+	Limit     *int64          // nil if no LIMIT clause
 }
 
 func (s *UpdateStmt) NodeType() string { return "Update" }
 func (s *UpdateStmt) statementNode()   {}
 
-// DeleteStmt represents DELETE FROM <table> [WHERE <condition>].
+// DeleteStmt represents DELETE FROM <table> [WHERE <condition>] [ORDER BY ...] [LIMIT <n>].
 type DeleteStmt struct {
 	TableName string
-	Where     Expr // nil if no WHERE clause
+	Where     Expr            // nil if no WHERE clause
+	OrderBy   []OrderByClause // nil if no ORDER BY clause
+	Limit     *int64          // nil if no LIMIT clause
 }
 
 func (s *DeleteStmt) NodeType() string { return "Delete" }

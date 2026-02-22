@@ -602,6 +602,123 @@ func TestParseDeleteNoWhere(t *testing.T) {
 	}
 }
 
+func TestParseUpdateOrderByLimit(t *testing.T) {
+	stmt := parse(t, "UPDATE users SET name = 'bob' WHERE id > 1 ORDER BY id LIMIT 2")
+	upd, ok := stmt.(*ast.UpdateStmt)
+	if !ok {
+		t.Fatalf("expected UpdateStmt, got %T", stmt)
+	}
+	if upd.TableName != "users" {
+		t.Errorf("table name: expected %q, got %q", "users", upd.TableName)
+	}
+	if len(upd.Sets) != 1 {
+		t.Fatalf("expected 1 set clause, got %d", len(upd.Sets))
+	}
+	if upd.Where == nil {
+		t.Fatal("expected WHERE clause")
+	}
+	if len(upd.OrderBy) != 1 {
+		t.Fatalf("expected 1 order by clause, got %d", len(upd.OrderBy))
+	}
+	ident, ok := upd.OrderBy[0].Expr.(*ast.IdentExpr)
+	if !ok {
+		t.Fatalf("expected IdentExpr in ORDER BY, got %T", upd.OrderBy[0].Expr)
+	}
+	if ident.Name != "id" {
+		t.Errorf("order by column: expected 'id', got %q", ident.Name)
+	}
+	if upd.OrderBy[0].Desc {
+		t.Error("expected ASC, got DESC")
+	}
+	if upd.Limit == nil {
+		t.Fatal("expected LIMIT clause")
+	}
+	if *upd.Limit != 2 {
+		t.Errorf("limit: expected 2, got %d", *upd.Limit)
+	}
+}
+
+func TestParseUpdateOrderByOnly(t *testing.T) {
+	stmt := parse(t, "UPDATE users SET name = 'bob' ORDER BY id DESC")
+	upd := stmt.(*ast.UpdateStmt)
+	if upd.Where != nil {
+		t.Errorf("expected no WHERE, got %v", upd.Where)
+	}
+	if len(upd.OrderBy) != 1 {
+		t.Fatalf("expected 1 order by clause, got %d", len(upd.OrderBy))
+	}
+	if !upd.OrderBy[0].Desc {
+		t.Error("expected DESC")
+	}
+	if upd.Limit != nil {
+		t.Errorf("expected no LIMIT, got %v", *upd.Limit)
+	}
+}
+
+func TestParseUpdateLimitOnly(t *testing.T) {
+	stmt := parse(t, "UPDATE users SET name = 'bob' LIMIT 5")
+	upd := stmt.(*ast.UpdateStmt)
+	if upd.Where != nil {
+		t.Errorf("expected no WHERE, got %v", upd.Where)
+	}
+	if len(upd.OrderBy) != 0 {
+		t.Errorf("expected no ORDER BY, got %d clauses", len(upd.OrderBy))
+	}
+	if upd.Limit == nil {
+		t.Fatal("expected LIMIT clause")
+	}
+	if *upd.Limit != 5 {
+		t.Errorf("limit: expected 5, got %d", *upd.Limit)
+	}
+}
+
+func TestParseDeleteOrderByLimit(t *testing.T) {
+	stmt := parse(t, "DELETE FROM users WHERE id > 1 ORDER BY id LIMIT 2")
+	del, ok := stmt.(*ast.DeleteStmt)
+	if !ok {
+		t.Fatalf("expected DeleteStmt, got %T", stmt)
+	}
+	if del.TableName != "users" {
+		t.Errorf("table name: expected %q, got %q", "users", del.TableName)
+	}
+	if del.Where == nil {
+		t.Fatal("expected WHERE clause")
+	}
+	if len(del.OrderBy) != 1 {
+		t.Fatalf("expected 1 order by clause, got %d", len(del.OrderBy))
+	}
+	ident, ok := del.OrderBy[0].Expr.(*ast.IdentExpr)
+	if !ok {
+		t.Fatalf("expected IdentExpr in ORDER BY, got %T", del.OrderBy[0].Expr)
+	}
+	if ident.Name != "id" {
+		t.Errorf("order by column: expected 'id', got %q", ident.Name)
+	}
+	if del.Limit == nil {
+		t.Fatal("expected LIMIT clause")
+	}
+	if *del.Limit != 2 {
+		t.Errorf("limit: expected 2, got %d", *del.Limit)
+	}
+}
+
+func TestParseDeleteLimitOnly(t *testing.T) {
+	stmt := parse(t, "DELETE FROM users LIMIT 3")
+	del := stmt.(*ast.DeleteStmt)
+	if del.Where != nil {
+		t.Errorf("expected no WHERE, got %v", del.Where)
+	}
+	if len(del.OrderBy) != 0 {
+		t.Errorf("expected no ORDER BY, got %d clauses", len(del.OrderBy))
+	}
+	if del.Limit == nil {
+		t.Fatal("expected LIMIT clause")
+	}
+	if *del.Limit != 3 {
+		t.Errorf("limit: expected 3, got %d", *del.Limit)
+	}
+}
+
 func TestParseSelectOrderBySingleColumn(t *testing.T) {
 	stmt := parse(t, "SELECT * FROM users ORDER BY id")
 	sel := stmt.(*ast.SelectStmt)

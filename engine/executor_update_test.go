@@ -167,6 +167,77 @@ func TestUpdateWithIndexRange(t *testing.T) {
 	}
 }
 
+func TestUpdateOrderByLimit(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
+	run(t, exec, "INSERT INTO users VALUES (4, 'dave')")
+
+	// UPDATE with ORDER BY id ASC LIMIT 2 → updates only id=1 and id=2
+	result := run(t, exec, "UPDATE users SET name = 'updated' ORDER BY id LIMIT 2")
+	if result.Message != "2 rows updated" {
+		t.Errorf("expected '2 rows updated', got %q", result.Message)
+	}
+
+	result = run(t, exec, "SELECT id, name FROM users ORDER BY id")
+	if len(result.Rows) != 4 {
+		t.Fatalf("expected 4 rows, got %d", len(result.Rows))
+	}
+	expected := []string{"updated", "updated", "charlie", "dave"}
+	for i, row := range result.Rows {
+		if row[1] != expected[i] {
+			t.Errorf("row %d: expected name=%q, got %v", i, expected[i], row[1])
+		}
+	}
+}
+
+func TestUpdateOrderByDescLimit(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
+
+	// UPDATE with ORDER BY id DESC LIMIT 1 → updates only id=3
+	result := run(t, exec, "UPDATE users SET name = 'updated' ORDER BY id DESC LIMIT 1")
+	if result.Message != "1 row updated" {
+		t.Errorf("expected '1 row updated', got %q", result.Message)
+	}
+
+	result = run(t, exec, "SELECT id, name FROM users ORDER BY id")
+	expected := []string{"alice", "bob", "updated"}
+	for i, row := range result.Rows {
+		if row[1] != expected[i] {
+			t.Errorf("row %d: expected name=%q, got %v", i, expected[i], row[1])
+		}
+	}
+}
+
+func TestUpdateWhereOrderByLimit(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
+	run(t, exec, "INSERT INTO users VALUES (4, 'dave')")
+
+	// WHERE id > 1 → {2,3,4}, ORDER BY id DESC → {4,3,2}, LIMIT 2 → {4,3}
+	result := run(t, exec, "UPDATE users SET name = 'updated' WHERE id > 1 ORDER BY id DESC LIMIT 2")
+	if result.Message != "2 rows updated" {
+		t.Errorf("expected '2 rows updated', got %q", result.Message)
+	}
+
+	result = run(t, exec, "SELECT id, name FROM users ORDER BY id")
+	expected := []string{"alice", "bob", "updated", "updated"}
+	for i, row := range result.Rows {
+		if row[1] != expected[i] {
+			t.Errorf("row %d: expected name=%q, got %v", i, expected[i], row[1])
+		}
+	}
+}
+
 func TestUpdateNoWhereWithIndex(t *testing.T) {
 	exec := NewExecutor()
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT, active INT)")

@@ -11,6 +11,7 @@ func (e *Executor) executeDelete(stmt *ast.DeleteStmt) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
+	eval := newTableEvaluator(info)
 
 	var allRows []KeyRow
 	if keys, indexUsed := e.tryIndexScan(stmt.Where, info); indexUsed {
@@ -22,17 +23,20 @@ func (e *Executor) executeDelete(stmt *ast.DeleteStmt) (*Result, error) {
 		return nil, err
 	}
 
+	// Pipeline: WHERE → ORDER BY → LIMIT
+	allRows, err = filterWhere(allRows, stmt.Where, eval, rowOfKeyRow)
+	if err != nil {
+		return nil, err
+	}
+	allRows, err = sortRows(allRows, stmt.OrderBy, eval, rowOfKeyRow)
+	if err != nil {
+		return nil, err
+	}
+	allRows = applyLimit(allRows, stmt.Limit)
+
+	// Collect keys and delete
 	var keysToDelete []int64
 	for _, kr := range allRows {
-		if stmt.Where != nil {
-			match, err := evalWhere(stmt.Where, kr.Row, info)
-			if err != nil {
-				return nil, err
-			}
-			if !match {
-				continue
-			}
-		}
 		keysToDelete = append(keysToDelete, kr.Key)
 	}
 

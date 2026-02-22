@@ -7,15 +7,21 @@ import (
 	"github.com/walf443/oresql/ast"
 )
 
+// rowIdentity is a rowOf function for Row (identity mapping).
+func rowIdentity(r Row) Row { return r }
+
+// rowOfKeyRow is a rowOf function for KeyRow (extracts the Row field).
+func rowOfKeyRow(kr KeyRow) Row { return kr.Row }
+
 // filterWhere filters rows using the WHERE expression evaluated with the given evaluator.
 // Returns all rows if where is nil.
-func filterWhere(rows []Row, where ast.Expr, eval ExprEvaluator) ([]Row, error) {
+func filterWhere[T any](rows []T, where ast.Expr, eval ExprEvaluator, rowOf func(T) Row) ([]T, error) {
 	if where == nil {
 		return rows, nil
 	}
-	var filtered []Row
-	for _, row := range rows {
-		val, err := eval.Eval(where, row)
+	var filtered []T
+	for _, item := range rows {
+		val, err := eval.Eval(where, rowOf(item))
 		if err != nil {
 			return nil, err
 		}
@@ -24,7 +30,7 @@ func filterWhere(rows []Row, where ast.Expr, eval ExprEvaluator) ([]Row, error) 
 			return nil, fmt.Errorf("WHERE expression must evaluate to boolean, got %T", val)
 		}
 		if b {
-			filtered = append(filtered, row)
+			filtered = append(filtered, item)
 		}
 	}
 	return filtered, nil
@@ -32,7 +38,7 @@ func filterWhere(rows []Row, where ast.Expr, eval ExprEvaluator) ([]Row, error) 
 
 // sortRows sorts rows by ORDER BY clauses using the given evaluator.
 // Returns the original slice if orderBy is empty.
-func sortRows(rows []Row, orderBy []ast.OrderByClause, eval ExprEvaluator) ([]Row, error) {
+func sortRows[T any](rows []T, orderBy []ast.OrderByClause, eval ExprEvaluator, rowOf func(T) Row) ([]T, error) {
 	if len(orderBy) == 0 {
 		return rows, nil
 	}
@@ -42,12 +48,12 @@ func sortRows(rows []Row, orderBy []ast.OrderByClause, eval ExprEvaluator) ([]Ro
 			return false
 		}
 		for _, ob := range orderBy {
-			vi, err := eval.Eval(ob.Expr, rows[i])
+			vi, err := eval.Eval(ob.Expr, rowOf(rows[i]))
 			if err != nil {
 				sortErr = err
 				return false
 			}
-			vj, err := eval.Eval(ob.Expr, rows[j])
+			vj, err := eval.Eval(ob.Expr, rowOf(rows[j]))
 			if err != nil {
 				sortErr = err
 				return false
@@ -80,7 +86,7 @@ func sortRows(rows []Row, orderBy []ast.OrderByClause, eval ExprEvaluator) ([]Ro
 }
 
 // applyOffset skips the first N rows.
-func applyOffset(rows []Row, offset *int64) []Row {
+func applyOffset[T any](rows []T, offset *int64) []T {
 	if offset == nil {
 		return rows
 	}
@@ -92,7 +98,7 @@ func applyOffset(rows []Row, offset *int64) []Row {
 }
 
 // applyLimit keeps at most N rows.
-func applyLimit(rows []Row, limit *int64) []Row {
+func applyLimit[T any](rows []T, limit *int64) []T {
 	if limit == nil {
 		return rows
 	}

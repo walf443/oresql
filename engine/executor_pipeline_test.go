@@ -88,7 +88,7 @@ func TestFilterWhere(t *testing.T) {
 		Op:    "=",
 		Right: &ast.StringLitExpr{Value: "Alice"},
 	}
-	result, err := filterWhere(rows, where, eval)
+	result, err := filterWhere(rows, where, eval, rowIdentity)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestFilterWhere(t *testing.T) {
 	}
 
 	// Nil where returns all rows
-	result, err = filterWhere(rows, nil, eval)
+	result, err = filterWhere(rows, nil, eval, rowIdentity)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestSortRows(t *testing.T) {
 	orderBy := []ast.OrderByClause{
 		{Expr: &ast.IdentExpr{Name: "id"}, Desc: false},
 	}
-	result, err := sortRows(rows, orderBy, eval)
+	result, err := sortRows(rows, orderBy, eval, rowIdentity)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestSortRows(t *testing.T) {
 	orderBy = []ast.OrderByClause{
 		{Expr: &ast.IdentExpr{Name: "id"}, Desc: true},
 	}
-	result, err = sortRows(rows, orderBy, eval)
+	result, err = sortRows(rows, orderBy, eval, rowIdentity)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestSortRows(t *testing.T) {
 	}
 
 	// Empty orderBy returns unchanged
-	result, err = sortRows(rows, nil, eval)
+	result, err = sortRows(rows, nil, eval, rowIdentity)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -86,6 +86,11 @@ const (
 	INNER    // INNER keyword
 	LEFT     // LEFT keyword
 	OUTER    // OUTER keyword
+	CASE     // CASE keyword
+	WHEN     // WHEN keyword
+	THEN     // THEN keyword
+	ELSE     // ELSE keyword
+	END      // END keyword
 )
 
 var tokenNames = map[TokenType]string{
@@ -163,6 +168,11 @@ var tokenNames = map[TokenType]string{
 	INNER:        "INNER",
 	LEFT:         "LEFT",
 	OUTER:        "OUTER",
+	CASE:         "CASE",
+	WHEN:         "WHEN",
+	THEN:         "THEN",
+	ELSE:         "ELSE",
+	END:          "END",
 }
 
 func (t TokenType) String() string {
@@ -230,6 +240,11 @@ var keywords = map[string]TokenType{
 	"INNER":    INNER,
 	"LEFT":     LEFT,
 	"OUTER":    OUTER,
+	"CASE":     CASE,
+	"WHEN":     WHEN,
+	"THEN":     THEN,
+	"ELSE":     ELSE,
+	"END":      END,
 }
 
 // LookupIdent returns the keyword TokenType if the identifier is a keyword,

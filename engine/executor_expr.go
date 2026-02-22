@@ -223,6 +223,47 @@ func evalExpr(expr ast.Expr, row Row, info *TableInfo) (Value, error) {
 			return nil, fmt.Errorf("NOT requires boolean operand, got %T", val)
 		}
 		return !b, nil
+	case *ast.CaseExpr:
+		if e.Operand != nil {
+			// Simple CASE: compare operand with each WHEN value
+			operandVal, err := evalExpr(e.Operand, row, info)
+			if err != nil {
+				return nil, err
+			}
+			for _, w := range e.Whens {
+				whenVal, err := evalExpr(w.When, row, info)
+				if err != nil {
+					return nil, err
+				}
+				match, err := evalComparison(operandVal, "=", whenVal)
+				if err != nil {
+					return nil, err
+				}
+				if match {
+					return evalExpr(w.Then, row, info)
+				}
+			}
+		} else {
+			// Searched CASE: evaluate each WHEN condition as boolean
+			for _, w := range e.Whens {
+				whenVal, err := evalExpr(w.When, row, info)
+				if err != nil {
+					return nil, err
+				}
+				b, ok := whenVal.(bool)
+				if !ok {
+					// NULL or non-boolean treated as false (SQL standard)
+					continue
+				}
+				if b {
+					return evalExpr(w.Then, row, info)
+				}
+			}
+		}
+		if e.Else != nil {
+			return evalExpr(e.Else, row, info)
+		}
+		return nil, nil
 	default:
 		return nil, fmt.Errorf("cannot evaluate expression: %T", expr)
 	}

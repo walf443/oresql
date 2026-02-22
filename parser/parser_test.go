@@ -1513,6 +1513,116 @@ func TestParseInnerJoinType(t *testing.T) {
 	}
 }
 
+func TestParseCaseSearched(t *testing.T) {
+	stmt := parse(t, "SELECT CASE WHEN id > 0 THEN 'positive' ELSE 'non-positive' END FROM t")
+	sel := stmt.(*ast.SelectStmt)
+	if len(sel.Columns) != 1 {
+		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
+	}
+	caseExpr, ok := sel.Columns[0].(*ast.CaseExpr)
+	if !ok {
+		t.Fatalf("expected CaseExpr, got %T", sel.Columns[0])
+	}
+	if caseExpr.Operand != nil {
+		t.Errorf("expected nil Operand for Searched CASE, got %T", caseExpr.Operand)
+	}
+	if len(caseExpr.Whens) != 1 {
+		t.Fatalf("expected 1 WHEN clause, got %d", len(caseExpr.Whens))
+	}
+	// WHEN condition should be a BinaryExpr (id > 0)
+	_, ok = caseExpr.Whens[0].When.(*ast.BinaryExpr)
+	if !ok {
+		t.Fatalf("expected BinaryExpr in WHEN, got %T", caseExpr.Whens[0].When)
+	}
+	// THEN value
+	thenVal, ok := caseExpr.Whens[0].Then.(*ast.StringLitExpr)
+	if !ok {
+		t.Fatalf("expected StringLitExpr in THEN, got %T", caseExpr.Whens[0].Then)
+	}
+	if thenVal.Value != "positive" {
+		t.Errorf("expected THEN 'positive', got %q", thenVal.Value)
+	}
+	// ELSE value
+	if caseExpr.Else == nil {
+		t.Fatal("expected ELSE clause")
+	}
+	elseVal, ok := caseExpr.Else.(*ast.StringLitExpr)
+	if !ok {
+		t.Fatalf("expected StringLitExpr in ELSE, got %T", caseExpr.Else)
+	}
+	if elseVal.Value != "non-positive" {
+		t.Errorf("expected ELSE 'non-positive', got %q", elseVal.Value)
+	}
+}
+
+func TestParseCaseSimple(t *testing.T) {
+	stmt := parse(t, "SELECT CASE status WHEN 1 THEN 'active' WHEN 0 THEN 'inactive' END FROM t")
+	sel := stmt.(*ast.SelectStmt)
+	if len(sel.Columns) != 1 {
+		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
+	}
+	caseExpr, ok := sel.Columns[0].(*ast.CaseExpr)
+	if !ok {
+		t.Fatalf("expected CaseExpr, got %T", sel.Columns[0])
+	}
+	// Operand should be an IdentExpr
+	operand, ok := caseExpr.Operand.(*ast.IdentExpr)
+	if !ok {
+		t.Fatalf("expected IdentExpr as Operand, got %T", caseExpr.Operand)
+	}
+	if operand.Name != "status" {
+		t.Errorf("expected Operand 'status', got %q", operand.Name)
+	}
+	if len(caseExpr.Whens) != 2 {
+		t.Fatalf("expected 2 WHEN clauses, got %d", len(caseExpr.Whens))
+	}
+	// First WHEN: 1 THEN 'active'
+	when1, ok := caseExpr.Whens[0].When.(*ast.IntLitExpr)
+	if !ok {
+		t.Fatalf("expected IntLitExpr in WHEN 0, got %T", caseExpr.Whens[0].When)
+	}
+	if when1.Value != 1 {
+		t.Errorf("expected WHEN value 1, got %d", when1.Value)
+	}
+	then1, ok := caseExpr.Whens[0].Then.(*ast.StringLitExpr)
+	if !ok {
+		t.Fatalf("expected StringLitExpr in THEN 0, got %T", caseExpr.Whens[0].Then)
+	}
+	if then1.Value != "active" {
+		t.Errorf("expected THEN 'active', got %q", then1.Value)
+	}
+	// Second WHEN: 0 THEN 'inactive'
+	when2, ok := caseExpr.Whens[1].When.(*ast.IntLitExpr)
+	if !ok {
+		t.Fatalf("expected IntLitExpr in WHEN 1, got %T", caseExpr.Whens[1].When)
+	}
+	if when2.Value != 0 {
+		t.Errorf("expected WHEN value 0, got %d", when2.Value)
+	}
+	// No ELSE
+	if caseExpr.Else != nil {
+		t.Errorf("expected nil ELSE, got %T", caseExpr.Else)
+	}
+}
+
+func TestParseCaseNoElse(t *testing.T) {
+	stmt := parse(t, "SELECT CASE WHEN id = 1 THEN 'one' END FROM t")
+	sel := stmt.(*ast.SelectStmt)
+	caseExpr, ok := sel.Columns[0].(*ast.CaseExpr)
+	if !ok {
+		t.Fatalf("expected CaseExpr, got %T", sel.Columns[0])
+	}
+	if caseExpr.Operand != nil {
+		t.Errorf("expected nil Operand, got %T", caseExpr.Operand)
+	}
+	if len(caseExpr.Whens) != 1 {
+		t.Fatalf("expected 1 WHEN clause, got %d", len(caseExpr.Whens))
+	}
+	if caseExpr.Else != nil {
+		t.Errorf("expected nil ELSE, got %T", caseExpr.Else)
+	}
+}
+
 func TestParseError(t *testing.T) {
 	inputs := []string{
 		"CREATE",

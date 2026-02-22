@@ -132,3 +132,117 @@ func TestDedup(t *testing.T) {
 		})
 	}
 }
+
+func TestCaseSearched(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, val INT)")
+	run(t, exec, "INSERT INTO t VALUES (1, 10)")
+	run(t, exec, "INSERT INTO t VALUES (2, -5)")
+
+	result := run(t, exec, "SELECT id, CASE WHEN val > 0 THEN 'positive' ELSE 'non-positive' END FROM t ORDER BY id")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][1] != "positive" {
+		t.Errorf("row 0: expected 'positive', got %v", result.Rows[0][1])
+	}
+	if result.Rows[1][1] != "non-positive" {
+		t.Errorf("row 1: expected 'non-positive', got %v", result.Rows[1][1])
+	}
+}
+
+func TestCaseSimple(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, status INT)")
+	run(t, exec, "INSERT INTO t VALUES (1, 1)")
+	run(t, exec, "INSERT INTO t VALUES (2, 0)")
+
+	result := run(t, exec, "SELECT id, CASE status WHEN 1 THEN 'active' WHEN 0 THEN 'inactive' END FROM t ORDER BY id")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][1] != "active" {
+		t.Errorf("row 0: expected 'active', got %v", result.Rows[0][1])
+	}
+	if result.Rows[1][1] != "inactive" {
+		t.Errorf("row 1: expected 'inactive', got %v", result.Rows[1][1])
+	}
+}
+
+func TestCaseNoElse(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, val INT)")
+	run(t, exec, "INSERT INTO t VALUES (1, 10)")
+	run(t, exec, "INSERT INTO t VALUES (2, -5)")
+
+	result := run(t, exec, "SELECT id, CASE WHEN val > 0 THEN 'positive' END FROM t ORDER BY id")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][1] != "positive" {
+		t.Errorf("row 0: expected 'positive', got %v", result.Rows[0][1])
+	}
+	if result.Rows[1][1] != nil {
+		t.Errorf("row 1: expected nil (NULL), got %v", result.Rows[1][1])
+	}
+}
+
+func TestCaseMultipleWhens(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, val INT)")
+	run(t, exec, "INSERT INTO t VALUES (1, 1)")
+	run(t, exec, "INSERT INTO t VALUES (2, 2)")
+	run(t, exec, "INSERT INTO t VALUES (3, 3)")
+
+	result := run(t, exec, "SELECT id, CASE WHEN val = 1 THEN 'one' WHEN val = 2 THEN 'two' ELSE 'other' END FROM t ORDER BY id")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][1] != "one" {
+		t.Errorf("row 0: expected 'one', got %v", result.Rows[0][1])
+	}
+	if result.Rows[1][1] != "two" {
+		t.Errorf("row 1: expected 'two', got %v", result.Rows[1][1])
+	}
+	if result.Rows[2][1] != "other" {
+		t.Errorf("row 2: expected 'other', got %v", result.Rows[2][1])
+	}
+}
+
+func TestCaseInWhere(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, val INT)")
+	run(t, exec, "INSERT INTO t VALUES (1, 10)")
+	run(t, exec, "INSERT INTO t VALUES (2, -5)")
+	run(t, exec, "INSERT INTO t VALUES (3, 20)")
+
+	result := run(t, exec, "SELECT id FROM t WHERE CASE WHEN val > 0 THEN 1 ELSE 0 END = 1 ORDER BY id")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(1) {
+		t.Errorf("row 0: expected id=1, got %v", result.Rows[0][0])
+	}
+	if result.Rows[1][0] != int64(3) {
+		t.Errorf("row 1: expected id=3, got %v", result.Rows[1][0])
+	}
+}
+
+func TestCaseWithNull(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, val INT)")
+	run(t, exec, "INSERT INTO t VALUES (1, NULL)")
+	run(t, exec, "INSERT INTO t VALUES (2, 5)")
+
+	// NULL in WHEN condition should be treated as false
+	result := run(t, exec, "SELECT id, CASE WHEN val > 0 THEN 'positive' ELSE 'other' END FROM t ORDER BY id")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][1] != "other" {
+		t.Errorf("row 0 (NULL val): expected 'other', got %v", result.Rows[0][1])
+	}
+	if result.Rows[1][1] != "positive" {
+		t.Errorf("row 1: expected 'positive', got %v", result.Rows[1][1])
+	}
+}

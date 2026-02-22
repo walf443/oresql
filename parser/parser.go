@@ -857,6 +857,66 @@ func (p *Parser) parseCallExpr() (ast.Expr, error) {
 	return &ast.CallExpr{Name: strings.ToUpper(name), Args: args}, nil
 }
 
+// parseCaseExpr parses a CASE expression:
+//
+//	CASE [operand] WHEN expr THEN expr [WHEN expr THEN expr ...] [ELSE expr] END
+func (p *Parser) parseCaseExpr() (ast.Expr, error) {
+	if err := p.expectToken(token.CASE); err != nil {
+		return nil, err
+	}
+
+	var operand ast.Expr
+	// If next token is not WHEN, this is a Simple CASE with an operand
+	if p.curToken.Type != token.WHEN {
+		var err error
+		operand, err = p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	var whens []ast.CaseWhen
+	for p.curToken.Type == token.WHEN {
+		p.nextToken() // skip WHEN
+		whenExpr, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		if err := p.expectToken(token.THEN); err != nil {
+			return nil, err
+		}
+		thenExpr, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		whens = append(whens, ast.CaseWhen{When: whenExpr, Then: thenExpr})
+	}
+
+	if len(whens) == 0 {
+		return nil, fmt.Errorf("CASE expression requires at least one WHEN clause")
+	}
+
+	var elseExpr ast.Expr
+	if p.curToken.Type == token.ELSE {
+		p.nextToken() // skip ELSE
+		var err error
+		elseExpr, err = p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if err := p.expectToken(token.END); err != nil {
+		return nil, err
+	}
+
+	return &ast.CaseExpr{
+		Operand: operand,
+		Whens:   whens,
+		Else:    elseExpr,
+	}, nil
+}
+
 // parseColumnIdent parses a column reference: ident or ident.ident
 func (p *Parser) parseColumnIdent() (ast.Expr, error) {
 	if !p.isIdent() {
@@ -1154,6 +1214,8 @@ func (p *Parser) parsePrimary() (ast.Expr, error) {
 		return p.parsePrimary()
 	case token.COUNT, token.SUM, token.AVG, token.MIN, token.MAX:
 		return p.parseCallExpr()
+	case token.CASE:
+		return p.parseCaseExpr()
 	case token.LPAREN:
 		p.nextToken() // skip (
 		expr, err := p.parseExpr()

@@ -280,6 +280,24 @@ type AlterTableDropColumnStmt struct {
 func (s *AlterTableDropColumnStmt) NodeType() string { return "AlterTableDropColumn" }
 func (s *AlterTableDropColumnStmt) statementNode()   {}
 
+// CaseWhen represents a single WHEN ... THEN pair in a CASE expression.
+type CaseWhen struct {
+	When Expr
+	Then Expr
+}
+
+// CaseExpr represents a CASE expression.
+// Simple CASE: CASE operand WHEN val THEN result ... END
+// Searched CASE: CASE WHEN cond THEN result ... END
+type CaseExpr struct {
+	Operand Expr       // Simple CASE target (nil for Searched CASE)
+	Whens   []CaseWhen // WHEN ... THEN pairs
+	Else    Expr       // ELSE expression (nil if omitted)
+}
+
+func (e *CaseExpr) NodeType() string { return "Case" }
+func (e *CaseExpr) exprNode()        {}
+
 // BinaryExpr represents a comparison: left <op> right.
 type BinaryExpr struct {
 	Left  Expr

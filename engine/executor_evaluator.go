@@ -324,6 +324,47 @@ func evalExprGeneric(expr ast.Expr, row Row, eval ExprEvaluator) (Value, error) 
 			return nil, fmt.Errorf("NOT requires boolean operand, got %T", val)
 		}
 		return !b, nil
+	case *ast.CaseExpr:
+		if e.Operand != nil {
+			// Simple CASE: compare operand with each WHEN value
+			operandVal, err := eval.Eval(e.Operand, row)
+			if err != nil {
+				return nil, err
+			}
+			for _, w := range e.Whens {
+				whenVal, err := eval.Eval(w.When, row)
+				if err != nil {
+					return nil, err
+				}
+				match, err := evalComparison(operandVal, "=", whenVal)
+				if err != nil {
+					return nil, err
+				}
+				if match {
+					return eval.Eval(w.Then, row)
+				}
+			}
+		} else {
+			// Searched CASE: evaluate each WHEN condition as boolean
+			for _, w := range e.Whens {
+				whenVal, err := eval.Eval(w.When, row)
+				if err != nil {
+					return nil, err
+				}
+				b, ok := whenVal.(bool)
+				if !ok {
+					// NULL or non-boolean treated as false (SQL standard)
+					continue
+				}
+				if b {
+					return eval.Eval(w.Then, row)
+				}
+			}
+		}
+		if e.Else != nil {
+			return eval.Eval(e.Else, row)
+		}
+		return nil, nil
 	case *ast.CallExpr:
 		// Default: not in group context, return error
 		return nil, fmt.Errorf("aggregate function %s not allowed in this context", e.Name)

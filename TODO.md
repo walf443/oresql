@@ -63,7 +63,7 @@
 - [x] BETWEEN (`WHERE id BETWEEN 1 AND 10`)
 - [x] LIKE (`WHERE name LIKE '%alice%'`)
 - [x] NOT（一般的な否定）
-- [ ] CASE WHEN ... THEN ... ELSE ... END
+- [x] CASE WHEN ... THEN ... ELSE ... END
 
 ## データ型
 

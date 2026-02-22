@@ -7,6 +7,36 @@ import (
 	"github.com/walf443/oresql/ast"
 )
 
+// validateAndCoerceValue validates a value against a column definition, coercing types as needed.
+func validateAndCoerceValue(val Value, col ColumnInfo) (Value, error) {
+	if val == nil {
+		if col.NotNull {
+			return nil, fmt.Errorf("column %q cannot be NULL", col.Name)
+		}
+		return nil, nil
+	}
+	switch col.DataType {
+	case "INT":
+		if _, ok := val.(int64); !ok {
+			return nil, fmt.Errorf("column %q expects INT, got %T", col.Name, val)
+		}
+	case "FLOAT":
+		switch v := val.(type) {
+		case float64:
+			// ok
+		case int64:
+			val = float64(v)
+		default:
+			return nil, fmt.Errorf("column %q expects FLOAT, got %T", col.Name, val)
+		}
+	case "TEXT":
+		if _, ok := val.(string); !ok {
+			return nil, fmt.Errorf("column %q expects TEXT, got %T", col.Name, val)
+		}
+	}
+	return val, nil
+}
+
 // evalLiteral evaluates a literal expression (for INSERT VALUES and SELECT without FROM).
 func evalLiteral(expr ast.Expr) (Value, error) {
 	switch e := expr.(type) {

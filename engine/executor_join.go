@@ -10,6 +10,11 @@ import (
 
 // executeJoinSelect handles SELECT with JOIN clauses using nested loop join.
 func (e *Executor) executeJoinSelect(stmt *ast.SelectStmt) (*Result, error) {
+	// Use optimized path for 2-table joins
+	if len(stmt.Joins) == 1 {
+		return e.executeOptimizedTwoTableJoin(stmt)
+	}
+
 	// Load FROM table
 	fromInfo, err := e.catalog.GetTable(stmt.TableName)
 	if err != nil {

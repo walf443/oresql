@@ -651,6 +651,16 @@ func (s *Storage) GetKeyRowsByKeys(tableName string, keys []int64) ([]KeyRow, er
 	return rows, nil
 }
 
+// RowCount returns the number of rows in the table.
+func (s *Storage) RowCount(tableName string) (int, error) {
+	lower := strings.ToLower(tableName)
+	tbl, ok := s.tables[lower]
+	if !ok {
+		return 0, fmt.Errorf("table %q does not exist in storage", tableName)
+	}
+	return tbl.tree.Len(), nil
+}
+
 // Scan returns all rows in key order.
 func (s *Storage) Scan(tableName string) ([]Row, error) {
 	lower := strings.ToLower(tableName)

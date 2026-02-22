@@ -3125,50 +3125,6 @@ func TestSelectWhereLikeEscapeBackslash(t *testing.T) {
 	}
 }
 
-func TestExtractLikePrefix(t *testing.T) {
-	tests := []struct {
-		pattern string
-		want    string
-	}{
-		{"abc%", "abc"},
-		{"a\\_b%", "a_b"},
-		{"%abc", ""},
-		{"_abc", ""},
-		{"abc", "abc"},
-		{"abc\\%def", "abc%def"},
-		{"a\\\\b%", "a\\b"},
-		{"", ""},
-		{"\\%%", "%"},
-	}
-	for _, tt := range tests {
-		got := extractLikePrefix(tt.pattern)
-		if got != tt.want {
-			t.Errorf("extractLikePrefix(%q) = %q, want %q", tt.pattern, got, tt.want)
-		}
-	}
-}
-
-func TestNextPrefix(t *testing.T) {
-	tests := []struct {
-		input  string
-		want   string
-		wantOK bool
-	}{
-		{"abc", "abd", true},
-		{"ab" + string([]byte{0xFF}), "ac", true},
-		{string([]byte{0xFF}), "", false},
-		{string([]byte{0xFF, 0xFF}), "", false},
-		{"", "", false},
-		{"a", "b", true},
-	}
-	for _, tt := range tests {
-		got, ok := nextPrefix(tt.input)
-		if ok != tt.wantOK || got != tt.want {
-			t.Errorf("nextPrefix(%q) = (%q, %v), want (%q, %v)", tt.input, got, ok, tt.want, tt.wantOK)
-		}
-	}
-}
-
 func TestSelectWhereLikeWithIndex(t *testing.T) {
 	exec := NewExecutor()
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")

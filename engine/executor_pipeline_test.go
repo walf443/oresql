@@ -75,7 +75,7 @@ func TestFilterWhere(t *testing.T) {
 			{Name: "name", DataType: "TEXT", Index: 1},
 		},
 	}
-	eval := newTableEvaluator(info)
+	eval := newTableEvaluator(nil, info)
 	rows := []Row{
 		{int64(1), "Alice"},
 		{int64(2), "Bob"},
@@ -114,7 +114,7 @@ func TestSortRows(t *testing.T) {
 			{Name: "name", DataType: "TEXT", Index: 1},
 		},
 	}
-	eval := newTableEvaluator(info)
+	eval := newTableEvaluator(nil, info)
 	rows := []Row{
 		{int64(3), "Charlie"},
 		{int64(1), "Alice"},
@@ -164,7 +164,7 @@ func TestProjectRows(t *testing.T) {
 			{Name: "age", DataType: "INT", Index: 2},
 		},
 	}
-	eval := newTableEvaluator(info)
+	eval := newTableEvaluator(nil, info)
 	rows := []Row{
 		{int64(1), "Alice", int64(30)},
 		{int64(2), "Bob", int64(25)},
@@ -204,7 +204,7 @@ func TestResolveSelectColumns(t *testing.T) {
 			{Name: "name", DataType: "TEXT", Index: 1},
 		},
 	}
-	eval := newTableEvaluator(info)
+	eval := newTableEvaluator(nil, info)
 
 	// Star
 	colNames, colExprs, isStar, err := resolveSelectColumns([]ast.Expr{&ast.StarExpr{}}, eval)

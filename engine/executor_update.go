@@ -11,7 +11,7 @@ func (e *Executor) executeUpdate(stmt *ast.UpdateStmt) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	eval := newTableEvaluator(info)
+	eval := newTableEvaluator(e, info)
 
 	var allRows []KeyRow
 	if keys, indexUsed := e.tryIndexScan(stmt.Where, info); indexUsed {

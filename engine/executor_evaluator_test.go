@@ -14,7 +14,7 @@ func TestTableEvaluator_ResolveColumn(t *testing.T) {
 			{Name: "name", DataType: "TEXT", Index: 1},
 		},
 	}
-	eval := newTableEvaluator(info)
+	eval := newTableEvaluator(nil, info)
 
 	// Resolve unqualified column
 	col, err := eval.ResolveColumn("", "id")
@@ -55,7 +55,7 @@ func TestTableEvaluator_Eval(t *testing.T) {
 			{Name: "name", DataType: "TEXT", Index: 1},
 		},
 	}
-	eval := newTableEvaluator(info)
+	eval := newTableEvaluator(nil, info)
 	row := Row{int64(1), "Alice"}
 
 	tests := []struct {
@@ -122,7 +122,7 @@ func TestJoinEvaluator_Eval(t *testing.T) {
 			},
 		},
 	})
-	eval := newJoinEvaluator(jc)
+	eval := newJoinEvaluator(nil, jc)
 	row := Row{int64(1), "Alice", int64(10), int64(1)}
 
 	// Qualified access
@@ -172,7 +172,7 @@ func TestGroupEvaluator_Eval(t *testing.T) {
 		{int64(2), "Alice"},
 		{int64(3), "Alice"},
 	}
-	eval := newGroupEvaluator(info, groupRows)
+	eval := newGroupEvaluator(nil, info, groupRows)
 	row := groupRows[0]
 
 	// Regular column access
@@ -209,7 +209,7 @@ func TestResultEvaluator_Eval(t *testing.T) {
 		&ast.CallExpr{Name: "COUNT", Args: []ast.Expr{&ast.StarExpr{}}},
 	}
 	colNames := []string{"user_name", "COUNT(*)"}
-	eval := newResultEvaluator(selectCols, colNames)
+	eval := newResultEvaluator(nil, selectCols, colNames)
 	row := Row{"Alice", int64(3)}
 
 	// Match by alias

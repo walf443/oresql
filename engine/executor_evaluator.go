@@ -13,16 +13,20 @@ type ExprEvaluator interface {
 	Eval(expr ast.Expr, row Row) (Value, error)
 	ResolveColumn(tableName, colName string) (*ColumnInfo, error)
 	ColumnList() []ColumnInfo // for SELECT * expansion
+	GetExecutor() *Executor   // for subquery evaluation (EXISTS, etc.)
 }
 
 // tableEvaluator evaluates expressions against a single table.
 type tableEvaluator struct {
+	exec *Executor
 	info *TableInfo
 }
 
-func newTableEvaluator(info *TableInfo) *tableEvaluator {
-	return &tableEvaluator{info: info}
+func newTableEvaluator(exec *Executor, info *TableInfo) *tableEvaluator {
+	return &tableEvaluator{exec: exec, info: info}
 }
+
+func (te *tableEvaluator) GetExecutor() *Executor { return te.exec }
 
 func (te *tableEvaluator) Eval(expr ast.Expr, row Row) (Value, error) {
 	return evalExprGeneric(expr, row, te)
@@ -41,12 +45,15 @@ func (te *tableEvaluator) ColumnList() []ColumnInfo {
 
 // joinEvaluator evaluates expressions against a joined (merged) row.
 type joinEvaluator struct {
-	jc *JoinContext
+	exec *Executor
+	jc   *JoinContext
 }
 
-func newJoinEvaluator(jc *JoinContext) *joinEvaluator {
-	return &joinEvaluator{jc: jc}
+func newJoinEvaluator(exec *Executor, jc *JoinContext) *joinEvaluator {
+	return &joinEvaluator{exec: exec, jc: jc}
 }
+
+func (je *joinEvaluator) GetExecutor() *Executor { return je.exec }
 
 func (je *joinEvaluator) Eval(expr ast.Expr, row Row) (Value, error) {
 	return evalExprGeneric(expr, row, je)
@@ -64,13 +71,16 @@ func (je *joinEvaluator) ColumnList() []ColumnInfo {
 // For aggregate functions (CallExpr), it evaluates against the group rows.
 // For other expressions, it delegates to evalExprGeneric using the representative row.
 type groupEvaluator struct {
+	exec      *Executor
 	info      *TableInfo
 	groupRows []Row
 }
 
-func newGroupEvaluator(info *TableInfo, groupRows []Row) *groupEvaluator {
-	return &groupEvaluator{info: info, groupRows: groupRows}
+func newGroupEvaluator(exec *Executor, info *TableInfo, groupRows []Row) *groupEvaluator {
+	return &groupEvaluator{exec: exec, info: info, groupRows: groupRows}
 }
+
+func (ge *groupEvaluator) GetExecutor() *Executor { return ge.exec }
 
 func (ge *groupEvaluator) Eval(expr ast.Expr, row Row) (Value, error) {
 	// Intercept CallExpr for aggregate evaluation
@@ -99,13 +109,16 @@ func (ge *groupEvaluator) ColumnList() []ColumnInfo {
 // Used for ORDER BY after GROUP BY, where expressions need to be resolved
 // against SELECT column names/positions.
 type resultEvaluator struct {
+	exec       *Executor
 	selectCols []ast.Expr // original SELECT expressions (with AliasExpr)
 	colNames   []string   // resolved column names
 }
 
-func newResultEvaluator(selectCols []ast.Expr, colNames []string) *resultEvaluator {
-	return &resultEvaluator{selectCols: selectCols, colNames: colNames}
+func newResultEvaluator(exec *Executor, selectCols []ast.Expr, colNames []string) *resultEvaluator {
+	return &resultEvaluator{exec: exec, selectCols: selectCols, colNames: colNames}
 }
+
+func (re *resultEvaluator) GetExecutor() *Executor { return re.exec }
 
 func (re *resultEvaluator) Eval(expr ast.Expr, row Row) (Value, error) {
 	// Try to match the expression to a SELECT column
@@ -368,6 +381,20 @@ func evalExprGeneric(expr ast.Expr, row Row, eval ExprEvaluator) (Value, error) 
 			return eval.Eval(e.Else, row)
 		}
 		return nil, nil
+	case *ast.ExistsExpr:
+		exec := eval.GetExecutor()
+		if exec == nil {
+			return nil, fmt.Errorf("EXISTS subquery not supported in this context")
+		}
+		result, err := exec.executeSelect(e.Subquery)
+		if err != nil {
+			return nil, err
+		}
+		hasRows := len(result.Rows) > 0
+		if e.Not {
+			return !hasRows, nil
+		}
+		return hasRows, nil
 	case *ast.CallExpr:
 		return evalScalarFuncGeneric(e, row, eval)
 	default:

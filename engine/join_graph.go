@@ -853,5 +853,5 @@ func (e *Executor) scanSourceJoin(stmt *ast.SelectStmt) ([]Row, ExprEvaluator, e
 	if err != nil {
 		return nil, nil, err
 	}
-	return rows, newJoinEvaluator(jc), nil
+	return rows, newJoinEvaluator(e, jc), nil
 }

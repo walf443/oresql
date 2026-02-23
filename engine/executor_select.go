@@ -102,7 +102,7 @@ func (e *Executor) scanSourceSingle(stmt *ast.SelectStmt) ([]Row, ExprEvaluator,
 		}
 	}
 
-	return rows, newTableEvaluator(info), nil
+	return rows, newTableEvaluator(e, info), nil
 }
 
 // applyGroupBy processes GROUP BY / aggregate as a pipeline step.
@@ -157,7 +157,7 @@ func (e *Executor) applyGroupByWithGrouping(stmt *ast.SelectStmt, rows []Row, ev
 		grp := groupMap[key]
 		representativeRow := grp.rows[0]
 
-		geval := newGroupEvaluator(info, grp.rows)
+		geval := newGroupEvaluator(e, info, grp.rows)
 
 		row := make(Row, len(stmt.Columns))
 		for i, colExpr := range stmt.Columns {
@@ -190,7 +190,7 @@ func (e *Executor) applyGroupByWithGrouping(stmt *ast.SelectStmt, rows []Row, ev
 		resultRows = append(resultRows, row)
 	}
 
-	return resultRows, colNames, newResultEvaluator(stmt.Columns, colNames), nil
+	return resultRows, colNames, newResultEvaluator(e, stmt.Columns, colNames), nil
 }
 
 // applyAggregateOnly handles aggregate functions without GROUP BY.
@@ -222,7 +222,7 @@ func (e *Executor) applyAggregateOnly(stmt *ast.SelectStmt, rows []Row, eval Exp
 		}
 	}
 
-	return []Row{resultRow}, colNames, newResultEvaluator(stmt.Columns, colNames), nil
+	return []Row{resultRow}, colNames, newResultEvaluator(e, stmt.Columns, colNames), nil
 }
 
 // extractTableInfo extracts a *TableInfo from an evaluator.
@@ -249,6 +249,7 @@ func resolveGroupByColumnNames(columns []ast.Expr, eval ExprEvaluator) ([]string
 			alias = a.Alias
 			inner = a.Expr
 		}
+
 		if alias != "" {
 			colNames = append(colNames, alias)
 		} else if call, ok := inner.(*ast.CallExpr); ok {

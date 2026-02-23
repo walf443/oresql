@@ -325,3 +325,12 @@ type NotExpr struct {
 
 func (e *NotExpr) NodeType() string { return "Not" }
 func (e *NotExpr) exprNode()        {}
+
+// ExistsExpr represents [NOT] EXISTS (SELECT ...).
+type ExistsExpr struct {
+	Subquery *SelectStmt
+	Not      bool
+}
+
+func (e *ExistsExpr) NodeType() string { return "Exists" }
+func (e *ExistsExpr) exprNode()        {}

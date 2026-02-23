@@ -105,6 +105,7 @@ const (
 	SUBSTRING // SUBSTRING function
 	TRIM      // TRIM function
 	CONCAT    // CONCAT function
+	EXISTS    // EXISTS keyword
 )
 
 var tokenNames = map[TokenType]string{
@@ -201,6 +202,7 @@ var tokenNames = map[TokenType]string{
 	SUBSTRING:    "SUBSTRING",
 	TRIM:         "TRIM",
 	CONCAT:       "CONCAT",
+	EXISTS:       "EXISTS",
 }
 
 func (t TokenType) String() string {
@@ -287,6 +289,7 @@ var keywords = map[string]TokenType{
 	"SUBSTRING": SUBSTRING,
 	"TRIM":      TRIM,
 	"CONCAT":    CONCAT,
+	"EXISTS":    EXISTS,
 }
 
 // LookupIdent returns the keyword TokenType if the identifier is a keyword,

@@ -917,6 +917,24 @@ func (p *Parser) parseCaseExpr() (ast.Expr, error) {
 	}, nil
 }
 
+// parseExistsExpr parses: EXISTS ( SELECT ... )
+func (p *Parser) parseExistsExpr(not bool) (ast.Expr, error) {
+	if err := p.expectToken(token.EXISTS); err != nil {
+		return nil, err
+	}
+	if err := p.expectToken(token.LPAREN); err != nil {
+		return nil, err
+	}
+	stmt, err := p.parseSelect()
+	if err != nil {
+		return nil, err
+	}
+	if err := p.expectToken(token.RPAREN); err != nil {
+		return nil, err
+	}
+	return &ast.ExistsExpr{Subquery: stmt, Not: not}, nil
+}
+
 // parseColumnIdent parses a column reference: ident or ident.ident
 func (p *Parser) parseColumnIdent() (ast.Expr, error) {
 	if !p.isIdent() {
@@ -985,6 +1003,10 @@ func (p *Parser) parseNotExpr() (ast.Expr, error) {
 		// Check that NOT is not followed by IN/BETWEEN/LIKE (those are handled in parseComparison)
 		if p.peekToken.Type != token.IN && p.peekToken.Type != token.BETWEEN && p.peekToken.Type != token.LIKE {
 			p.nextToken() // skip NOT
+			// NOT EXISTS -> ExistsExpr with Not: true
+			if p.curToken.Type == token.EXISTS {
+				return p.parseExistsExpr(true)
+			}
 			expr, err := p.parseNotExpr()
 			if err != nil {
 				return nil, err
@@ -1216,6 +1238,8 @@ func (p *Parser) parsePrimary() (ast.Expr, error) {
 		return p.parseCallExpr()
 	case token.CASE:
 		return p.parseCaseExpr()
+	case token.EXISTS:
+		return p.parseExistsExpr(false)
 	case token.LPAREN:
 		p.nextToken() // skip (
 		expr, err := p.parseExpr()

@@ -604,3 +604,117 @@ func TestNumericFunctionsWithTable(t *testing.T) {
 		t.Errorf("row 1 FLOOR: expected 2, got %v", result.Rows[1][3])
 	}
 }
+
+func TestStringFunctionsWithoutTable(t *testing.T) {
+	exec := NewExecutor()
+
+	tests := []struct {
+		name string
+		sql  string
+		want interface{}
+	}{
+		// LENGTH
+		{"LENGTH basic", "SELECT LENGTH('hello')", int64(5)},
+		{"LENGTH empty", "SELECT LENGTH('')", int64(0)},
+		{"LENGTH multibyte", "SELECT LENGTH('日本語')", int64(3)},
+		{"LENGTH NULL", "SELECT LENGTH(NULL)", nil},
+
+		// UPPER
+		{"UPPER basic", "SELECT UPPER('hello')", "HELLO"},
+		{"UPPER NULL", "SELECT UPPER(NULL)", nil},
+
+		// LOWER
+		{"LOWER basic", "SELECT LOWER('HELLO')", "hello"},
+		{"LOWER NULL", "SELECT LOWER(NULL)", nil},
+
+		// SUBSTRING 2 args
+		{"SUBSTRING 2 args", "SELECT SUBSTRING('hello', 2)", "ello"},
+		// SUBSTRING 3 args
+		{"SUBSTRING 3 args", "SELECT SUBSTRING('hello', 2, 3)", "ell"},
+		// SUBSTRING out of range
+		{"SUBSTRING pos beyond length", "SELECT SUBSTRING('hello', 10)", ""},
+		{"SUBSTRING NULL", "SELECT SUBSTRING(NULL, 1, 2)", nil},
+		// SUBSTRING multibyte
+		{"SUBSTRING multibyte", "SELECT SUBSTRING('日本語', 2, 2)", "本語"},
+
+		// TRIM
+		{"TRIM basic", "SELECT TRIM('  hello  ')", "hello"},
+		{"TRIM NULL", "SELECT TRIM(NULL)", nil},
+
+		// CONCAT
+		{"CONCAT 2 args", "SELECT CONCAT('hello', ' world')", "hello world"},
+		{"CONCAT 3 args", "SELECT CONCAT('a', 'b', 'c')", "abc"},
+		{"CONCAT NULL", "SELECT CONCAT('hello', NULL)", nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := run(t, exec, tt.sql)
+			if len(result.Rows) != 1 {
+				t.Fatalf("expected 1 row, got %d", len(result.Rows))
+			}
+			got := result.Rows[0][0]
+			if got != tt.want {
+				t.Errorf("got %v (%T), want %v (%T)", got, got, tt.want, tt.want)
+			}
+		})
+	}
+}
+
+func TestStringFunctionsWithTable(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO t VALUES (1, 'Alice')")
+	run(t, exec, "INSERT INTO t VALUES (2, '  Bob  ')")
+
+	// LENGTH with column
+	result := run(t, exec, "SELECT id, LENGTH(name) FROM t ORDER BY id")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][1] != int64(5) {
+		t.Errorf("row 0 LENGTH: expected 5, got %v", result.Rows[0][1])
+	}
+	if result.Rows[1][1] != int64(7) {
+		t.Errorf("row 1 LENGTH: expected 7, got %v", result.Rows[1][1])
+	}
+
+	// UPPER with column
+	result = run(t, exec, "SELECT UPPER(name) FROM t WHERE id = 1")
+	if result.Rows[0][0] != "ALICE" {
+		t.Errorf("UPPER: expected 'ALICE', got %v", result.Rows[0][0])
+	}
+
+	// LOWER with column
+	result = run(t, exec, "SELECT LOWER(name) FROM t WHERE id = 1")
+	if result.Rows[0][0] != "alice" {
+		t.Errorf("LOWER: expected 'alice', got %v", result.Rows[0][0])
+	}
+
+	// TRIM with column
+	result = run(t, exec, "SELECT TRIM(name) FROM t WHERE id = 2")
+	if result.Rows[0][0] != "Bob" {
+		t.Errorf("TRIM: expected 'Bob', got %v", result.Rows[0][0])
+	}
+
+	// SUBSTRING with column
+	result = run(t, exec, "SELECT SUBSTRING(name, 1, 3) FROM t WHERE id = 1")
+	if result.Rows[0][0] != "Ali" {
+		t.Errorf("SUBSTRING: expected 'Ali', got %v", result.Rows[0][0])
+	}
+
+	// CONCAT with column
+	result = run(t, exec, "SELECT CONCAT(name, '!') FROM t WHERE id = 1")
+	if result.Rows[0][0] != "Alice!" {
+		t.Errorf("CONCAT: expected 'Alice!', got %v", result.Rows[0][0])
+	}
+
+	// WHERE with string function
+	result = run(t, exec, "SELECT id FROM t WHERE LENGTH(name) > 5")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(2) {
+		t.Errorf("expected id=2, got %v", result.Rows[0][0])
+	}
+}

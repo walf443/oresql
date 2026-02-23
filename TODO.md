@@ -76,7 +76,7 @@
 
 ## 組み込み関数
 
-- [ ] 文字列関数（LENGTH, UPPER, LOWER, SUBSTRING, TRIM, CONCAT など）
+- [x] 文字列関数（LENGTH, UPPER, LOWER, SUBSTRING, TRIM, CONCAT など）
 - [x] 数値関数（ABS, ROUND, MOD, CEIL, FLOOR, POWER）
 - [x] COALESCE / NULLIF
 - [ ] CAST（型変換）

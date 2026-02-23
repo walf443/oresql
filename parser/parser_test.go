@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/walf443/oresql/ast"
@@ -1684,6 +1685,42 @@ func TestParseNumericFunctions(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.funcName, func(t *testing.T) {
+			stmt := parse(t, tt.input)
+			sel := stmt.(*ast.SelectStmt)
+			if len(sel.Columns) != 1 {
+				t.Fatalf("expected 1 column, got %d", len(sel.Columns))
+			}
+			call, ok := sel.Columns[0].(*ast.CallExpr)
+			if !ok {
+				t.Fatalf("expected CallExpr, got %T", sel.Columns[0])
+			}
+			if call.Name != tt.funcName {
+				t.Errorf("expected function name %q, got %q", tt.funcName, call.Name)
+			}
+			if len(call.Args) != tt.argCount {
+				t.Errorf("expected %d args, got %d", tt.argCount, len(call.Args))
+			}
+		})
+	}
+}
+
+func TestParseStringFunctions(t *testing.T) {
+	tests := []struct {
+		input    string
+		funcName string
+		argCount int
+	}{
+		{"SELECT LENGTH('hello') FROM t", "LENGTH", 1},
+		{"SELECT UPPER(name) FROM t", "UPPER", 1},
+		{"SELECT LOWER(name) FROM t", "LOWER", 1},
+		{"SELECT SUBSTRING(name, 1, 3) FROM t", "SUBSTRING", 3},
+		{"SELECT SUBSTRING(name, 2) FROM t", "SUBSTRING", 2},
+		{"SELECT TRIM(name) FROM t", "TRIM", 1},
+		{"SELECT CONCAT(a, b) FROM t", "CONCAT", 2},
+		{"SELECT CONCAT(a, b, c) FROM t", "CONCAT", 3},
+	}
+	for _, tt := range tests {
+		t.Run(tt.funcName+"_"+fmt.Sprintf("%d", tt.argCount), func(t *testing.T) {
 			stmt := parse(t, tt.input)
 			sel := stmt.(*ast.SelectStmt)
 			if len(sel.Columns) != 1 {

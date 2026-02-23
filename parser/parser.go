@@ -807,7 +807,7 @@ func (p *Parser) parseSelectItem() (ast.Expr, error) {
 	var expr ast.Expr
 	var err error
 
-	if p.curToken.Type == token.COUNT || p.curToken.Type == token.SUM || p.curToken.Type == token.AVG || p.curToken.Type == token.MIN || p.curToken.Type == token.MAX || p.curToken.Type == token.COALESCE || p.curToken.Type == token.NULLIF || p.curToken.Type == token.ABS || p.curToken.Type == token.ROUND || p.curToken.Type == token.MOD || p.curToken.Type == token.CEIL || p.curToken.Type == token.FLOOR || p.curToken.Type == token.POWER {
+	if p.curToken.Type == token.COUNT || p.curToken.Type == token.SUM || p.curToken.Type == token.AVG || p.curToken.Type == token.MIN || p.curToken.Type == token.MAX || p.curToken.Type == token.COALESCE || p.curToken.Type == token.NULLIF || p.curToken.Type == token.ABS || p.curToken.Type == token.ROUND || p.curToken.Type == token.MOD || p.curToken.Type == token.CEIL || p.curToken.Type == token.FLOOR || p.curToken.Type == token.POWER || p.curToken.Type == token.LENGTH || p.curToken.Type == token.UPPER || p.curToken.Type == token.LOWER || p.curToken.Type == token.SUBSTRING || p.curToken.Type == token.TRIM || p.curToken.Type == token.CONCAT {
 		expr, err = p.parseCallExpr()
 	} else {
 		expr, err = p.parseAdditive()
@@ -1212,7 +1212,7 @@ func (p *Parser) parsePrimary() (ast.Expr, error) {
 	case token.PLUS:
 		p.nextToken() // skip +
 		return p.parsePrimary()
-	case token.COUNT, token.SUM, token.AVG, token.MIN, token.MAX, token.COALESCE, token.NULLIF, token.ABS, token.ROUND, token.MOD, token.CEIL, token.FLOOR, token.POWER:
+	case token.COUNT, token.SUM, token.AVG, token.MIN, token.MAX, token.COALESCE, token.NULLIF, token.ABS, token.ROUND, token.MOD, token.CEIL, token.FLOOR, token.POWER, token.LENGTH, token.UPPER, token.LOWER, token.SUBSTRING, token.TRIM, token.CONCAT:
 		return p.parseCallExpr()
 	case token.CASE:
 		return p.parseCaseExpr()

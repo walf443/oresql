@@ -47,7 +47,7 @@
 ## サブクエリ
 
 - [ ] スカラーサブクエリ (`SELECT (SELECT ...)`)
-- [ ] IN サブクエリ (`WHERE id IN (SELECT ...)`)
+- [x] IN サブクエリ (`WHERE id IN (SELECT ...)`)
 - [x] EXISTS サブクエリ
 
 ## 集約関数

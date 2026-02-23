@@ -217,6 +217,29 @@ func evalExprGeneric(expr ast.Expr, row Row, eval ExprEvaluator) (Value, error) 
 		if left == nil {
 			return false, nil
 		}
+		if e.Subquery != nil {
+			exec := eval.GetExecutor()
+			if exec == nil {
+				return nil, fmt.Errorf("IN subquery not supported in this context")
+			}
+			result, err := exec.executeSelect(e.Subquery)
+			if err != nil {
+				return nil, err
+			}
+			for _, r := range result.Rows {
+				if len(r) == 0 {
+					continue
+				}
+				match, err := evalComparison(left, "=", r[0])
+				if err != nil {
+					return nil, err
+				}
+				if match {
+					return !e.Not, nil
+				}
+			}
+			return e.Not, nil
+		}
 		for _, valExpr := range e.Values {
 			val, err := eval.Eval(valExpr, row)
 			if err != nil {

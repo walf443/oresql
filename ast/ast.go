@@ -212,11 +212,12 @@ type TruncateTableStmt struct {
 func (s *TruncateTableStmt) NodeType() string { return "TruncateTable" }
 func (s *TruncateTableStmt) statementNode()   {}
 
-// InExpr represents <expr> [NOT] IN (<expr>, ...).
+// InExpr represents <expr> [NOT] IN (<expr>, ...) or <expr> [NOT] IN (SELECT ...).
 type InExpr struct {
-	Left   Expr
-	Values []Expr
-	Not    bool // true for NOT IN
+	Left     Expr
+	Values   []Expr      // literal IN (nil when Subquery is set)
+	Subquery *SelectStmt // IN subquery (nil when Values is set)
+	Not      bool        // true for NOT IN
 }
 
 func (e *InExpr) NodeType() string { return "In" }

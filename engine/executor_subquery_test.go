@@ -4,6 +4,93 @@ import (
 	"testing"
 )
 
+func TestInSubquery(t *testing.T) {
+	e := NewExecutor()
+
+	// Setup: create tables
+	setup := []string{
+		"CREATE TABLE users (id INT, name TEXT)",
+		"INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Charlie')",
+		"CREATE TABLE orders (id INT, user_id INT, status TEXT)",
+		"INSERT INTO orders VALUES (1, 1, 'active'), (2, 1, 'completed'), (3, 2, 'active')",
+	}
+	for _, sql := range setup {
+		if _, err := e.ExecuteSQL(sql); err != nil {
+			t.Fatalf("setup failed: %s: %v", sql, err)
+		}
+	}
+
+	tests := []struct {
+		name     string
+		sql      string
+		wantRows int
+		wantCols []string
+		wantData [][]interface{}
+	}{
+		{
+			name:     "IN subquery with matching rows",
+			sql:      "SELECT * FROM users WHERE id IN (SELECT user_id FROM orders WHERE status = 'active')",
+			wantRows: 2,
+			wantCols: []string{"id", "name"},
+			wantData: [][]interface{}{{int64(1), "Alice"}, {int64(2), "Bob"}},
+		},
+		{
+			name:     "IN subquery with no matching rows",
+			sql:      "SELECT * FROM users WHERE id IN (SELECT user_id FROM orders WHERE status = 'cancelled')",
+			wantRows: 0,
+			wantCols: []string{"id", "name"},
+		},
+		{
+			name:     "NOT IN subquery",
+			sql:      "SELECT * FROM users WHERE id NOT IN (SELECT user_id FROM orders)",
+			wantRows: 1,
+			wantCols: []string{"id", "name"},
+			wantData: [][]interface{}{{int64(3), "Charlie"}},
+		},
+		{
+			name:     "IN subquery combined with AND",
+			sql:      "SELECT * FROM users WHERE id = 1 AND id IN (SELECT user_id FROM orders WHERE status = 'active')",
+			wantRows: 1,
+			wantCols: []string{"id", "name"},
+			wantData: [][]interface{}{{int64(1), "Alice"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := e.ExecuteSQL(tt.sql)
+			if err != nil {
+				t.Fatalf("ExecuteSQL(%q) error: %v", tt.sql, err)
+			}
+			if len(result.Rows) != tt.wantRows {
+				t.Errorf("got %d rows, want %d", len(result.Rows), tt.wantRows)
+			}
+			if tt.wantCols != nil {
+				if len(result.Columns) != len(tt.wantCols) {
+					t.Errorf("got %d columns, want %d", len(result.Columns), len(tt.wantCols))
+				}
+				for i, col := range tt.wantCols {
+					if i < len(result.Columns) && result.Columns[i] != col {
+						t.Errorf("column[%d] = %q, want %q", i, result.Columns[i], col)
+					}
+				}
+			}
+			if tt.wantData != nil {
+				for i, wantRow := range tt.wantData {
+					if i >= len(result.Rows) {
+						break
+					}
+					for j, wantVal := range wantRow {
+						if j < len(result.Rows[i]) && result.Rows[i][j] != wantVal {
+							t.Errorf("row[%d][%d] = %v, want %v", i, j, result.Rows[i][j], wantVal)
+						}
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestExistsSubquery(t *testing.T) {
 	e := NewExecutor()
 

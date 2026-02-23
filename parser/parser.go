@@ -935,6 +935,31 @@ func (p *Parser) parseExistsExpr(not bool) (ast.Expr, error) {
 	return &ast.ExistsExpr{Subquery: stmt, Not: not}, nil
 }
 
+// parseInBody parses the body of an IN expression: ( expr_list | SELECT ... )
+func (p *Parser) parseInBody(left ast.Expr, not bool) (ast.Expr, error) {
+	if err := p.expectToken(token.LPAREN); err != nil {
+		return nil, err
+	}
+	if p.curToken.Type == token.SELECT {
+		stmt, err := p.parseSelect()
+		if err != nil {
+			return nil, err
+		}
+		if err := p.expectToken(token.RPAREN); err != nil {
+			return nil, err
+		}
+		return &ast.InExpr{Left: left, Subquery: stmt, Not: not}, nil
+	}
+	values, err := p.parseExprList()
+	if err != nil {
+		return nil, err
+	}
+	if err := p.expectToken(token.RPAREN); err != nil {
+		return nil, err
+	}
+	return &ast.InExpr{Left: left, Values: values, Not: not}, nil
+}
+
 // parseColumnIdent parses a column reference: ident or ident.ident
 func (p *Parser) parseColumnIdent() (ast.Expr, error) {
 	if !p.isIdent() {
@@ -1023,35 +1048,15 @@ func (p *Parser) parseComparison() (ast.Expr, error) {
 		return nil, err
 	}
 
-	// Handle [NOT] IN (expr_list)
+	// Handle [NOT] IN (expr_list | SELECT ...)
 	if p.curToken.Type == token.IN {
 		p.nextToken() // skip IN
-		if err := p.expectToken(token.LPAREN); err != nil {
-			return nil, err
-		}
-		values, err := p.parseExprList()
-		if err != nil {
-			return nil, err
-		}
-		if err := p.expectToken(token.RPAREN); err != nil {
-			return nil, err
-		}
-		return &ast.InExpr{Left: left, Values: values, Not: false}, nil
+		return p.parseInBody(left, false)
 	}
 	if p.curToken.Type == token.NOT && p.peekToken.Type == token.IN {
 		p.nextToken() // skip NOT
 		p.nextToken() // skip IN
-		if err := p.expectToken(token.LPAREN); err != nil {
-			return nil, err
-		}
-		values, err := p.parseExprList()
-		if err != nil {
-			return nil, err
-		}
-		if err := p.expectToken(token.RPAREN); err != nil {
-			return nil, err
-		}
-		return &ast.InExpr{Left: left, Values: values, Not: true}, nil
+		return p.parseInBody(left, true)
 	}
 
 	// Handle [NOT] BETWEEN expr AND expr

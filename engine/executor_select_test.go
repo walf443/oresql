@@ -605,6 +605,18 @@ func TestNumericFunctionsWithTable(t *testing.T) {
 	}
 }
 
+func TestDoubleQuoteStringLiteral(t *testing.T) {
+	exec := NewExecutor()
+
+	result := run(t, exec, `SELECT "hello"`)
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != "hello" {
+		t.Errorf("expected 'hello', got %v", result.Rows[0][0])
+	}
+}
+
 func TestStringFunctionsWithoutTable(t *testing.T) {
 	exec := NewExecutor()
 

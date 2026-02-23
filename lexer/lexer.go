@@ -64,17 +64,17 @@ func (l *Lexer) readNumber() (string, bool) {
 	return l.input[start:l.pos], isFloat
 }
 
-func (l *Lexer) readString() string {
+func (l *Lexer) readString(quote byte) string {
 	l.readChar() // skip opening quote
 	var result []byte
 	for {
 		if l.ch == 0 {
 			break
 		}
-		if l.ch == '\'' {
-			if l.peekChar() == '\'' {
-				// escaped single quote
-				result = append(result, '\'')
+		if l.ch == quote {
+			if l.peekChar() == quote {
+				// escaped quote
+				result = append(result, quote)
 				l.readChar() // skip first quote
 				l.readChar() // skip second quote
 				continue
@@ -158,7 +158,10 @@ func (l *Lexer) NextToken() token.Token {
 			l.readChar()
 		}
 	case '\'':
-		str := l.readString()
+		str := l.readString('\'')
+		tok = token.Token{Type: token.STRING_LIT, Literal: str}
+	case '"':
+		str := l.readString('"')
 		tok = token.Token{Type: token.STRING_LIT, Literal: str}
 	case '`':
 		ident := l.readQuotedIdent()

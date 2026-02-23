@@ -163,6 +163,42 @@ func TestQuotedIdentEscaped(t *testing.T) {
 	}
 }
 
+func TestDoubleQuoteString(t *testing.T) {
+	input := `"hello"`
+	l := New(input)
+	tok := l.NextToken()
+	if tok.Type != token.STRING_LIT {
+		t.Fatalf("expected STRING_LIT, got %s", tok.Type)
+	}
+	if tok.Literal != "hello" {
+		t.Fatalf("expected literal %q, got %q", "hello", tok.Literal)
+	}
+}
+
+func TestDoubleQuoteEscaped(t *testing.T) {
+	input := `"it""s"`
+	l := New(input)
+	tok := l.NextToken()
+	if tok.Type != token.STRING_LIT {
+		t.Fatalf("expected STRING_LIT, got %s", tok.Type)
+	}
+	if tok.Literal != `it"s` {
+		t.Fatalf("expected literal %q, got %q", `it"s`, tok.Literal)
+	}
+}
+
+func TestDoubleQuoteEmpty(t *testing.T) {
+	input := `""`
+	l := New(input)
+	tok := l.NextToken()
+	if tok.Type != token.STRING_LIT {
+		t.Fatalf("expected STRING_LIT, got %s", tok.Type)
+	}
+	if tok.Literal != "" {
+		t.Fatalf("expected empty literal, got %q", tok.Literal)
+	}
+}
+
 func TestArithmeticOperators(t *testing.T) {
 	input := `+ - /`
 	expected := []token.Token{

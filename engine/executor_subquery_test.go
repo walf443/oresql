@@ -65,6 +65,20 @@ func TestExistsSubquery(t *testing.T) {
 			wantCols: []string{"id", "name"},
 			wantData: [][]interface{}{{int64(1), "Alice"}},
 		},
+		{
+			name:     "EXISTS inside CASE WHEN (true)",
+			sql:      "SELECT id, CASE WHEN EXISTS (SELECT 1 FROM orders WHERE status = 'active') THEN 'has_orders' ELSE 'no_orders' END AS label FROM users WHERE id = 1",
+			wantRows: 1,
+			wantCols: []string{"id", "label"},
+			wantData: [][]interface{}{{int64(1), "has_orders"}},
+		},
+		{
+			name:     "EXISTS inside CASE WHEN (false)",
+			sql:      "SELECT id, CASE WHEN EXISTS (SELECT 1 FROM orders WHERE status = 'cancelled') THEN 'has_orders' ELSE 'no_orders' END AS label FROM users WHERE id = 1",
+			wantRows: 1,
+			wantCols: []string{"id", "label"},
+			wantData: [][]interface{}{{int64(1), "no_orders"}},
+		},
 	}
 
 	for _, tt := range tests {

@@ -412,6 +412,16 @@ func evalScalarFuncGeneric(call *ast.CallExpr, row Row, eval ExprEvaluator) (Val
 			return nil, nil
 		}
 		return val1, nil
+	case "ABS", "ROUND", "MOD", "CEIL", "FLOOR", "POWER":
+		args := make([]Value, len(call.Args))
+		for i, arg := range call.Args {
+			val, err := eval.Eval(arg, row)
+			if err != nil {
+				return nil, err
+			}
+			args[i] = val
+		}
+		return evalNumericFunc(call, args)
 	default:
 		return nil, fmt.Errorf("aggregate function %s not allowed in this context", call.Name)
 	}

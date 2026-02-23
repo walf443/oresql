@@ -22,6 +22,16 @@ func run(t *testing.T, exec *Executor, sql string) *Result {
 	return result
 }
 
+func runWithError(exec *Executor, sql string) (*Result, error) {
+	l := lexer.New(sql)
+	p := parser.New(l)
+	stmt, err := p.Parse()
+	if err != nil {
+		return nil, err
+	}
+	return exec.Execute(stmt)
+}
+
 func runExpectError(t *testing.T, exec *Executor, sql string) {
 	t.Helper()
 	l := lexer.New(sql)

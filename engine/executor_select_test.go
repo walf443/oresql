@@ -386,3 +386,221 @@ func TestNullifWithoutFrom(t *testing.T) {
 		t.Errorf("expected 1, got %v", result.Rows[0][0])
 	}
 }
+
+func TestAbsFunction(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, val INT)")
+	run(t, exec, "INSERT INTO t VALUES (1, -5)")
+	run(t, exec, "INSERT INTO t VALUES (2, 3)")
+	run(t, exec, "INSERT INTO t VALUES (3, NULL)")
+
+	result := run(t, exec, "SELECT id, ABS(val) FROM t ORDER BY id")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][1] != int64(5) {
+		t.Errorf("row 0: expected 5, got %v", result.Rows[0][1])
+	}
+	if result.Rows[1][1] != int64(3) {
+		t.Errorf("row 1: expected 3, got %v", result.Rows[1][1])
+	}
+	if result.Rows[2][1] != nil {
+		t.Errorf("row 2: expected NULL, got %v", result.Rows[2][1])
+	}
+}
+
+func TestAbsFunctionFloat(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, val FLOAT)")
+	run(t, exec, "INSERT INTO t VALUES (1, -3.14)")
+
+	result := run(t, exec, "SELECT ABS(val) FROM t")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != float64(3.14) {
+		t.Errorf("expected 3.14, got %v", result.Rows[0][0])
+	}
+}
+
+func TestAbsFunctionWhere(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, val INT)")
+	run(t, exec, "INSERT INTO t VALUES (1, -5)")
+	run(t, exec, "INSERT INTO t VALUES (2, 3)")
+	run(t, exec, "INSERT INTO t VALUES (3, -1)")
+
+	result := run(t, exec, "SELECT id FROM t WHERE ABS(val) > 3 ORDER BY id")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(1) {
+		t.Errorf("expected id=1, got %v", result.Rows[0][0])
+	}
+}
+
+func TestRoundFunction(t *testing.T) {
+	exec := NewExecutor()
+
+	// ROUND with integer (no change)
+	result := run(t, exec, "SELECT ROUND(5)")
+	if result.Rows[0][0] != int64(5) {
+		t.Errorf("ROUND(5): expected 5, got %v", result.Rows[0][0])
+	}
+
+	// ROUND float without precision
+	result = run(t, exec, "SELECT ROUND(3.7)")
+	if result.Rows[0][0] != float64(4.0) {
+		t.Errorf("ROUND(3.7): expected 4, got %v", result.Rows[0][0])
+	}
+
+	// ROUND float with precision
+	result = run(t, exec, "SELECT ROUND(3.14159, 2)")
+	if result.Rows[0][0] != float64(3.14) {
+		t.Errorf("ROUND(3.14159, 2): expected 3.14, got %v", result.Rows[0][0])
+	}
+
+	// ROUND negative float
+	result = run(t, exec, "SELECT ROUND(-2.5)")
+	if result.Rows[0][0] != float64(-3.0) {
+		t.Errorf("ROUND(-2.5): expected -3, got %v", result.Rows[0][0])
+	}
+
+	// ROUND NULL
+	result = run(t, exec, "SELECT ROUND(NULL)")
+	if result.Rows[0][0] != nil {
+		t.Errorf("ROUND(NULL): expected NULL, got %v", result.Rows[0][0])
+	}
+}
+
+func TestModFunction(t *testing.T) {
+	exec := NewExecutor()
+
+	// Basic MOD
+	result := run(t, exec, "SELECT MOD(10, 3)")
+	if result.Rows[0][0] != int64(1) {
+		t.Errorf("MOD(10,3): expected 1, got %v", result.Rows[0][0])
+	}
+
+	// MOD with NULL
+	result = run(t, exec, "SELECT MOD(10, NULL)")
+	if result.Rows[0][0] != nil {
+		t.Errorf("MOD(10,NULL): expected NULL, got %v", result.Rows[0][0])
+	}
+
+	// MOD division by zero
+	_, err := runWithError(exec, "SELECT MOD(10, 0)")
+	if err == nil {
+		t.Error("MOD(10,0): expected error, got nil")
+	}
+}
+
+func TestCeilFunction(t *testing.T) {
+	exec := NewExecutor()
+
+	// Positive float
+	result := run(t, exec, "SELECT CEIL(2.3)")
+	if result.Rows[0][0] != int64(3) {
+		t.Errorf("CEIL(2.3): expected 3, got %v", result.Rows[0][0])
+	}
+
+	// Negative float
+	result = run(t, exec, "SELECT CEIL(-2.3)")
+	if result.Rows[0][0] != int64(-2) {
+		t.Errorf("CEIL(-2.3): expected -2, got %v", result.Rows[0][0])
+	}
+
+	// Integer (unchanged)
+	result = run(t, exec, "SELECT CEIL(5)")
+	if result.Rows[0][0] != int64(5) {
+		t.Errorf("CEIL(5): expected 5, got %v", result.Rows[0][0])
+	}
+
+	// NULL
+	result = run(t, exec, "SELECT CEIL(NULL)")
+	if result.Rows[0][0] != nil {
+		t.Errorf("CEIL(NULL): expected NULL, got %v", result.Rows[0][0])
+	}
+}
+
+func TestFloorFunction(t *testing.T) {
+	exec := NewExecutor()
+
+	// Positive float
+	result := run(t, exec, "SELECT FLOOR(2.7)")
+	if result.Rows[0][0] != int64(2) {
+		t.Errorf("FLOOR(2.7): expected 2, got %v", result.Rows[0][0])
+	}
+
+	// Negative float
+	result = run(t, exec, "SELECT FLOOR(-2.3)")
+	if result.Rows[0][0] != int64(-3) {
+		t.Errorf("FLOOR(-2.3): expected -3, got %v", result.Rows[0][0])
+	}
+
+	// Integer (unchanged)
+	result = run(t, exec, "SELECT FLOOR(5)")
+	if result.Rows[0][0] != int64(5) {
+		t.Errorf("FLOOR(5): expected 5, got %v", result.Rows[0][0])
+	}
+
+	// NULL
+	result = run(t, exec, "SELECT FLOOR(NULL)")
+	if result.Rows[0][0] != nil {
+		t.Errorf("FLOOR(NULL): expected NULL, got %v", result.Rows[0][0])
+	}
+}
+
+func TestPowerFunction(t *testing.T) {
+	exec := NewExecutor()
+
+	// Basic power
+	result := run(t, exec, "SELECT POWER(2, 10)")
+	if result.Rows[0][0] != float64(1024) {
+		t.Errorf("POWER(2,10): expected 1024, got %v", result.Rows[0][0])
+	}
+
+	// Zero exponent
+	result = run(t, exec, "SELECT POWER(5, 0)")
+	if result.Rows[0][0] != float64(1) {
+		t.Errorf("POWER(5,0): expected 1, got %v", result.Rows[0][0])
+	}
+
+	// NULL
+	result = run(t, exec, "SELECT POWER(2, NULL)")
+	if result.Rows[0][0] != nil {
+		t.Errorf("POWER(2,NULL): expected NULL, got %v", result.Rows[0][0])
+	}
+}
+
+func TestNumericFunctionsWithTable(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, val FLOAT)")
+	run(t, exec, "INSERT INTO t VALUES (1, -3.7)")
+	run(t, exec, "INSERT INTO t VALUES (2, 2.3)")
+
+	result := run(t, exec, "SELECT id, ABS(val), CEIL(val), FLOOR(val) FROM t ORDER BY id")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	// Row 0: val=-3.7 -> ABS=3.7, CEIL=-3, FLOOR=-4
+	if result.Rows[0][1] != float64(3.7) {
+		t.Errorf("row 0 ABS: expected 3.7, got %v", result.Rows[0][1])
+	}
+	if result.Rows[0][2] != int64(-3) {
+		t.Errorf("row 0 CEIL: expected -3, got %v", result.Rows[0][2])
+	}
+	if result.Rows[0][3] != int64(-4) {
+		t.Errorf("row 0 FLOOR: expected -4, got %v", result.Rows[0][3])
+	}
+	// Row 1: val=2.3 -> ABS=2.3, CEIL=3, FLOOR=2
+	if result.Rows[1][1] != float64(2.3) {
+		t.Errorf("row 1 ABS: expected 2.3, got %v", result.Rows[1][1])
+	}
+	if result.Rows[1][2] != int64(3) {
+		t.Errorf("row 1 CEIL: expected 3, got %v", result.Rows[1][2])
+	}
+	if result.Rows[1][3] != int64(2) {
+		t.Errorf("row 1 FLOOR: expected 2, got %v", result.Rows[1][3])
+	}
+}

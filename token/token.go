@@ -93,6 +93,12 @@ const (
 	END      // END keyword
 	COALESCE // COALESCE function
 	NULLIF   // NULLIF function
+	ABS      // ABS function
+	ROUND    // ROUND function
+	MOD      // MOD function
+	CEIL     // CEIL function
+	FLOOR    // FLOOR function
+	POWER    // POWER function
 )
 
 var tokenNames = map[TokenType]string{
@@ -177,6 +183,12 @@ var tokenNames = map[TokenType]string{
 	END:          "END",
 	COALESCE:     "COALESCE",
 	NULLIF:       "NULLIF",
+	ABS:          "ABS",
+	ROUND:        "ROUND",
+	MOD:          "MOD",
+	CEIL:         "CEIL",
+	FLOOR:        "FLOOR",
+	POWER:        "POWER",
 }
 
 func (t TokenType) String() string {
@@ -251,6 +263,12 @@ var keywords = map[string]TokenType{
 	"END":      END,
 	"COALESCE": COALESCE,
 	"NULLIF":   NULLIF,
+	"ABS":      ABS,
+	"ROUND":    ROUND,
+	"MOD":      MOD,
+	"CEIL":     CEIL,
+	"FLOOR":    FLOOR,
+	"POWER":    POWER,
 }
 
 // LookupIdent returns the keyword TokenType if the identifier is a keyword,

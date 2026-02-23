@@ -1668,6 +1668,41 @@ func TestParseNullif(t *testing.T) {
 	}
 }
 
+func TestParseNumericFunctions(t *testing.T) {
+	tests := []struct {
+		input    string
+		funcName string
+		argCount int
+	}{
+		{"SELECT ABS(x) FROM t", "ABS", 1},
+		{"SELECT ROUND(x, 2) FROM t", "ROUND", 2},
+		{"SELECT ROUND(x) FROM t", "ROUND", 1},
+		{"SELECT MOD(a, b) FROM t", "MOD", 2},
+		{"SELECT CEIL(x) FROM t", "CEIL", 1},
+		{"SELECT FLOOR(x) FROM t", "FLOOR", 1},
+		{"SELECT POWER(x, y) FROM t", "POWER", 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.funcName, func(t *testing.T) {
+			stmt := parse(t, tt.input)
+			sel := stmt.(*ast.SelectStmt)
+			if len(sel.Columns) != 1 {
+				t.Fatalf("expected 1 column, got %d", len(sel.Columns))
+			}
+			call, ok := sel.Columns[0].(*ast.CallExpr)
+			if !ok {
+				t.Fatalf("expected CallExpr, got %T", sel.Columns[0])
+			}
+			if call.Name != tt.funcName {
+				t.Errorf("expected function name %q, got %q", tt.funcName, call.Name)
+			}
+			if len(call.Args) != tt.argCount {
+				t.Errorf("expected %d args, got %d", tt.argCount, len(call.Args))
+			}
+		})
+	}
+}
+
 func TestParseError(t *testing.T) {
 	inputs := []string{
 		"CREATE",

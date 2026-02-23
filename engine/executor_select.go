@@ -494,7 +494,7 @@ func formatCallExpr(call *ast.CallExpr) string {
 // isScalarFunc returns true if the function name is a scalar (non-aggregate) function.
 func isScalarFunc(name string) bool {
 	switch name {
-	case "COALESCE", "NULLIF":
+	case "COALESCE", "NULLIF", "ABS", "ROUND", "MOD", "CEIL", "FLOOR", "POWER":
 		return true
 	}
 	return false

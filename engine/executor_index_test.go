@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/walf443/oresql/ast"
@@ -417,5 +418,39 @@ func TestExtractRangeConditions(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestPrimaryKeyLookup(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE items (id INT PRIMARY KEY, name TEXT)")
+	for i := 1; i <= 10; i++ {
+		run(t, exec, fmt.Sprintf("INSERT INTO items VALUES (%d, 'item%d')", i, i))
+	}
+
+	// WHERE id = 5 should return exactly 1 row via PK lookup
+	result := run(t, exec, "SELECT * FROM items WHERE id = 5")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(5) {
+		t.Errorf("expected id=5, got %v", result.Rows[0][0])
+	}
+	if result.Rows[0][1] != "item5" {
+		t.Errorf("expected name='item5', got %v", result.Rows[0][1])
+	}
+}
+
+func TestPrimaryKeyLookupNotFound(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE items (id INT PRIMARY KEY, name TEXT)")
+	for i := 1; i <= 10; i++ {
+		run(t, exec, fmt.Sprintf("INSERT INTO items VALUES (%d, 'item%d')", i, i))
+	}
+
+	// WHERE id = 999 should return 0 rows
+	result := run(t, exec, "SELECT * FROM items WHERE id = 999")
+	if len(result.Rows) != 0 {
+		t.Fatalf("expected 0 rows, got %d", len(result.Rows))
 	}
 }

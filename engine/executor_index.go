@@ -6,6 +6,32 @@ import (
 	"github.com/walf443/oresql/ast"
 )
 
+// tryPrimaryKeyLookup attempts to use the primary key BTree for direct lookup.
+// When the table has a single INT PK and the WHERE clause contains an equality
+// condition on it, we can do an O(log n) lookup instead of a full table scan.
+func (e *Executor) tryPrimaryKeyLookup(where ast.Expr, info *TableInfo) ([]int64, bool) {
+	if info.PrimaryKeyCol < 0 {
+		return nil, false
+	}
+	if where == nil {
+		return nil, false
+	}
+	eqConds := extractEqualityConditions(where)
+	if len(eqConds) == 0 {
+		return nil, false
+	}
+	pkColName := strings.ToLower(info.Columns[info.PrimaryKeyCol].Name)
+	val, ok := eqConds[pkColName]
+	if !ok {
+		return nil, false
+	}
+	pkVal, ok := val.(int64)
+	if !ok {
+		return nil, false
+	}
+	return []int64{pkVal}, true
+}
+
 // tryIndexLookup attempts to use an index for equality conditions in WHERE.
 // Returns BTree keys matching the index lookup.
 func (e *Executor) tryIndexLookup(where ast.Expr, info *TableInfo) ([]int64, bool) {
@@ -429,9 +455,12 @@ func (e *Executor) tryIndexRangeScan(where ast.Expr, info *TableInfo) ([]int64, 
 }
 
 // tryIndexScan attempts to use an index for the WHERE clause.
-// Tries equality lookup, then IN lookup, then range scan.
+// Tries PK direct lookup, then equality lookup, then IN lookup, then range scan.
 // Returns BTree keys and whether an index was used.
 func (e *Executor) tryIndexScan(where ast.Expr, info *TableInfo) ([]int64, bool) {
+	if keys, ok := e.tryPrimaryKeyLookup(where, info); ok {
+		return keys, true
+	}
 	if keys, ok := e.tryIndexLookup(where, info); ok {
 		return keys, true
 	}

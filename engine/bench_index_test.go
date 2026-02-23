@@ -54,6 +54,83 @@ func setupBenchTable(b *testing.B, n int, withIndex bool) *Executor {
 	return exec
 }
 
+// --- Primary Key vs Secondary Index ---
+// id は PRIMARY KEY（B-tree キーとして直接格納）だがセカンダリインデックスは自動作成されない。
+// val にはセカンダリインデックスを作成。両方の等値検索を比較する。
+
+func BenchmarkPrimaryKeyLookup_10000(b *testing.B) {
+	exec := setupBenchTable(b, 10000, false)
+	sql := "SELECT * FROM bench WHERE id = 5000"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkSecondaryIndexLookup_10000(b *testing.B) {
+	exec := setupBenchTable(b, 10000, true)
+	sql := "SELECT * FROM bench WHERE val = 50000"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkPrimaryKeyLookup_100000(b *testing.B) {
+	exec := setupBenchTable(b, 100000, false)
+	sql := "SELECT * FROM bench WHERE id = 50000"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkSecondaryIndexLookup_100000(b *testing.B) {
+	exec := setupBenchTable(b, 100000, true)
+	sql := "SELECT * FROM bench WHERE val = 500000"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// PK に手動でセカンダリインデックスを追加した場合
+func BenchmarkPrimaryKeyWithIndex_10000(b *testing.B) {
+	exec := setupBenchTable(b, 10000, false)
+	if err := execSQL(exec, "CREATE INDEX idx_id ON bench(id)"); err != nil {
+		b.Fatal(err)
+	}
+	sql := "SELECT * FROM bench WHERE id = 5000"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkPrimaryKeyWithIndex_100000(b *testing.B) {
+	exec := setupBenchTable(b, 100000, false)
+	if err := execSQL(exec, "CREATE INDEX idx_id ON bench(id)"); err != nil {
+		b.Fatal(err)
+	}
+	sql := "SELECT * FROM bench WHERE id = 50000"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 // --- Equality lookup (WHERE val = X) ---
 
 func BenchmarkEqualityNoIndex_1000(b *testing.B) {

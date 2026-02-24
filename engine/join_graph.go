@@ -691,14 +691,19 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 		// Prepare pre-filtered inner rows for non-index path
 		var preFilteredInner []Row
 		if nextIdx == nil {
-			preFilteredInner, err = e.storage.Scan(nextNode.Info.Name)
-			if err != nil {
-				return nil, nil, err
-			}
-			// Apply LocalWhere pushdown on inner table
 			if len(nextNode.LocalWhere) > 0 {
 				combined := combineExprsAND(nextNode.LocalWhere)
 				stripped := stripTableQualifier(combined, nextNode.TableName, nextNode.Alias)
+				// Try index scan for LocalWhere conditions
+				if keys, ok := e.tryIndexScan(stripped, nextNode.Info); ok {
+					preFilteredInner, err = e.storage.GetByKeys(nextNode.Info.Name, keys)
+				} else {
+					preFilteredInner, err = e.storage.Scan(nextNode.Info.Name)
+				}
+				if err != nil {
+					return nil, nil, err
+				}
+				// Apply LocalWhere filter (index may cover only part of the condition)
 				var filtered []Row
 				for _, row := range preFilteredInner {
 					match, mErr := evalWhere(stripped, row, nextNode.Info)
@@ -710,14 +715,27 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 					}
 				}
 				preFilteredInner = filtered
+			} else {
+				preFilteredInner, err = e.storage.Scan(nextNode.Info.Name)
+				if err != nil {
+					return nil, nil, err
+				}
 			}
 		}
 
 		// Prepare inner WHERE for index-looked-up rows
 		var innerWhereStripped ast.Expr
+		var innerWhereKeys map[int64]struct{}
 		if nextIdx != nil && len(nextNode.LocalWhere) > 0 {
 			combined := combineExprsAND(nextNode.LocalWhere)
 			innerWhereStripped = stripTableQualifier(combined, nextNode.TableName, nextNode.Alias)
+			// Try index scan for LocalWhere conditions (executed once before the join loop)
+			if keys, ok := e.tryIndexScan(innerWhereStripped, nextNode.Info); ok {
+				innerWhereKeys = make(map[int64]struct{}, len(keys))
+				for _, k := range keys {
+					innerWhereKeys[k] = struct{}{}
+				}
+			}
 		}
 
 		// Nested loop join
@@ -734,6 +752,16 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 					skipInner = true
 				} else {
 					keys := nextIdx.Lookup([]Value{lookupVal})
+					// Intersect with LocalWhere index keys if available
+					if innerWhereKeys != nil {
+						var intersected []int64
+						for _, k := range keys {
+							if _, ok := innerWhereKeys[k]; ok {
+								intersected = append(intersected, k)
+							}
+						}
+						keys = intersected
+					}
 					if len(keys) == 0 {
 						skipInner = true
 					} else {
@@ -741,7 +769,7 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 						if err != nil {
 							return nil, nil, err
 						}
-						// Apply inner WHERE
+						// Apply inner WHERE filter (index may cover only part of the condition)
 						if innerWhereStripped != nil {
 							var filtered []Row
 							for _, row := range innerCandidates {

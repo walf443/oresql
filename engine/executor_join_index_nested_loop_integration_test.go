@@ -202,6 +202,62 @@ func TestJoinBothTablesPushedDown(t *testing.T) {
 	}
 }
 
+func TestJoinInnerTableLocalWhereIndexScan(t *testing.T) {
+	// Problem 1: JOINカラムにインデックスなし、WHERE条件のカラムにインデックスあり
+	// orders.status にインデックスあり、orders.user_id にインデックスなし
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
+	run(t, exec, "CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, product TEXT, status TEXT)")
+	run(t, exec, "CREATE INDEX idx_orders_status ON orders (status)")
+
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
+	run(t, exec, "INSERT INTO orders VALUES (10, 1, 'laptop', 'active')")
+	run(t, exec, "INSERT INTO orders VALUES (20, 2, 'phone', 'cancelled')")
+	run(t, exec, "INSERT INTO orders VALUES (30, 3, 'tablet', 'active')")
+	run(t, exec, "INSERT INTO orders VALUES (40, 1, 'monitor', 'cancelled')")
+
+	// No index on user_id (JOIN column), but index on status (WHERE column)
+	// tryIndexScan should be used for LocalWhere on inner table
+	result := run(t, exec, "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE o.status = 'active' ORDER BY o.id")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != "alice" || result.Rows[0][1] != "laptop" {
+		t.Errorf("row 0: expected [alice laptop], got %v", result.Rows[0])
+	}
+	if result.Rows[1][0] != "charlie" || result.Rows[1][1] != "tablet" {
+		t.Errorf("row 1: expected [charlie tablet], got %v", result.Rows[1])
+	}
+}
+
+func TestJoinInnerTableLocalWherePKWithJoinIndex(t *testing.T) {
+	// Problem 2: JOINカラムにインデックスあり + WHERE条件がPKを指定
+	// orders.user_id にインデックスあり、WHERE o.id = 10 はPKルックアップ
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
+	run(t, exec, "CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, product TEXT)")
+	run(t, exec, "CREATE INDEX idx_orders_user_id ON orders (user_id)")
+
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
+	run(t, exec, "INSERT INTO orders VALUES (10, 1, 'laptop')")
+	run(t, exec, "INSERT INTO orders VALUES (20, 2, 'phone')")
+	run(t, exec, "INSERT INTO orders VALUES (30, 1, 'tablet')")
+
+	// JOIN index on user_id + PK WHERE on o.id = 10
+	// innerWhereKeys should intersect with JOIN index lookup results
+	result := run(t, exec, "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE o.id = 10")
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != "alice" || result.Rows[0][1] != "laptop" {
+		t.Errorf("expected [alice laptop], got %v", result.Rows[0])
+	}
+}
+
 func TestJoinThreeTablesNaivePath(t *testing.T) {
 	exec := NewExecutor()
 	run(t, exec, "CREATE TABLE t1 (id INT, val TEXT)")

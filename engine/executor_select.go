@@ -454,15 +454,15 @@ func (e *Executor) applyGroupByWithGrouping(stmt *ast.SelectStmt, rows []Row, ev
 	var groupOrder []string
 
 	for _, row := range rows {
-		keyParts := make([]string, len(stmt.GroupBy))
+		gbVals := make([]Value, len(stmt.GroupBy))
 		for i, gbExpr := range stmt.GroupBy {
 			val, err := eval.Eval(gbExpr, row)
 			if err != nil {
 				return nil, nil, nil, err
 			}
-			keyParts[i] = fmt.Sprintf("%v", val)
+			gbVals[i] = val
 		}
-		key := strings.Join(keyParts, "\x00")
+		key := string(encodeValues(gbVals))
 		if _, ok := groupMap[key]; !ok {
 			groupMap[key] = &group{key: key}
 			groupOrder = append(groupOrder, key)
@@ -851,7 +851,7 @@ func dedup(rows []Row) []Row {
 	seen := make(map[string]bool)
 	result := make([]Row, 0, len(rows))
 	for _, row := range rows {
-		key := fmt.Sprintf("%v", []Value(row))
+		key := string(encodeValues(row))
 		if !seen[key] {
 			seen[key] = true
 			result = append(result, row)

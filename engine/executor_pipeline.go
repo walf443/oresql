@@ -174,7 +174,7 @@ func filterProjectDedupLimit(rows []Row, where ast.Expr, colExprs []ast.Expr, is
 				projected[i] = val
 			}
 		}
-		key := fmt.Sprintf("%v", []Value(projected))
+		key := string(encodeValues(projected))
 		if seen[key] {
 			continue
 		}

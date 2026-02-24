@@ -837,3 +837,61 @@ func BenchmarkJoinLimitNoOrder_10000(b *testing.B) {
 		}
 	}
 }
+
+// --- DISTINCT + LIMIT early termination benchmarks ---
+// category = i%100 なので 100 種類の distinct 値がある
+
+func BenchmarkDistinctNoLimit_10000(b *testing.B) {
+	exec := setupBenchTable(b, 10000, false)
+	sql := "SELECT DISTINCT category FROM bench"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkDistinctLimitNoOrder_10000(b *testing.B) {
+	exec := setupBenchTable(b, 10000, false)
+	sql := "SELECT DISTINCT category FROM bench LIMIT 10"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkDistinctNoLimit_100000(b *testing.B) {
+	exec := setupBenchTable(b, 100000, false)
+	sql := "SELECT DISTINCT category FROM bench"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkDistinctLimitNoOrder_100000(b *testing.B) {
+	exec := setupBenchTable(b, 100000, false)
+	sql := "SELECT DISTINCT category FROM bench LIMIT 10"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkDistinctWithOrder_10000(b *testing.B) {
+	exec := setupBenchTable(b, 10000, false)
+	sql := "SELECT DISTINCT category FROM bench ORDER BY category LIMIT 10"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

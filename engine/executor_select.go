@@ -899,11 +899,16 @@ func isScalarFunc(name string) bool {
 }
 
 // hasAggregate returns true if any column expression is an aggregate function call.
+// WindowExpr containing aggregate functions are not treated as normal aggregates.
 func hasAggregate(columns []ast.Expr) bool {
 	for _, col := range columns {
 		inner := col
 		if a, ok := col.(*ast.AliasExpr); ok {
 			inner = a.Expr
+		}
+		// WindowExpr (including aggregate window functions) is not a normal aggregate
+		if _, ok := inner.(*ast.WindowExpr); ok {
+			continue
 		}
 		if call, ok := inner.(*ast.CallExpr); ok {
 			if !isScalarFunc(call.Name) {

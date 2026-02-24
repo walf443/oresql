@@ -2204,3 +2204,92 @@ func TestParseWindowWithAlias(t *testing.T) {
 		t.Errorf("window name: expected ROW_NUMBER, got %s", win.Name)
 	}
 }
+
+func TestParseWindowSumOver(t *testing.T) {
+	stmt := parse(t, "SELECT name, SUM(salary) OVER (PARTITION BY dept) FROM emp")
+	sel, ok := stmt.(*ast.SelectStmt)
+	if !ok {
+		t.Fatalf("expected SelectStmt, got %T", stmt)
+	}
+	if len(sel.Columns) != 2 {
+		t.Fatalf("expected 2 columns, got %d", len(sel.Columns))
+	}
+	win, ok := sel.Columns[1].(*ast.WindowExpr)
+	if !ok {
+		t.Fatalf("expected WindowExpr, got %T", sel.Columns[1])
+	}
+	if win.Name != "SUM" {
+		t.Errorf("window name: expected SUM, got %s", win.Name)
+	}
+	if len(win.Args) != 1 {
+		t.Fatalf("expected 1 arg, got %d", len(win.Args))
+	}
+	ident, ok := win.Args[0].(*ast.IdentExpr)
+	if !ok {
+		t.Fatalf("expected IdentExpr arg, got %T", win.Args[0])
+	}
+	if ident.Name != "salary" {
+		t.Errorf("arg name: expected salary, got %s", ident.Name)
+	}
+	if len(win.PartitionBy) != 1 {
+		t.Fatalf("expected 1 PARTITION BY, got %d", len(win.PartitionBy))
+	}
+	if len(win.OrderBy) != 0 {
+		t.Errorf("expected no ORDER BY, got %d", len(win.OrderBy))
+	}
+}
+
+func TestParseWindowCountStarOver(t *testing.T) {
+	stmt := parse(t, "SELECT COUNT(*) OVER () FROM t")
+	sel, ok := stmt.(*ast.SelectStmt)
+	if !ok {
+		t.Fatalf("expected SelectStmt, got %T", stmt)
+	}
+	if len(sel.Columns) != 1 {
+		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
+	}
+	win, ok := sel.Columns[0].(*ast.WindowExpr)
+	if !ok {
+		t.Fatalf("expected WindowExpr, got %T", sel.Columns[0])
+	}
+	if win.Name != "COUNT" {
+		t.Errorf("window name: expected COUNT, got %s", win.Name)
+	}
+	if len(win.Args) != 1 {
+		t.Fatalf("expected 1 arg, got %d", len(win.Args))
+	}
+	if _, ok := win.Args[0].(*ast.StarExpr); !ok {
+		t.Fatalf("expected StarExpr arg, got %T", win.Args[0])
+	}
+}
+
+func TestParseWindowAvgOver(t *testing.T) {
+	stmt := parse(t, "SELECT AVG(score) OVER (ORDER BY id) AS avg_score FROM t")
+	sel, ok := stmt.(*ast.SelectStmt)
+	if !ok {
+		t.Fatalf("expected SelectStmt, got %T", stmt)
+	}
+	if len(sel.Columns) != 1 {
+		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
+	}
+	alias, ok := sel.Columns[0].(*ast.AliasExpr)
+	if !ok {
+		t.Fatalf("expected AliasExpr, got %T", sel.Columns[0])
+	}
+	if alias.Alias != "avg_score" {
+		t.Errorf("alias: expected avg_score, got %s", alias.Alias)
+	}
+	win, ok := alias.Expr.(*ast.WindowExpr)
+	if !ok {
+		t.Fatalf("expected WindowExpr, got %T", alias.Expr)
+	}
+	if win.Name != "AVG" {
+		t.Errorf("window name: expected AVG, got %s", win.Name)
+	}
+	if len(win.Args) != 1 {
+		t.Fatalf("expected 1 arg, got %d", len(win.Args))
+	}
+	if len(win.OrderBy) != 1 {
+		t.Fatalf("expected 1 ORDER BY, got %d", len(win.OrderBy))
+	}
+}

@@ -262,7 +262,19 @@ func inferExprType(expr ast.Expr, eval ExprEvaluator) string {
 			return ""
 		}
 	case *ast.WindowExpr:
-		return "INT" // ranking functions always return integer
+		switch e.Name {
+		case "ROW_NUMBER", "RANK", "DENSE_RANK", "COUNT":
+			return "INT"
+		case "AVG":
+			return "FLOAT"
+		case "SUM", "MIN", "MAX":
+			if len(e.Args) > 0 {
+				return inferExprType(e.Args[0], eval)
+			}
+			return ""
+		default:
+			return ""
+		}
 	case *ast.ArithmeticExpr:
 		lt := inferExprType(e.Left, eval)
 		rt := inferExprType(e.Right, eval)

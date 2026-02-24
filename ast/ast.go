@@ -360,9 +360,10 @@ type ExistsExpr struct {
 func (e *ExistsExpr) NodeType() string { return "Exists" }
 func (e *ExistsExpr) exprNode()        {}
 
-// WindowExpr represents a window function call: NAME() OVER (PARTITION BY ... ORDER BY ...).
+// WindowExpr represents a window function call: NAME([args]) OVER (PARTITION BY ... ORDER BY ...).
 type WindowExpr struct {
-	Name        string          // "ROW_NUMBER", "RANK", "DENSE_RANK"
+	Name        string          // "ROW_NUMBER", "RANK", "DENSE_RANK", "SUM", "COUNT", "AVG", "MIN", "MAX"
+	Args        []Expr          // nil for ranking functions, e.g. []*IdentExpr for SUM(col)
 	PartitionBy []Expr          // nil if no PARTITION BY
 	OrderBy     []OrderByClause // nil if no ORDER BY
 }

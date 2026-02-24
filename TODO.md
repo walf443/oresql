@@ -90,6 +90,6 @@
 ## その他
 
 - [ ] VIEW（CREATE VIEW / DROP VIEW）
-- [x] ウィンドウ関数（ROW_NUMBER, RANK, DENSE_RANK）
+- [x] ウィンドウ関数（ROW_NUMBER, RANK, DENSE_RANK, SUM/COUNT/AVG/MIN/MAX OVER）
 - [ ] 文字列連結演算子（`||`）
 - [ ] EXPLAIN（実行計画の表示）

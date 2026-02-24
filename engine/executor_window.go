@@ -79,7 +79,13 @@ func (e *Executor) applyWindowFunctions(stmt *ast.SelectStmt, rows []Row, eval E
 	// Compute each window function; use the first one's sort to reorder rows
 	var firstSortedOrder []int
 	for winIdx, wi := range wins {
-		sortedIndices, err := computeWindowRanking(wi.winExpr, extendedRows, eval, wi.resultColIdx, numOrig)
+		var sortedIndices []int
+		var err error
+		if isRankingFunc(wi.winExpr.Name) {
+			sortedIndices, err = computeWindowRanking(wi.winExpr, extendedRows, eval, wi.resultColIdx, numOrig)
+		} else {
+			sortedIndices, err = computeWindowAggregate(wi.winExpr, extendedRows, eval, wi.resultColIdx, numOrig)
+		}
 		if err != nil {
 			return nil, nil, err
 		}
@@ -299,8 +305,265 @@ func sameOrderValues(rowA, rowB Row, orderBy []ast.OrderByClause, eval ExprEvalu
 	return true
 }
 
+// isRankingFunc returns true if the function name is a ranking window function.
+func isRankingFunc(name string) bool {
+	switch name {
+	case "ROW_NUMBER", "RANK", "DENSE_RANK":
+		return true
+	}
+	return false
+}
+
+// computeWindowAggregate computes aggregate values for a window function and stores them
+// in the extended rows at resultColIdx. Returns the sorted index order.
+func computeWindowAggregate(winExpr *ast.WindowExpr, rows []Row, eval ExprEvaluator, resultColIdx, numOrig int) ([]int, error) {
+	n := len(rows)
+	if n == 0 {
+		return nil, nil
+	}
+
+	// Build index array
+	indices := make([]int, n)
+	for i := range indices {
+		indices[i] = i
+	}
+
+	// Sort indices by partition keys then order by keys (same as ranking)
+	var sortErr error
+	sort.SliceStable(indices, func(i, j int) bool {
+		if sortErr != nil {
+			return false
+		}
+		ri, rj := rows[indices[i]], rows[indices[j]]
+
+		for _, pb := range winExpr.PartitionBy {
+			vi, err := eval.Eval(pb, ri[:numOrig])
+			if err != nil {
+				sortErr = err
+				return false
+			}
+			vj, err := eval.Eval(pb, rj[:numOrig])
+			if err != nil {
+				sortErr = err
+				return false
+			}
+			if vi == nil && vj == nil {
+				continue
+			}
+			if vi == nil {
+				return false
+			}
+			if vj == nil {
+				return true
+			}
+			cmp := compareValues(vi, vj)
+			if cmp != 0 {
+				return cmp < 0
+			}
+		}
+
+		for _, ob := range winExpr.OrderBy {
+			vi, err := eval.Eval(ob.Expr, ri[:numOrig])
+			if err != nil {
+				sortErr = err
+				return false
+			}
+			vj, err := eval.Eval(ob.Expr, rj[:numOrig])
+			if err != nil {
+				sortErr = err
+				return false
+			}
+			if vi == nil && vj == nil {
+				continue
+			}
+			if vi == nil {
+				return false
+			}
+			if vj == nil {
+				return true
+			}
+			cmp := compareValues(vi, vj)
+			if cmp == 0 {
+				continue
+			}
+			if ob.Desc {
+				return cmp > 0
+			}
+			return cmp < 0
+		}
+		return false
+	})
+	if sortErr != nil {
+		return nil, sortErr
+	}
+
+	hasOrderBy := len(winExpr.OrderBy) > 0
+
+	// Evaluate the aggregate argument for each row (in sorted order)
+	argVals := make([]Value, n)
+	for i, idx := range indices {
+		if len(winExpr.Args) > 0 {
+			if _, ok := winExpr.Args[0].(*ast.StarExpr); !ok {
+				val, err := eval.Eval(winExpr.Args[0], rows[idx][:numOrig])
+				if err != nil {
+					return nil, err
+				}
+				argVals[i] = val
+			}
+		}
+	}
+
+	isCountStar := winExpr.Name == "COUNT" && len(winExpr.Args) == 1
+	if isCountStar {
+		if _, ok := winExpr.Args[0].(*ast.StarExpr); !ok {
+			isCountStar = false
+		}
+	}
+
+	if !hasOrderBy {
+		// No ORDER BY: compute aggregate over entire partition, assign same value to all rows
+		partStart := 0
+		for i := 0; i <= n; i++ {
+			newPartition := i == n || (i > 0 && !samePartition(rows[indices[i-1]], rows[indices[i]], winExpr.PartitionBy, eval, numOrig))
+			if i == 0 {
+				continue
+			}
+			if newPartition || i == n {
+				partEnd := i
+				val := computeAggValue(winExpr.Name, argVals[partStart:partEnd], isCountStar)
+				for j := partStart; j < partEnd; j++ {
+					rows[indices[j]][resultColIdx] = val
+				}
+				partStart = i
+			}
+		}
+	} else {
+		// ORDER BY present: cumulative (running) aggregate
+		partStart := 0
+		for i := 0; i < n; i++ {
+			if i == 0 || !samePartition(rows[indices[i-1]], rows[indices[i]], winExpr.PartitionBy, eval, numOrig) {
+				partStart = i
+			}
+			// Include all rows from partStart to current row (inclusive) that share the same ORDER BY values
+			// (peers get the same value)
+			peerEnd := i + 1
+			for peerEnd < n &&
+				samePartition(rows[indices[i]], rows[indices[peerEnd]], winExpr.PartitionBy, eval, numOrig) &&
+				sameOrderValues(rows[indices[i]], rows[indices[peerEnd]], winExpr.OrderBy, eval, numOrig) {
+				peerEnd++
+			}
+			val := computeAggValue(winExpr.Name, argVals[partStart:peerEnd], isCountStar)
+			// Assign to all peers
+			for j := i; j < peerEnd; j++ {
+				rows[indices[j]][resultColIdx] = val
+			}
+			// Skip ahead past peers
+			if peerEnd > i+1 {
+				i = peerEnd - 1
+			}
+		}
+	}
+
+	return indices, nil
+}
+
+// computeAggValue computes an aggregate value over a slice of argument values.
+func computeAggValue(name string, vals []Value, isCountStar bool) Value {
+	switch name {
+	case "SUM":
+		var sumInt int64
+		var sumFloat float64
+		hasValue := false
+		isFloat := false
+		for _, v := range vals {
+			if v == nil {
+				continue
+			}
+			switch tv := v.(type) {
+			case int64:
+				sumInt += tv
+			case float64:
+				isFloat = true
+				sumFloat += tv
+			}
+			hasValue = true
+		}
+		if !hasValue {
+			return nil
+		}
+		if isFloat {
+			return sumFloat + float64(sumInt)
+		}
+		return sumInt
+	case "COUNT":
+		if isCountStar {
+			return int64(len(vals))
+		}
+		count := int64(0)
+		for _, v := range vals {
+			if v != nil {
+				count++
+			}
+		}
+		return count
+	case "AVG":
+		var sum float64
+		count := int64(0)
+		for _, v := range vals {
+			if v == nil {
+				continue
+			}
+			switch tv := v.(type) {
+			case int64:
+				sum += float64(tv)
+			case float64:
+				sum += tv
+			}
+			count++
+		}
+		if count == 0 {
+			return nil
+		}
+		return sum / float64(count)
+	case "MIN":
+		var minVal Value
+		for _, v := range vals {
+			if v == nil {
+				continue
+			}
+			if minVal == nil || compareValues(v, minVal) < 0 {
+				minVal = v
+			}
+		}
+		return minVal
+	case "MAX":
+		var maxVal Value
+		for _, v := range vals {
+			if v == nil {
+				continue
+			}
+			if maxVal == nil || compareValues(v, maxVal) > 0 {
+				maxVal = v
+			}
+		}
+		return maxVal
+	default:
+		return nil
+	}
+}
+
 // formatWindowExpr returns a display name for a window function.
 func formatWindowExpr(w *ast.WindowExpr) string {
+	// Format arguments
+	argStr := ""
+	if len(w.Args) > 0 {
+		argParts := make([]string, len(w.Args))
+		for i, arg := range w.Args {
+			argParts[i] = formatExpr(arg)
+		}
+		argStr = strings.Join(argParts, ", ")
+	}
+
 	var parts []string
 	if len(w.PartitionBy) > 0 {
 		pbParts := make([]string, len(w.PartitionBy))
@@ -320,5 +583,5 @@ func formatWindowExpr(w *ast.WindowExpr) string {
 		}
 		parts = append(parts, "ORDER BY "+strings.Join(obParts, ", "))
 	}
-	return w.Name + "() OVER (" + strings.Join(parts, " ") + ")"
+	return w.Name + "(" + argStr + ") OVER (" + strings.Join(parts, " ") + ")"
 }

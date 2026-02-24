@@ -965,6 +965,15 @@ func (p *Parser) parseSelectItem() (ast.Expr, error) {
 		expr, err = p.parseWindowExpr()
 	} else if p.curToken.Type == token.COUNT || p.curToken.Type == token.SUM || p.curToken.Type == token.AVG || p.curToken.Type == token.MIN || p.curToken.Type == token.MAX || p.curToken.Type == token.COALESCE || p.curToken.Type == token.NULLIF || p.curToken.Type == token.ABS || p.curToken.Type == token.ROUND || p.curToken.Type == token.MOD || p.curToken.Type == token.CEIL || p.curToken.Type == token.FLOOR || p.curToken.Type == token.POWER || p.curToken.Type == token.LENGTH || p.curToken.Type == token.UPPER || p.curToken.Type == token.LOWER || p.curToken.Type == token.SUBSTRING || p.curToken.Type == token.TRIM || p.curToken.Type == token.CONCAT {
 		expr, err = p.parseCallExpr()
+		if err != nil {
+			return nil, err
+		}
+		// Check if this is an aggregate window function (e.g. SUM(col) OVER (...))
+		if p.curToken.Type == token.OVER {
+			if call, ok := expr.(*ast.CallExpr); ok {
+				expr, err = p.parseWindowOverClause(call)
+			}
+		}
 	} else {
 		expr, err = p.parseAdditive()
 	}
@@ -1398,7 +1407,16 @@ func (p *Parser) parsePrimary() (ast.Expr, error) {
 	case token.ROW_NUMBER, token.RANK, token.DENSE_RANK:
 		return p.parseWindowExpr()
 	case token.COUNT, token.SUM, token.AVG, token.MIN, token.MAX, token.COALESCE, token.NULLIF, token.ABS, token.ROUND, token.MOD, token.CEIL, token.FLOOR, token.POWER, token.LENGTH, token.UPPER, token.LOWER, token.SUBSTRING, token.TRIM, token.CONCAT:
-		return p.parseCallExpr()
+		expr, err := p.parseCallExpr()
+		if err != nil {
+			return nil, err
+		}
+		if p.curToken.Type == token.OVER {
+			if call, ok := expr.(*ast.CallExpr); ok {
+				return p.parseWindowOverClause(call)
+			}
+		}
+		return expr, nil
 	case token.CASE:
 		return p.parseCaseExpr()
 	case token.EXISTS:
@@ -1481,6 +1499,53 @@ func (p *Parser) parseWindowExpr() (ast.Expr, error) {
 
 	return &ast.WindowExpr{
 		Name:        name,
+		PartitionBy: partitionBy,
+		OrderBy:     orderBy,
+	}, nil
+}
+
+// parseWindowOverClause parses: OVER ([PARTITION BY expr, ...] [ORDER BY expr [ASC|DESC], ...])
+// after an aggregate function call has already been parsed as a CallExpr.
+func (p *Parser) parseWindowOverClause(call *ast.CallExpr) (ast.Expr, error) {
+	p.nextToken() // skip OVER
+
+	if err := p.expectToken(token.LPAREN); err != nil {
+		return nil, err
+	}
+
+	var partitionBy []ast.Expr
+	if p.curToken.Type == token.PARTITION {
+		p.nextToken() // skip PARTITION
+		if err := p.expectToken(token.BY); err != nil {
+			return nil, err
+		}
+		var err error
+		partitionBy, err = p.parseGroupByList()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	var orderBy []ast.OrderByClause
+	if p.curToken.Type == token.ORDER {
+		p.nextToken() // skip ORDER
+		if err := p.expectToken(token.BY); err != nil {
+			return nil, err
+		}
+		var err error
+		orderBy, err = p.parseOrderByList()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if err := p.expectToken(token.RPAREN); err != nil {
+		return nil, err
+	}
+
+	return &ast.WindowExpr{
+		Name:        call.Name,
+		Args:        call.Args,
 		PartitionBy: partitionBy,
 		OrderBy:     orderBy,
 	}, nil

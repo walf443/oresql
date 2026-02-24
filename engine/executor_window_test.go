@@ -273,3 +273,235 @@ func TestWindowEmptyOver(t *testing.T) {
 		}
 	}
 }
+
+func TestWindowSumPartition(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE emp (id INT, dept TEXT, salary INT)")
+	run(t, exec, "INSERT INTO emp VALUES (1, 'eng', 100)")
+	run(t, exec, "INSERT INTO emp VALUES (2, 'eng', 200)")
+	run(t, exec, "INSERT INTO emp VALUES (3, 'sales', 300)")
+	run(t, exec, "INSERT INTO emp VALUES (4, 'sales', 400)")
+
+	result := run(t, exec, "SELECT dept, salary, SUM(salary) OVER (PARTITION BY dept) AS dept_total FROM emp")
+	if len(result.Rows) != 4 {
+		t.Fatalf("expected 4 rows, got %d", len(result.Rows))
+	}
+	// eng partition: sum=300, sales partition: sum=700
+	expected := []struct {
+		dept  string
+		sal   int64
+		total int64
+	}{
+		{"eng", 100, 300},
+		{"eng", 200, 300},
+		{"sales", 300, 700},
+		{"sales", 400, 700},
+	}
+	for i, exp := range expected {
+		if result.Rows[i][0] != exp.dept {
+			t.Errorf("row %d dept: expected %q, got %v", i, exp.dept, result.Rows[i][0])
+		}
+		if result.Rows[i][1] != exp.sal {
+			t.Errorf("row %d salary: expected %d, got %v", i, exp.sal, result.Rows[i][1])
+		}
+		if result.Rows[i][2] != exp.total {
+			t.Errorf("row %d dept_total: expected %d, got %v", i, exp.total, result.Rows[i][2])
+		}
+	}
+}
+
+func TestWindowSumRunning(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, val INT)")
+	run(t, exec, "INSERT INTO t VALUES (1, 10)")
+	run(t, exec, "INSERT INTO t VALUES (2, 20)")
+	run(t, exec, "INSERT INTO t VALUES (3, 30)")
+
+	result := run(t, exec, "SELECT id, SUM(val) OVER (ORDER BY id) AS running FROM t")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	// Running total: 10, 30, 60
+	expected := []struct {
+		id      int64
+		running int64
+	}{
+		{1, 10},
+		{2, 30},
+		{3, 60},
+	}
+	for i, exp := range expected {
+		if result.Rows[i][0] != exp.id {
+			t.Errorf("row %d id: expected %d, got %v", i, exp.id, result.Rows[i][0])
+		}
+		if result.Rows[i][1] != exp.running {
+			t.Errorf("row %d running: expected %d, got %v", i, exp.running, result.Rows[i][1])
+		}
+	}
+}
+
+func TestWindowCountStar(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE emp (id INT, dept TEXT)")
+	run(t, exec, "INSERT INTO emp VALUES (1, 'eng')")
+	run(t, exec, "INSERT INTO emp VALUES (2, 'eng')")
+	run(t, exec, "INSERT INTO emp VALUES (3, 'sales')")
+
+	result := run(t, exec, "SELECT dept, COUNT(*) OVER (PARTITION BY dept) AS cnt FROM emp")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	expected := []struct {
+		dept string
+		cnt  int64
+	}{
+		{"eng", 2},
+		{"eng", 2},
+		{"sales", 1},
+	}
+	for i, exp := range expected {
+		if result.Rows[i][0] != exp.dept {
+			t.Errorf("row %d dept: expected %q, got %v", i, exp.dept, result.Rows[i][0])
+		}
+		if result.Rows[i][1] != exp.cnt {
+			t.Errorf("row %d cnt: expected %d, got %v", i, exp.cnt, result.Rows[i][1])
+		}
+	}
+}
+
+func TestWindowAvgPartition(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE scores (id INT, dept TEXT, score INT)")
+	run(t, exec, "INSERT INTO scores VALUES (1, 'a', 10)")
+	run(t, exec, "INSERT INTO scores VALUES (2, 'a', 20)")
+	run(t, exec, "INSERT INTO scores VALUES (3, 'b', 30)")
+
+	result := run(t, exec, "SELECT dept, AVG(score) OVER (PARTITION BY dept) AS avg_score FROM scores")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	// a: avg=15.0, b: avg=30.0
+	expected := []struct {
+		dept string
+		avg  float64
+	}{
+		{"a", 15.0},
+		{"a", 15.0},
+		{"b", 30.0},
+	}
+	for i, exp := range expected {
+		if result.Rows[i][0] != exp.dept {
+			t.Errorf("row %d dept: expected %q, got %v", i, exp.dept, result.Rows[i][0])
+		}
+		if result.Rows[i][1] != exp.avg {
+			t.Errorf("row %d avg: expected %v, got %v", i, exp.avg, result.Rows[i][1])
+		}
+	}
+}
+
+func TestWindowMinMaxPartition(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, grp TEXT, val INT)")
+	run(t, exec, "INSERT INTO t VALUES (1, 'a', 10)")
+	run(t, exec, "INSERT INTO t VALUES (2, 'a', 30)")
+	run(t, exec, "INSERT INTO t VALUES (3, 'a', 20)")
+	run(t, exec, "INSERT INTO t VALUES (4, 'b', 50)")
+
+	result := run(t, exec, "SELECT grp, MIN(val) OVER (PARTITION BY grp) AS mn, MAX(val) OVER (PARTITION BY grp) AS mx FROM t")
+	if len(result.Rows) != 4 {
+		t.Fatalf("expected 4 rows, got %d", len(result.Rows))
+	}
+	expected := []struct {
+		grp string
+		mn  int64
+		mx  int64
+	}{
+		{"a", 10, 30},
+		{"a", 10, 30},
+		{"a", 10, 30},
+		{"b", 50, 50},
+	}
+	for i, exp := range expected {
+		if result.Rows[i][0] != exp.grp {
+			t.Errorf("row %d grp: expected %q, got %v", i, exp.grp, result.Rows[i][0])
+		}
+		if result.Rows[i][1] != exp.mn {
+			t.Errorf("row %d min: expected %d, got %v", i, exp.mn, result.Rows[i][1])
+		}
+		if result.Rows[i][2] != exp.mx {
+			t.Errorf("row %d max: expected %d, got %v", i, exp.mx, result.Rows[i][2])
+		}
+	}
+}
+
+func TestWindowAggregateWithAlias(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, val INT)")
+	run(t, exec, "INSERT INTO t VALUES (1, 100)")
+	run(t, exec, "INSERT INTO t VALUES (2, 200)")
+
+	result := run(t, exec, "SELECT id, SUM(val) OVER () AS total FROM t")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.Columns[1] != "total" {
+		t.Errorf("expected column name 'total', got %q", result.Columns[1])
+	}
+	for i, row := range result.Rows {
+		if row[1] != int64(300) {
+			t.Errorf("row %d total: expected 300, got %v", i, row[1])
+		}
+	}
+}
+
+func TestWindowAggregateWithWhere(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, val INT, active INT)")
+	run(t, exec, "INSERT INTO t VALUES (1, 10, 1)")
+	run(t, exec, "INSERT INTO t VALUES (2, 20, 0)")
+	run(t, exec, "INSERT INTO t VALUES (3, 30, 1)")
+
+	result := run(t, exec, "SELECT id, SUM(val) OVER () AS total FROM t WHERE active = 1")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	// Only active rows: val=10,30 → sum=40
+	for i, row := range result.Rows {
+		if row[1] != int64(40) {
+			t.Errorf("row %d total: expected 40, got %v", i, row[1])
+		}
+	}
+}
+
+func TestWindowMixedRankingAndAggregate(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, val INT)")
+	run(t, exec, "INSERT INTO t VALUES (1, 100)")
+	run(t, exec, "INSERT INTO t VALUES (2, 200)")
+	run(t, exec, "INSERT INTO t VALUES (3, 100)")
+
+	result := run(t, exec, "SELECT id, ROW_NUMBER() OVER (ORDER BY id) AS rn, SUM(val) OVER () AS total FROM t")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	expected := []struct {
+		id    int64
+		rn    int64
+		total int64
+	}{
+		{1, 1, 400},
+		{2, 2, 400},
+		{3, 3, 400},
+	}
+	for i, exp := range expected {
+		if result.Rows[i][0] != exp.id {
+			t.Errorf("row %d id: expected %d, got %v", i, exp.id, result.Rows[i][0])
+		}
+		if result.Rows[i][1] != exp.rn {
+			t.Errorf("row %d rn: expected %d, got %v", i, exp.rn, result.Rows[i][1])
+		}
+		if result.Rows[i][2] != exp.total {
+			t.Errorf("row %d total: expected %d, got %v", i, exp.total, result.Rows[i][2])
+		}
+	}
+}

@@ -503,3 +503,280 @@ func BenchmarkLowSelectivityWithIndex_100000(b *testing.B) {
 		}
 	}
 }
+
+// --- JOIN: inner table LocalWhere index scan ---
+
+// setupJoinBenchTables creates users and orders tables for JOIN benchmarks.
+// users: N/10 rows, orders: N rows (each user has ~10 orders).
+// Orders have status column with 5 values: 'active', 'pending', 'shipped', 'cancelled', 'returned'.
+// setupJoinBenchTablesComposite creates users and orders tables for composite index JOIN benchmarks.
+// indexMode: "none", "separate" (user_id + status separately), "composite" (user_id, status)
+func setupJoinBenchTablesComposite(b *testing.B, n int, indexMode string) *Executor {
+	b.Helper()
+	exec := NewExecutor()
+	if err := execSQL(exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)"); err != nil {
+		b.Fatal(err)
+	}
+	if err := execSQL(exec, "CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, product TEXT, status TEXT)"); err != nil {
+		b.Fatal(err)
+	}
+
+	statuses := []string{"active", "pending", "shipped", "cancelled", "returned"}
+	numUsers := n / 10
+	if numUsers < 1 {
+		numUsers = 1
+	}
+	for i := 0; i < numUsers; i++ {
+		sql := fmt.Sprintf("INSERT INTO users VALUES (%d, 'user_%d')", i, i)
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+	for i := 0; i < n; i++ {
+		sql := fmt.Sprintf("INSERT INTO orders VALUES (%d, %d, 'product_%d', '%s')", i, i%numUsers, i, statuses[i%5])
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+
+	switch indexMode {
+	case "separate":
+		if err := execSQL(exec, "CREATE INDEX idx_orders_user_id ON orders (user_id)"); err != nil {
+			b.Fatal(err)
+		}
+		if err := execSQL(exec, "CREATE INDEX idx_orders_status ON orders (status)"); err != nil {
+			b.Fatal(err)
+		}
+	case "composite":
+		if err := execSQL(exec, "CREATE INDEX idx_orders_uid_status ON orders (user_id, status)"); err != nil {
+			b.Fatal(err)
+		}
+	}
+
+	return exec
+}
+
+func setupJoinBenchTables(b *testing.B, n int, joinIndex bool, whereIndex bool) *Executor {
+	b.Helper()
+	exec := NewExecutor()
+	if err := execSQL(exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)"); err != nil {
+		b.Fatal(err)
+	}
+	if err := execSQL(exec, "CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, product TEXT, status TEXT)"); err != nil {
+		b.Fatal(err)
+	}
+
+	statuses := []string{"active", "pending", "shipped", "cancelled", "returned"}
+	numUsers := n / 10
+	if numUsers < 1 {
+		numUsers = 1
+	}
+	for i := 0; i < numUsers; i++ {
+		sql := fmt.Sprintf("INSERT INTO users VALUES (%d, 'user_%d')", i, i)
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+	for i := 0; i < n; i++ {
+		sql := fmt.Sprintf("INSERT INTO orders VALUES (%d, %d, 'product_%d', '%s')", i, i%numUsers, i, statuses[i%5])
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+
+	if joinIndex {
+		if err := execSQL(exec, "CREATE INDEX idx_orders_user_id ON orders (user_id)"); err != nil {
+			b.Fatal(err)
+		}
+	}
+	if whereIndex {
+		if err := execSQL(exec, "CREATE INDEX idx_orders_status ON orders (status)"); err != nil {
+			b.Fatal(err)
+		}
+	}
+
+	return exec
+}
+
+// Case 1: No JOIN index + inner table WHERE with index
+// JOINカラムにインデックスなし、WHERE条件のカラムにインデックスあり
+// orders.status = 'active' でインデックス使用可能 (全体の20%)
+
+func BenchmarkJoinInnerWhereNoIndex_1000(b *testing.B) {
+	exec := setupJoinBenchTables(b, 1000, false, false)
+	sql := "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE o.status = 'active'"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkJoinInnerWhereWithIndex_1000(b *testing.B) {
+	exec := setupJoinBenchTables(b, 1000, false, true)
+	sql := "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE o.status = 'active'"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkJoinInnerWhereNoIndex_10000(b *testing.B) {
+	exec := setupJoinBenchTables(b, 10000, false, false)
+	sql := "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE o.status = 'active'"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkJoinInnerWhereWithIndex_10000(b *testing.B) {
+	exec := setupJoinBenchTables(b, 10000, false, true)
+	sql := "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE o.status = 'active'"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// Case 2: JOIN index + inner table WHERE with PK
+// JOINカラムにインデックスあり + WHERE条件がPKを指定
+// orders.user_id にインデックスあり、WHERE o.id = X はPKルックアップ
+
+func BenchmarkJoinWithIndexPKWhereNoOpt_1000(b *testing.B) {
+	// JOIN index only, no WHERE index optimization baseline
+	exec := setupJoinBenchTables(b, 1000, true, false)
+	sql := "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE o.id = 50"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkJoinWithIndexPKWhere_1000(b *testing.B) {
+	exec := setupJoinBenchTables(b, 1000, true, false)
+	sql := "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE o.id = 50"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkJoinWithIndexPKWhere_10000(b *testing.B) {
+	exec := setupJoinBenchTables(b, 10000, true, false)
+	sql := "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE o.id = 500"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkJoinWithIndexPKWhere_100000(b *testing.B) {
+	exec := setupJoinBenchTables(b, 100000, true, false)
+	sql := "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE o.id = 5000"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// Case 2 without JOIN index (no optimization path, full scan baseline)
+
+func BenchmarkJoinNoIndexPKWhere_1000(b *testing.B) {
+	exec := setupJoinBenchTables(b, 1000, false, false)
+	sql := "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE o.id = 50"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkJoinNoIndexPKWhere_10000(b *testing.B) {
+	exec := setupJoinBenchTables(b, 10000, false, false)
+	sql := "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE o.id = 500"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkJoinNoIndexPKWhere_100000(b *testing.B) {
+	exec := setupJoinBenchTables(b, 100000, false, false)
+	sql := "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE o.id = 5000"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// --- JOIN: composite index vs separate indexes ---
+// 複合インデックス (user_id, status) と個別インデックス (user_id) + (status) の比較。
+// u.id < X で users を driving テーブルに固定し、orders を inner テーブルとして
+// JOIN ON u.id = o.user_id + WHERE o.status = 'active' の条件で inner テーブルルックアップを比較。
+// composite: 1回の B-tree 走査で user_id + status を同時に絞り込む
+// separate: user_id index lookup → keys1, status index lookup → keys2, keys1 ∩ keys2
+
+func BenchmarkJoinCompositeIndex_1000(b *testing.B) {
+	exec := setupJoinBenchTablesComposite(b, 1000, "composite")
+	sql := "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE u.id < 50 AND o.status = 'active'"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkJoinCompositeIndex_10000(b *testing.B) {
+	exec := setupJoinBenchTablesComposite(b, 10000, "composite")
+	sql := "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE u.id < 500 AND o.status = 'active'"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkJoinSeparateIndexes_1000(b *testing.B) {
+	exec := setupJoinBenchTablesComposite(b, 1000, "separate")
+	sql := "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE u.id < 50 AND o.status = 'active'"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkJoinSeparateIndexes_10000(b *testing.B) {
+	exec := setupJoinBenchTablesComposite(b, 10000, "separate")
+	sql := "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE u.id < 500 AND o.status = 'active'"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

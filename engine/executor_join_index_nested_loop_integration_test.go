@@ -276,3 +276,97 @@ func TestJoinThreeTablesNaivePath(t *testing.T) {
 		t.Errorf("expected [a b c], got %v", result.Rows[0])
 	}
 }
+
+func TestJoinCompositeIndexFullEquality(t *testing.T) {
+	// Case A: Composite index (user_id, status) covers both JOIN + WHERE equality
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
+	run(t, exec, "CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, product TEXT, status TEXT)")
+	run(t, exec, "CREATE INDEX idx_orders_uid_status ON orders (user_id, status)")
+
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
+	run(t, exec, "INSERT INTO orders VALUES (10, 1, 'laptop', 'active')")
+	run(t, exec, "INSERT INTO orders VALUES (20, 1, 'phone', 'cancelled')")
+	run(t, exec, "INSERT INTO orders VALUES (30, 2, 'tablet', 'active')")
+	run(t, exec, "INSERT INTO orders VALUES (40, 3, 'monitor', 'active')")
+	run(t, exec, "INSERT INTO orders VALUES (50, 3, 'keyboard', 'cancelled')")
+
+	// Composite index (user_id, status) should allow single Lookup([joinVal, 'active'])
+	result := run(t, exec, "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE o.status = 'active' ORDER BY o.id")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != "alice" || result.Rows[0][1] != "laptop" {
+		t.Errorf("row 0: expected [alice laptop], got %v", result.Rows[0])
+	}
+	if result.Rows[1][0] != "bob" || result.Rows[1][1] != "tablet" {
+		t.Errorf("row 1: expected [bob tablet], got %v", result.Rows[1])
+	}
+	if result.Rows[2][0] != "charlie" || result.Rows[2][1] != "monitor" {
+		t.Errorf("row 2: expected [charlie monitor], got %v", result.Rows[2])
+	}
+}
+
+func TestJoinCompositeIndexPrefixRange(t *testing.T) {
+	// Case B: Composite index (user_id, amount) with JOIN + range on amount
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
+	run(t, exec, "CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, product TEXT, amount INT)")
+	run(t, exec, "CREATE INDEX idx_orders_uid_amount ON orders (user_id, amount)")
+
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO orders VALUES (10, 1, 'laptop', 1000)")
+	run(t, exec, "INSERT INTO orders VALUES (20, 1, 'phone', 200)")
+	run(t, exec, "INSERT INTO orders VALUES (30, 1, 'tablet', 500)")
+	run(t, exec, "INSERT INTO orders VALUES (40, 2, 'monitor', 800)")
+	run(t, exec, "INSERT INTO orders VALUES (50, 2, 'keyboard', 100)")
+
+	// Composite index (user_id, amount): prefix=[joinVal], range amount >= 500
+	result := run(t, exec, "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE o.amount >= 500 ORDER BY o.id")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != "alice" || result.Rows[0][1] != "laptop" {
+		t.Errorf("row 0: expected [alice laptop], got %v", result.Rows[0])
+	}
+	if result.Rows[1][0] != "alice" || result.Rows[1][1] != "tablet" {
+		t.Errorf("row 1: expected [alice tablet], got %v", result.Rows[1])
+	}
+	if result.Rows[2][0] != "bob" || result.Rows[2][1] != "monitor" {
+		t.Errorf("row 2: expected [bob monitor], got %v", result.Rows[2])
+	}
+}
+
+func TestJoinCompositeIndex3ColPrefixScan(t *testing.T) {
+	// Case C: 3-column composite index (user_id, status, amount), WHERE only has status
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
+	run(t, exec, "CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, product TEXT, status TEXT, amount INT)")
+	run(t, exec, "CREATE INDEX idx_orders_uid_status_amount ON orders (user_id, status, amount)")
+
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO orders VALUES (10, 1, 'laptop', 'active', 1000)")
+	run(t, exec, "INSERT INTO orders VALUES (20, 1, 'phone', 'cancelled', 200)")
+	run(t, exec, "INSERT INTO orders VALUES (30, 1, 'tablet', 'active', 500)")
+	run(t, exec, "INSERT INTO orders VALUES (40, 2, 'monitor', 'active', 800)")
+	run(t, exec, "INSERT INTO orders VALUES (50, 2, 'keyboard', 'cancelled', 100)")
+
+	// 3-col index (user_id, status, amount): prefix scan with [joinVal, 'active']
+	result := run(t, exec, "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE o.status = 'active' ORDER BY o.id")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != "alice" || result.Rows[0][1] != "laptop" {
+		t.Errorf("row 0: expected [alice laptop], got %v", result.Rows[0])
+	}
+	if result.Rows[1][0] != "alice" || result.Rows[1][1] != "tablet" {
+		t.Errorf("row 1: expected [alice tablet], got %v", result.Rows[1])
+	}
+	if result.Rows[2][0] != "bob" || result.Rows[2][1] != "monitor" {
+		t.Errorf("row 2: expected [bob monitor], got %v", result.Rows[2])
+	}
+}

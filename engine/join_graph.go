@@ -570,6 +570,101 @@ func buildJoinContextFromGraph(graph *JoinGraph) *JoinContext {
 	return newJoinContext(jcEntries)
 }
 
+// compositeJoinPlan describes how to use a composite index for a JOIN lookup
+// combined with LocalWhere conditions on the inner table.
+type compositeJoinPlan struct {
+	index      *SecondaryIndex
+	eqVals     []Value         // equality values for columns after the equi-join column
+	fullLookup bool            // all index columns covered by equality → use Lookup()
+	rangeCol   *rangeCondition // range condition on the column after equality prefix (nil if none)
+}
+
+// findCompositeJoinIndex finds a composite index on the inner table whose first column
+// matches the equi-join column and whose subsequent columns match LocalWhere conditions.
+// Returns the best compositeJoinPlan or nil if no composite index is suitable.
+func (e *Executor) findCompositeJoinIndex(
+	equiJoinColIdx int,
+	localWhereStripped ast.Expr,
+	info *TableInfo,
+) *compositeJoinPlan {
+	indexes := e.storage.GetIndexes(info.Name)
+	if len(indexes) == 0 {
+		return nil
+	}
+
+	eqConds := extractEqualityConditions(localWhereStripped)
+	rangeConds := extractRangeConditions(localWhereStripped)
+
+	var bestPlan *compositeJoinPlan
+	bestCoverage := 0 // number of index columns covered (equi-join col + matched conditions)
+
+	for _, idx := range indexes {
+		if len(idx.Info.ColumnIdxs) < 2 {
+			continue // need at least 2 columns (equi-join + one more)
+		}
+		if idx.Info.ColumnIdxs[0] != equiJoinColIdx {
+			continue // first column must be the equi-join column
+		}
+
+		// Try to match subsequent columns with equality conditions
+		var eqVals []Value
+		matchedEq := 0
+		for i := 1; i < len(idx.Info.ColumnIdxs); i++ {
+			colName := strings.ToLower(idx.Info.ColumnNames[i])
+			val, ok := eqConds[colName]
+			if !ok {
+				break
+			}
+			eqVals = append(eqVals, val)
+			matchedEq++
+		}
+
+		coverage := 1 + matchedEq // equi-join col + matched equality conditions
+
+		if matchedEq == len(idx.Info.ColumnIdxs)-1 {
+			// All columns after equi-join are covered by equality → full lookup
+			if coverage > bestCoverage {
+				bestCoverage = coverage
+				bestPlan = &compositeJoinPlan{
+					index:      idx,
+					eqVals:     eqVals,
+					fullLookup: true,
+				}
+			}
+			continue
+		}
+
+		// Check if the next unmatched column has a range condition
+		nextColIdx := 1 + matchedEq
+		if nextColIdx < len(idx.Info.ColumnIdxs) {
+			nextColName := strings.ToLower(idx.Info.ColumnNames[nextColIdx])
+			if rc, ok := rangeConds[nextColName]; ok && (rc.fromVal != nil || rc.toVal != nil) {
+				rangeCoverage := coverage + 1
+				if rangeCoverage > bestCoverage {
+					bestCoverage = rangeCoverage
+					bestPlan = &compositeJoinPlan{
+						index:    idx,
+						eqVals:   eqVals,
+						rangeCol: rc,
+					}
+				}
+				continue
+			}
+		}
+
+		// Partial equality prefix only (prefix scan)
+		if matchedEq > 0 && coverage > bestCoverage {
+			bestCoverage = coverage
+			bestPlan = &compositeJoinPlan{
+				index:  idx,
+				eqVals: eqVals,
+			}
+		}
+	}
+
+	return bestPlan
+}
+
 // executeJoinRows performs the join operation and returns the joined rows and JoinContext.
 // This is the core join logic without post-processing (ORDER BY, projection, etc.).
 func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order []string) ([]Row, *JoinContext, error) {
@@ -685,6 +780,20 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 			}
 		}
 
+		// Try composite index (covers JOIN + LocalWhere in one B-tree scan)
+		var cjPlan *compositeJoinPlan
+		if nextEquiCol != "" && len(nextNode.LocalWhere) > 0 {
+			col, findErr := nextNode.Info.FindColumn(nextEquiCol)
+			if findErr == nil {
+				combined := combineExprsAND(nextNode.LocalWhere)
+				stripped := stripTableQualifier(combined, nextNode.TableName, nextNode.Alias)
+				cjPlan = e.findCompositeJoinIndex(col.Index, stripped, nextNode.Info)
+			}
+		}
+		if cjPlan != nil {
+			nextIdx = cjPlan.index
+		}
+
 		// Build JoinContext for ON/WHERE evaluation on the merged row
 		jc := buildJoinContextFromGraph(graph)
 
@@ -726,7 +835,7 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 		// Prepare inner WHERE for index-looked-up rows
 		var innerWhereStripped ast.Expr
 		var innerWhereKeys map[int64]struct{}
-		if nextIdx != nil && len(nextNode.LocalWhere) > 0 {
+		if nextIdx != nil && cjPlan == nil && len(nextNode.LocalWhere) > 0 {
 			combined := combineExprsAND(nextNode.LocalWhere)
 			innerWhereStripped = stripTableQualifier(combined, nextNode.TableName, nextNode.Alias)
 			// Try index scan for LocalWhere conditions (executed once before the join loop)
@@ -736,6 +845,11 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 					innerWhereKeys[k] = struct{}{}
 				}
 			}
+		}
+		// For composite join plan, prepare innerWhereStripped for residual filtering
+		if cjPlan != nil && len(nextNode.LocalWhere) > 0 {
+			combined := combineExprsAND(nextNode.LocalWhere)
+			innerWhereStripped = stripTableQualifier(combined, nextNode.TableName, nextNode.Alias)
 		}
 
 		// Nested loop join
@@ -751,16 +865,39 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 				if lookupVal == nil {
 					skipInner = true
 				} else {
-					keys := nextIdx.Lookup([]Value{lookupVal})
-					// Intersect with LocalWhere index keys if available
-					if innerWhereKeys != nil {
-						var intersected []int64
-						for _, k := range keys {
-							if _, ok := innerWhereKeys[k]; ok {
-								intersected = append(intersected, k)
-							}
+					var keys []int64
+					if cjPlan != nil {
+						// Use composite index for combined JOIN + LocalWhere lookup
+						if cjPlan.fullLookup {
+							vals := make([]Value, 1+len(cjPlan.eqVals))
+							vals[0] = lookupVal
+							copy(vals[1:], cjPlan.eqVals)
+							keys = nextIdx.Lookup(vals)
+						} else if cjPlan.rangeCol != nil {
+							prefixVals := make([]Value, 1+len(cjPlan.eqVals))
+							prefixVals[0] = lookupVal
+							copy(prefixVals[1:], cjPlan.eqVals)
+							rc := cjPlan.rangeCol
+							keys = nextIdx.CompositeRangeScan(prefixVals, rc.fromVal, rc.fromInclusive, rc.toVal, rc.toInclusive)
+						} else {
+							// Prefix-only scan
+							prefixVals := make([]Value, 1+len(cjPlan.eqVals))
+							prefixVals[0] = lookupVal
+							copy(prefixVals[1:], cjPlan.eqVals)
+							keys = nextIdx.CompositeRangeScan(prefixVals, nil, false, nil, false)
 						}
-						keys = intersected
+					} else {
+						keys = nextIdx.Lookup([]Value{lookupVal})
+						// Intersect with LocalWhere index keys if available
+						if innerWhereKeys != nil {
+							var intersected []int64
+							for _, k := range keys {
+								if _, ok := innerWhereKeys[k]; ok {
+									intersected = append(intersected, k)
+								}
+							}
+							keys = intersected
+						}
 					}
 					if len(keys) == 0 {
 						skipInner = true

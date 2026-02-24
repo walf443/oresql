@@ -17,8 +17,7 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 	canEarlyLimit := stmt.Limit != nil &&
 		len(stmt.OrderBy) == 0 &&
 		len(stmt.GroupBy) == 0 &&
-		!hasAggregate(stmt.Columns) &&
-		!stmt.Distinct
+		!hasAggregate(stmt.Columns)
 
 	var earlyLimit int
 	if canEarlyLimit {
@@ -29,9 +28,36 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 	}
 
 	// Phase 1: Source rows + evaluator
-	rows, eval, err := e.scanSource(stmt, earlyLimit)
+	// For DISTINCT, don't pass earlyLimit to scanSource (JOIN needs all rows for dedup)
+	scanLimit := earlyLimit
+	if stmt.Distinct {
+		scanLimit = 0
+	}
+	rows, eval, err := e.scanSource(stmt, scanLimit)
 	if err != nil {
 		return nil, err
+	}
+
+	// Fast path: DISTINCT + LIMIT without ORDER BY/GROUP BY/aggregate
+	// Combines WHERE, projection, dedup, and early termination in one pass
+	if canEarlyLimit && stmt.Distinct {
+		colNames, colExprs, isStar, err := resolveSelectColumns(stmt.Columns, eval)
+		if err != nil {
+			return nil, err
+		}
+		// For single-table path, apply WHERE + project + dedup in one loop
+		// For JOIN path, WHERE is already applied in scanSource; pass nil
+		var whereExpr ast.Expr
+		if len(stmt.Joins) == 0 && stmt.TableAlias == "" {
+			whereExpr = stmt.Where
+		}
+		rows, err = filterProjectDedupLimit(rows, whereExpr, colExprs, isStar, eval, earlyLimit)
+		if err != nil {
+			return nil, err
+		}
+		rows = applyOffset(rows, stmt.Offset)
+		rows = applyLimit(rows, stmt.Limit)
+		return &Result{Columns: colNames, Rows: rows}, nil
 	}
 
 	// Phase 2: WHERE filter (JOIN path handles WHERE internally via scanSource)

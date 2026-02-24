@@ -224,6 +224,90 @@ func TestGroupByLimitNoEarlyTermination(t *testing.T) {
 	}
 }
 
+func TestDistinctLimitNoOrder(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, val INT)")
+	// 10 rows with 3 distinct val values: 0, 1, 2
+	for i := 1; i <= 10; i++ {
+		run(t, exec, fmt.Sprintf("INSERT INTO t VALUES (%d, %d)", i, i%3))
+	}
+
+	// DISTINCT val produces 3 unique values, LIMIT 2 should return 2
+	result := run(t, exec, "SELECT DISTINCT val FROM t LIMIT 2")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	// Verify all rows are distinct
+	seen := make(map[interface{}]bool)
+	for _, row := range result.Rows {
+		if seen[row[0]] {
+			t.Errorf("duplicate value found: %v", row[0])
+		}
+		seen[row[0]] = true
+	}
+}
+
+func TestDistinctLimitOffsetNoOrder(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, val INT)")
+	// 20 rows with 5 distinct val values: 0, 1, 2, 3, 4
+	for i := 1; i <= 20; i++ {
+		run(t, exec, fmt.Sprintf("INSERT INTO t VALUES (%d, %d)", i, i%5))
+	}
+
+	// DISTINCT val produces 5 unique values, OFFSET 2 LIMIT 2 should return 2
+	result := run(t, exec, "SELECT DISTINCT val FROM t LIMIT 2 OFFSET 2")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	// Verify all rows are distinct
+	seen := make(map[interface{}]bool)
+	for _, row := range result.Rows {
+		if seen[row[0]] {
+			t.Errorf("duplicate value found: %v", row[0])
+		}
+		seen[row[0]] = true
+	}
+}
+
+func TestDistinctWhereLimitNoOrder(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, val INT)")
+	for i := 1; i <= 20; i++ {
+		run(t, exec, fmt.Sprintf("INSERT INTO t VALUES (%d, %d)", i, i%5))
+	}
+
+	// WHERE val > 1 keeps values 2,3,4 → DISTINCT produces 3, LIMIT 2 returns 2
+	result := run(t, exec, "SELECT DISTINCT val FROM t WHERE val > 1 LIMIT 2")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	seen := make(map[interface{}]bool)
+	for _, row := range result.Rows {
+		if seen[row[0]] {
+			t.Errorf("duplicate value found: %v", row[0])
+		}
+		seen[row[0]] = true
+	}
+}
+
+func TestDistinctStarLimitNoOrder(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, val INT)")
+	// Insert duplicate rows: (1,10) appears twice
+	run(t, exec, "INSERT INTO t VALUES (1, 10)")
+	run(t, exec, "INSERT INTO t VALUES (1, 10)")
+	run(t, exec, "INSERT INTO t VALUES (2, 20)")
+	run(t, exec, "INSERT INTO t VALUES (2, 20)")
+	run(t, exec, "INSERT INTO t VALUES (3, 30)")
+
+	// DISTINCT * produces 3 unique rows, LIMIT 2 should return 2
+	result := run(t, exec, "SELECT DISTINCT * FROM t LIMIT 2")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+}
+
 func TestCaseSearched(t *testing.T) {
 	exec := NewExecutor()
 	run(t, exec, "CREATE TABLE t (id INT, val INT)")

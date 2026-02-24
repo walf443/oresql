@@ -136,6 +136,56 @@ func filterWhereLimit[T any](rows []T, where ast.Expr, eval ExprEvaluator, rowOf
 	return filtered, nil
 }
 
+// filterProjectDedupLimit combines WHERE filtering, projection, deduplication, and early
+// termination in a single pass. Used for DISTINCT + LIMIT queries without ORDER BY.
+// Returns at most limit unique projected rows.
+func filterProjectDedupLimit(rows []Row, where ast.Expr, colExprs []ast.Expr, isStar bool, eval ExprEvaluator, limit int) ([]Row, error) {
+	seen := make(map[string]bool)
+	var result []Row
+	cols := eval.ColumnList()
+	for _, row := range rows {
+		if where != nil {
+			val, err := eval.Eval(where, row)
+			if err != nil {
+				return nil, err
+			}
+			b, ok := val.(bool)
+			if !ok {
+				return nil, fmt.Errorf("WHERE expression must evaluate to boolean, got %T", val)
+			}
+			if !b {
+				continue
+			}
+		}
+		var projected Row
+		if isStar {
+			projected = make(Row, len(cols))
+			for i, col := range cols {
+				projected[i] = row[col.Index]
+			}
+		} else {
+			projected = make(Row, len(colExprs))
+			for i, expr := range colExprs {
+				val, err := eval.Eval(expr, row)
+				if err != nil {
+					return nil, err
+				}
+				projected[i] = val
+			}
+		}
+		key := fmt.Sprintf("%v", []Value(projected))
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		result = append(result, projected)
+		if len(result) >= limit {
+			break
+		}
+	}
+	return result, nil
+}
+
 // resolveSelectColumns resolves column names and expressions from SELECT columns.
 // Returns column names, column expressions (nil for star), isStar flag, and error.
 func resolveSelectColumns(columns []ast.Expr, eval ExprEvaluator) ([]string, []ast.Expr, bool, error) {

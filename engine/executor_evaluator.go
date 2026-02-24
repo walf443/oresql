@@ -182,6 +182,51 @@ func (re *resultEvaluator) resolveOrderByValue(orderExpr ast.Expr, resultRow Row
 	return nil
 }
 
+// windowEvaluator wraps an inner evaluator and resolves WindowExpr references
+// from extended row columns.
+type windowEvaluator struct {
+	exec       *Executor
+	inner      ExprEvaluator
+	selectCols []ast.Expr  // SELECT columns (for pointer matching)
+	windowMap  map[int]int // selectCol index → extended row column index
+	numOrig    int         // number of original columns before extension
+}
+
+func (we *windowEvaluator) GetExecutor() *Executor { return we.exec }
+
+func (we *windowEvaluator) Eval(expr ast.Expr, row Row) (Value, error) {
+	// Check if this is a window expression from SELECT columns
+	if _, ok := expr.(*ast.WindowExpr); ok {
+		// Find which select column this WindowExpr matches
+		for i, col := range we.selectCols {
+			inner := col
+			if a, ok := col.(*ast.AliasExpr); ok {
+				inner = a.Expr
+			}
+			if inner == expr {
+				if colIdx, found := we.windowMap[i]; found {
+					return row[colIdx], nil
+				}
+			}
+		}
+		return nil, fmt.Errorf("window function not found in result")
+	}
+	// For non-window expressions, use original row width
+	origRow := row
+	if len(row) > we.numOrig {
+		origRow = row[:we.numOrig]
+	}
+	return we.inner.Eval(expr, origRow)
+}
+
+func (we *windowEvaluator) ResolveColumn(tableName, colName string) (*ColumnInfo, error) {
+	return we.inner.ResolveColumn(tableName, colName)
+}
+
+func (we *windowEvaluator) ColumnList() []ColumnInfo {
+	return we.inner.ColumnList()
+}
+
 // literalEvaluator evaluates expressions in a context without a table (SELECT without FROM).
 // It supports scalar subqueries via the executor.
 type literalEvaluator struct {
@@ -458,6 +503,8 @@ func evalExprGeneric(expr ast.Expr, row Row, eval ExprEvaluator) (Value, error) 
 			return !hasRows, nil
 		}
 		return hasRows, nil
+	case *ast.WindowExpr:
+		return nil, fmt.Errorf("window function %s not allowed in this context", e.Name)
 	case *ast.CallExpr:
 		return evalScalarFuncGeneric(e, row, eval)
 	default:

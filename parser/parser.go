@@ -961,7 +961,9 @@ func (p *Parser) parseSelectItem() (ast.Expr, error) {
 	var expr ast.Expr
 	var err error
 
-	if p.curToken.Type == token.COUNT || p.curToken.Type == token.SUM || p.curToken.Type == token.AVG || p.curToken.Type == token.MIN || p.curToken.Type == token.MAX || p.curToken.Type == token.COALESCE || p.curToken.Type == token.NULLIF || p.curToken.Type == token.ABS || p.curToken.Type == token.ROUND || p.curToken.Type == token.MOD || p.curToken.Type == token.CEIL || p.curToken.Type == token.FLOOR || p.curToken.Type == token.POWER || p.curToken.Type == token.LENGTH || p.curToken.Type == token.UPPER || p.curToken.Type == token.LOWER || p.curToken.Type == token.SUBSTRING || p.curToken.Type == token.TRIM || p.curToken.Type == token.CONCAT {
+	if p.curToken.Type == token.ROW_NUMBER || p.curToken.Type == token.RANK || p.curToken.Type == token.DENSE_RANK {
+		expr, err = p.parseWindowExpr()
+	} else if p.curToken.Type == token.COUNT || p.curToken.Type == token.SUM || p.curToken.Type == token.AVG || p.curToken.Type == token.MIN || p.curToken.Type == token.MAX || p.curToken.Type == token.COALESCE || p.curToken.Type == token.NULLIF || p.curToken.Type == token.ABS || p.curToken.Type == token.ROUND || p.curToken.Type == token.MOD || p.curToken.Type == token.CEIL || p.curToken.Type == token.FLOOR || p.curToken.Type == token.POWER || p.curToken.Type == token.LENGTH || p.curToken.Type == token.UPPER || p.curToken.Type == token.LOWER || p.curToken.Type == token.SUBSTRING || p.curToken.Type == token.TRIM || p.curToken.Type == token.CONCAT {
 		expr, err = p.parseCallExpr()
 	} else {
 		expr, err = p.parseAdditive()
@@ -1393,6 +1395,8 @@ func (p *Parser) parsePrimary() (ast.Expr, error) {
 	case token.PLUS:
 		p.nextToken() // skip +
 		return p.parsePrimary()
+	case token.ROW_NUMBER, token.RANK, token.DENSE_RANK:
+		return p.parseWindowExpr()
 	case token.COUNT, token.SUM, token.AVG, token.MIN, token.MAX, token.COALESCE, token.NULLIF, token.ABS, token.ROUND, token.MOD, token.CEIL, token.FLOOR, token.POWER, token.LENGTH, token.UPPER, token.LOWER, token.SUBSTRING, token.TRIM, token.CONCAT:
 		return p.parseCallExpr()
 	case token.CASE:
@@ -1422,6 +1426,64 @@ func (p *Parser) parsePrimary() (ast.Expr, error) {
 	default:
 		return nil, fmt.Errorf("unexpected token in expression: %s (%q)", p.curToken.Type, p.curToken.Literal)
 	}
+}
+
+// parseWindowExpr parses: ROW_NUMBER() OVER ([PARTITION BY expr, ...] [ORDER BY expr [ASC|DESC], ...])
+func (p *Parser) parseWindowExpr() (ast.Expr, error) {
+	name := strings.ToUpper(p.curToken.Literal)
+	p.nextToken() // skip function name
+
+	if err := p.expectToken(token.LPAREN); err != nil {
+		return nil, err
+	}
+	if err := p.expectToken(token.RPAREN); err != nil {
+		return nil, err
+	}
+
+	if p.curToken.Type != token.OVER {
+		return nil, fmt.Errorf("expected OVER after %s(), got %s (%q)", name, p.curToken.Type, p.curToken.Literal)
+	}
+	p.nextToken() // skip OVER
+
+	if err := p.expectToken(token.LPAREN); err != nil {
+		return nil, err
+	}
+
+	var partitionBy []ast.Expr
+	if p.curToken.Type == token.PARTITION {
+		p.nextToken() // skip PARTITION
+		if err := p.expectToken(token.BY); err != nil {
+			return nil, err
+		}
+		var err error
+		partitionBy, err = p.parseGroupByList()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	var orderBy []ast.OrderByClause
+	if p.curToken.Type == token.ORDER {
+		p.nextToken() // skip ORDER
+		if err := p.expectToken(token.BY); err != nil {
+			return nil, err
+		}
+		var err error
+		orderBy, err = p.parseOrderByList()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if err := p.expectToken(token.RPAREN); err != nil {
+		return nil, err
+	}
+
+	return &ast.WindowExpr{
+		Name:        name,
+		PartitionBy: partitionBy,
+		OrderBy:     orderBy,
+	}, nil
 }
 
 // parseCreateIndex parses: CREATE [UNIQUE] INDEX <name> ON <table>(<column>)

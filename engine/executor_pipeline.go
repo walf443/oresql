@@ -220,6 +220,8 @@ func resolveSelectColumns(columns []ast.Expr, eval ExprEvaluator) ([]string, []a
 			colNames = append(colNames, col.Name)
 		} else if call, ok := inner.(*ast.CallExpr); ok {
 			colNames = append(colNames, formatCallExpr(call))
+		} else if win, ok := inner.(*ast.WindowExpr); ok {
+			colNames = append(colNames, formatWindowExpr(win))
 		} else {
 			colNames = append(colNames, formatExpr(inner))
 		}
@@ -259,6 +261,8 @@ func inferExprType(expr ast.Expr, eval ExprEvaluator) string {
 		default:
 			return ""
 		}
+	case *ast.WindowExpr:
+		return "INT" // ranking functions always return integer
 	case *ast.ArithmeticExpr:
 		lt := inferExprType(e.Left, eval)
 		rt := inferExprType(e.Right, eval)

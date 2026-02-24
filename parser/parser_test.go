@@ -2121,3 +2121,86 @@ func TestParseInsertSelectUnion(t *testing.T) {
 		t.Fatalf("expected SetOpStmt for UNION, got %T", ins.Select)
 	}
 }
+
+func TestParseWindowRowNumber(t *testing.T) {
+	stmt := parse(t, "SELECT name, ROW_NUMBER() OVER (ORDER BY id) FROM t")
+	sel, ok := stmt.(*ast.SelectStmt)
+	if !ok {
+		t.Fatalf("expected SelectStmt, got %T", stmt)
+	}
+	if len(sel.Columns) != 2 {
+		t.Fatalf("expected 2 columns, got %d", len(sel.Columns))
+	}
+	win, ok := sel.Columns[1].(*ast.WindowExpr)
+	if !ok {
+		t.Fatalf("expected WindowExpr, got %T", sel.Columns[1])
+	}
+	if win.Name != "ROW_NUMBER" {
+		t.Errorf("window name: expected ROW_NUMBER, got %s", win.Name)
+	}
+	if len(win.PartitionBy) != 0 {
+		t.Errorf("expected no PARTITION BY, got %d", len(win.PartitionBy))
+	}
+	if len(win.OrderBy) != 1 {
+		t.Fatalf("expected 1 ORDER BY, got %d", len(win.OrderBy))
+	}
+	ident, ok := win.OrderBy[0].Expr.(*ast.IdentExpr)
+	if !ok {
+		t.Fatalf("expected IdentExpr in ORDER BY, got %T", win.OrderBy[0].Expr)
+	}
+	if ident.Name != "id" {
+		t.Errorf("ORDER BY column: expected id, got %s", ident.Name)
+	}
+}
+
+func TestParseWindowWithPartitionBy(t *testing.T) {
+	stmt := parse(t, "SELECT RANK() OVER (PARTITION BY dept ORDER BY salary DESC) FROM emp")
+	sel, ok := stmt.(*ast.SelectStmt)
+	if !ok {
+		t.Fatalf("expected SelectStmt, got %T", stmt)
+	}
+	if len(sel.Columns) != 1 {
+		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
+	}
+	win, ok := sel.Columns[0].(*ast.WindowExpr)
+	if !ok {
+		t.Fatalf("expected WindowExpr, got %T", sel.Columns[0])
+	}
+	if win.Name != "RANK" {
+		t.Errorf("window name: expected RANK, got %s", win.Name)
+	}
+	if len(win.PartitionBy) != 1 {
+		t.Fatalf("expected 1 PARTITION BY, got %d", len(win.PartitionBy))
+	}
+	if len(win.OrderBy) != 1 {
+		t.Fatalf("expected 1 ORDER BY, got %d", len(win.OrderBy))
+	}
+	if !win.OrderBy[0].Desc {
+		t.Errorf("expected ORDER BY DESC")
+	}
+}
+
+func TestParseWindowWithAlias(t *testing.T) {
+	stmt := parse(t, "SELECT ROW_NUMBER() OVER (ORDER BY id) AS rn FROM t")
+	sel, ok := stmt.(*ast.SelectStmt)
+	if !ok {
+		t.Fatalf("expected SelectStmt, got %T", stmt)
+	}
+	if len(sel.Columns) != 1 {
+		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
+	}
+	alias, ok := sel.Columns[0].(*ast.AliasExpr)
+	if !ok {
+		t.Fatalf("expected AliasExpr, got %T", sel.Columns[0])
+	}
+	if alias.Alias != "rn" {
+		t.Errorf("alias: expected rn, got %s", alias.Alias)
+	}
+	win, ok := alias.Expr.(*ast.WindowExpr)
+	if !ok {
+		t.Fatalf("expected WindowExpr inside alias, got %T", alias.Expr)
+	}
+	if win.Name != "ROW_NUMBER" {
+		t.Errorf("window name: expected ROW_NUMBER, got %s", win.Name)
+	}
+}

@@ -16,7 +16,8 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 	// Try index-ordered scan for ORDER BY optimization
 	if len(stmt.OrderBy) > 0 && len(stmt.Joins) == 0 && stmt.TableAlias == "" &&
 		stmt.FromSubquery == nil &&
-		len(stmt.GroupBy) == 0 && !hasAggregate(stmt.Columns) && !stmt.Distinct {
+		len(stmt.GroupBy) == 0 && !hasAggregate(stmt.Columns) && !stmt.Distinct &&
+		!hasWindowFunction(stmt.Columns) {
 		info, err := e.catalog.GetTable(stmt.TableName)
 		if err == nil {
 			if ior := e.tryIndexOrder(stmt.OrderBy, stmt.Where, info, stmt.Limit != nil); ior != nil {
@@ -29,7 +30,8 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 	canEarlyLimit := stmt.Limit != nil &&
 		len(stmt.OrderBy) == 0 &&
 		len(stmt.GroupBy) == 0 &&
-		!hasAggregate(stmt.Columns)
+		!hasAggregate(stmt.Columns) &&
+		!hasWindowFunction(stmt.Columns)
 
 	var earlyLimit int
 	if canEarlyLimit {
@@ -82,6 +84,14 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 		} else {
 			rows, err = filterWhere(rows, stmt.Where, eval, rowIdentity)
 		}
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Phase 2.5: Window functions
+	if hasWindowFunction(stmt.Columns) {
+		rows, eval, err = e.applyWindowFunctions(stmt, rows, eval)
 		if err != nil {
 			return nil, err
 		}

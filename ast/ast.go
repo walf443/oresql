@@ -360,6 +360,16 @@ type ExistsExpr struct {
 func (e *ExistsExpr) NodeType() string { return "Exists" }
 func (e *ExistsExpr) exprNode()        {}
 
+// WindowExpr represents a window function call: NAME() OVER (PARTITION BY ... ORDER BY ...).
+type WindowExpr struct {
+	Name        string          // "ROW_NUMBER", "RANK", "DENSE_RANK"
+	PartitionBy []Expr          // nil if no PARTITION BY
+	OrderBy     []OrderByClause // nil if no ORDER BY
+}
+
+func (e *WindowExpr) NodeType() string { return "Window" }
+func (e *WindowExpr) exprNode()        {}
+
 // ScalarExpr represents a scalar subquery: (SELECT ...) that returns a single value.
 type ScalarExpr struct {
 	Subquery *SelectStmt

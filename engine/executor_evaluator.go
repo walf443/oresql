@@ -182,6 +182,30 @@ func (re *resultEvaluator) resolveOrderByValue(orderExpr ast.Expr, resultRow Row
 	return nil
 }
 
+// literalEvaluator evaluates expressions in a context without a table (SELECT without FROM).
+// It supports scalar subqueries via the executor.
+type literalEvaluator struct {
+	exec *Executor
+}
+
+func newLiteralEvaluator(exec *Executor) *literalEvaluator {
+	return &literalEvaluator{exec: exec}
+}
+
+func (le *literalEvaluator) GetExecutor() *Executor { return le.exec }
+
+func (le *literalEvaluator) Eval(expr ast.Expr, row Row) (Value, error) {
+	return evalExprGeneric(expr, row, le)
+}
+
+func (le *literalEvaluator) ResolveColumn(tableName, colName string) (*ColumnInfo, error) {
+	return nil, fmt.Errorf("column reference %q not allowed without FROM", colName)
+}
+
+func (le *literalEvaluator) ColumnList() []ColumnInfo {
+	return nil
+}
+
 // evalExprGeneric is the unified expression evaluator that delegates column resolution
 // to the ExprEvaluator interface.
 func evalExprGeneric(expr ast.Expr, row Row, eval ExprEvaluator) (Value, error) {
@@ -404,6 +428,22 @@ func evalExprGeneric(expr ast.Expr, row Row, eval ExprEvaluator) (Value, error) 
 			return eval.Eval(e.Else, row)
 		}
 		return nil, nil
+	case *ast.ScalarExpr:
+		exec := eval.GetExecutor()
+		if exec == nil {
+			return nil, fmt.Errorf("scalar subquery not supported in this context")
+		}
+		result, err := exec.executeSelect(e.Subquery)
+		if err != nil {
+			return nil, err
+		}
+		if len(result.Rows) == 0 {
+			return nil, nil
+		}
+		if len(result.Rows) > 1 {
+			return nil, fmt.Errorf("scalar subquery must return at most one row, got %d", len(result.Rows))
+		}
+		return result.Rows[0][0], nil
 	case *ast.ExistsExpr:
 		exec := eval.GetExecutor()
 		if exec == nil {

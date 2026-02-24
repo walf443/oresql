@@ -335,3 +335,11 @@ type ExistsExpr struct {
 
 func (e *ExistsExpr) NodeType() string { return "Exists" }
 func (e *ExistsExpr) exprNode()        {}
+
+// ScalarExpr represents a scalar subquery: (SELECT ...) that returns a single value.
+type ScalarExpr struct {
+	Subquery *SelectStmt
+}
+
+func (e *ScalarExpr) NodeType() string { return "Scalar" }
+func (e *ScalarExpr) exprNode()        {}

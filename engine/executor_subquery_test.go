@@ -91,6 +91,105 @@ func TestInSubquery(t *testing.T) {
 	}
 }
 
+func TestScalarSubquery(t *testing.T) {
+	e := NewExecutor()
+
+	// Setup: create tables
+	setup := []string{
+		"CREATE TABLE users (id INT, name TEXT)",
+		"INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Charlie')",
+		"CREATE TABLE orders (id INT, user_id INT, amount INT)",
+		"INSERT INTO orders VALUES (1, 1, 100), (2, 1, 200), (3, 2, 150)",
+	}
+	for _, sql := range setup {
+		if _, err := e.ExecuteSQL(sql); err != nil {
+			t.Fatalf("setup failed: %s: %v", sql, err)
+		}
+	}
+
+	tests := []struct {
+		name     string
+		sql      string
+		wantRows int
+		wantCols []string
+		wantData [][]interface{}
+		wantErr  bool
+	}{
+		{
+			name:     "scalar subquery in SELECT list",
+			sql:      "SELECT (SELECT MAX(id) FROM orders) AS max_id",
+			wantRows: 1,
+			wantCols: []string{"max_id"},
+			wantData: [][]interface{}{{int64(3)}},
+		},
+		{
+			name:     "scalar subquery in WHERE clause",
+			sql:      "SELECT * FROM users WHERE id = (SELECT MAX(user_id) FROM orders)",
+			wantRows: 1,
+			wantCols: []string{"id", "name"},
+			wantData: [][]interface{}{{int64(2), "Bob"}},
+		},
+		{
+			name:     "scalar subquery returning empty result (NULL)",
+			sql:      "SELECT * FROM users WHERE id = (SELECT user_id FROM orders WHERE amount = 999)",
+			wantRows: 0,
+			wantCols: []string{"id", "name"},
+		},
+		{
+			name:    "scalar subquery returning multiple rows (error)",
+			sql:     "SELECT (SELECT user_id FROM orders)",
+			wantErr: true,
+		},
+		{
+			name:     "scalar subquery with arithmetic",
+			sql:      "SELECT (SELECT MAX(amount) FROM orders) + 10 AS total",
+			wantRows: 1,
+			wantCols: []string{"total"},
+			wantData: [][]interface{}{{int64(210)}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := e.ExecuteSQL(tt.sql)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ExecuteSQL(%q) error: %v", tt.sql, err)
+			}
+			if len(result.Rows) != tt.wantRows {
+				t.Errorf("got %d rows, want %d", len(result.Rows), tt.wantRows)
+			}
+			if tt.wantCols != nil {
+				if len(result.Columns) != len(tt.wantCols) {
+					t.Errorf("got %d columns, want %d", len(result.Columns), len(tt.wantCols))
+				}
+				for i, col := range tt.wantCols {
+					if i < len(result.Columns) && result.Columns[i] != col {
+						t.Errorf("column[%d] = %q, want %q", i, result.Columns[i], col)
+					}
+				}
+			}
+			if tt.wantData != nil {
+				for i, wantRow := range tt.wantData {
+					if i >= len(result.Rows) {
+						break
+					}
+					for j, wantVal := range wantRow {
+						if j < len(result.Rows[i]) && result.Rows[i][j] != wantVal {
+							t.Errorf("row[%d][%d] = %v, want %v", i, j, result.Rows[i][j], wantVal)
+						}
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestExistsSubquery(t *testing.T) {
 	e := NewExecutor()
 

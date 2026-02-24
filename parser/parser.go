@@ -1247,6 +1247,16 @@ func (p *Parser) parsePrimary() (ast.Expr, error) {
 		return p.parseExistsExpr(false)
 	case token.LPAREN:
 		p.nextToken() // skip (
+		if p.curToken.Type == token.SELECT {
+			stmt, err := p.parseSelect()
+			if err != nil {
+				return nil, err
+			}
+			if err := p.expectToken(token.RPAREN); err != nil {
+				return nil, err
+			}
+			return &ast.ScalarExpr{Subquery: stmt}, nil
+		}
 		expr, err := p.parseExpr()
 		if err != nil {
 			return nil, err

@@ -272,6 +272,7 @@ func (e *Executor) executeSelectWithoutTable(stmt *ast.SelectStmt) (*Result, err
 	var colNames []string
 	var row Row
 
+	eval := newLiteralEvaluator(e)
 	for _, colExpr := range stmt.Columns {
 		alias := ""
 		inner := colExpr
@@ -279,7 +280,7 @@ func (e *Executor) executeSelectWithoutTable(stmt *ast.SelectStmt) (*Result, err
 			alias = a.Alias
 			inner = a.Expr
 		}
-		val, err := evalLiteral(inner)
+		val, err := eval.Eval(inner, nil)
 		if err != nil {
 			return nil, err
 		}

@@ -454,6 +454,88 @@ func (e *Executor) tryIndexRangeScan(where ast.Expr, info *TableInfo) ([]int64, 
 	return nil, false
 }
 
+// indexOrderResult describes how an index can satisfy ORDER BY.
+type indexOrderResult struct {
+	index     *SecondaryIndex // nil if PK ordering
+	reverse   bool            // true for DESC (first ORDER BY column direction)
+	usePK     bool            // true if ORDER BY on PK column
+	fullOrder bool            // true: no sort needed, false: only first column ordered
+	// WHERE range conditions combinable with this index
+	fromVal       *Value
+	fromInclusive bool
+	toVal         *Value
+	toInclusive   bool
+}
+
+// tryIndexOrder checks if ORDER BY can be satisfied (fully or partially) by an index or PK.
+// Returns nil if no index provides ordering for the first ORDER BY column.
+func (e *Executor) tryIndexOrder(
+	orderBy []ast.OrderByClause, where ast.Expr, info *TableInfo,
+	hasLimit bool,
+) *indexOrderResult {
+	if len(orderBy) == 0 {
+		return nil
+	}
+
+	// First ORDER BY expression must be a simple column reference
+	ident, ok := orderBy[0].Expr.(*ast.IdentExpr)
+	if !ok {
+		return nil
+	}
+	colName := strings.ToLower(ident.Name)
+
+	col, err := info.FindColumn(colName)
+	if err != nil {
+		return nil
+	}
+
+	reverse := orderBy[0].Desc
+	fullOrder := len(orderBy) == 1
+
+	// Extract range conditions from WHERE for potential combination
+	var rangeConds map[string]*rangeCondition
+	if where != nil {
+		rangeConds = extractRangeConditions(where)
+	}
+
+	// Check PK column
+	if info.PrimaryKeyCol >= 0 && col.Index == info.PrimaryKeyCol {
+		result := &indexOrderResult{
+			usePK:     true,
+			reverse:   reverse,
+			fullOrder: fullOrder,
+		}
+		return result
+	}
+
+	// Check secondary indexes
+	idx := e.storage.LookupSingleColumnIndex(info.Name, col.Index)
+	if idx == nil {
+		return nil
+	}
+
+	// Nullable column + LIMIT: fall back to avoid NULL ordering issues
+	if !col.NotNull && !col.PrimaryKey && hasLimit {
+		return nil
+	}
+
+	result := &indexOrderResult{
+		index:     idx,
+		reverse:   reverse,
+		fullOrder: fullOrder,
+	}
+
+	// Try to combine with WHERE range conditions on the same column
+	if rc, ok := rangeConds[colName]; ok {
+		result.fromVal = rc.fromVal
+		result.fromInclusive = rc.fromInclusive
+		result.toVal = rc.toVal
+		result.toInclusive = rc.toInclusive
+	}
+
+	return result
+}
+
 // tryIndexScan attempts to use an index for the WHERE clause.
 // Tries PK direct lookup, then equality lookup, then IN lookup, then range scan.
 // Returns BTree keys and whether an index was used.

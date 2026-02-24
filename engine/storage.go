@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 
 	"github.com/walf443/oresql/btree"
@@ -187,6 +188,60 @@ func (si *SecondaryIndex) RangeScan(fromVal *Value, fromInclusive bool, toVal *V
 		return true
 	})
 	return keys
+}
+
+// OrderedRangeScan iterates the index in key order, calling fn for each row BTree key.
+// reverse=true for descending order. Row keys within each index entry are sorted
+// for deterministic order. fn returning false stops the scan.
+func (si *SecondaryIndex) OrderedRangeScan(
+	fromVal *Value, fromInclusive bool,
+	toVal *Value, toInclusive bool,
+	reverse bool,
+	fn func(rowKey int64) bool,
+) {
+	if len(si.Info.ColumnIdxs) != 1 {
+		return
+	}
+
+	var fromKey *KeyEncoding
+	var toKey *KeyEncoding
+	if fromVal != nil {
+		k := encodeSingleValue(*fromVal)
+		fromKey = &k
+	}
+	if toVal != nil {
+		k := encodeSingleValue(*toVal)
+		toKey = &k
+	}
+
+	iterFn := func(key KeyEncoding, value any) bool {
+		keySet := value.(map[int64]struct{})
+		keys := make([]int64, 0, len(keySet))
+		for k := range keySet {
+			keys = append(keys, k)
+		}
+		sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+		if reverse {
+			for i := len(keys) - 1; i >= 0; i-- {
+				if !fn(keys[i]) {
+					return false
+				}
+			}
+		} else {
+			for _, k := range keys {
+				if !fn(k) {
+					return false
+				}
+			}
+		}
+		return true
+	}
+
+	if reverse {
+		si.tree.ForEachRangeReverse(fromKey, fromInclusive, toKey, toInclusive, iterFn)
+	} else {
+		si.tree.ForEachRange(fromKey, fromInclusive, toKey, toInclusive, iterFn)
+	}
 }
 
 // Lookup returns the BTree keys matching the given composite values.
@@ -673,6 +728,33 @@ func (s *Storage) Scan(tableName string) ([]Row, error) {
 		rows = append(rows, value.(Row))
 		return true
 	})
+	return rows, nil
+}
+
+// ScanOrdered returns rows in PK order (ascending or descending).
+// limit > 0 enables early termination after limit rows.
+func (s *Storage) ScanOrdered(tableName string, reverse bool, limit int) ([]Row, error) {
+	lower := strings.ToLower(tableName)
+	tbl, ok := s.tables[lower]
+	if !ok {
+		return nil, fmt.Errorf("table %q does not exist in storage", tableName)
+	}
+	var rows []Row
+	stopped := false
+	iterFn := func(key int64, value any) bool {
+		rows = append(rows, value.(Row))
+		if limit > 0 && len(rows) >= limit {
+			stopped = true
+			return false
+		}
+		return true
+	}
+	if reverse {
+		tbl.tree.ForEachReverse(iterFn)
+	} else {
+		tbl.tree.ForEach(iterFn)
+	}
+	_ = stopped
 	return rows, nil
 }
 

@@ -571,6 +571,182 @@ func ptr[T any](v T) *T {
 	return &v
 }
 
+// --- ForEachReverse tests ---
+
+func TestForEachReverse(t *testing.T) {
+	tree := New[int64](4)
+	keys := []int64{50, 20, 80, 10, 30, 60, 90, 5, 15, 25, 35}
+	for _, k := range keys {
+		tree.Insert(k, nil)
+	}
+
+	var result []int64
+	tree.ForEachReverse(func(key int64, value any) bool {
+		result = append(result, key)
+		return true
+	})
+
+	if len(result) != len(keys) {
+		t.Fatalf("expected %d keys, got %d", len(keys), len(result))
+	}
+	for i := 1; i < len(result); i++ {
+		if result[i] >= result[i-1] {
+			t.Errorf("keys not in descending order: %v", result)
+			break
+		}
+	}
+}
+
+func TestForEachReverseEarlyTermination(t *testing.T) {
+	tree := New[int64](4)
+	for i := int64(1); i <= 100; i++ {
+		tree.Insert(i, nil)
+	}
+
+	count := 0
+	tree.ForEachReverse(func(key int64, value any) bool {
+		count++
+		return count < 5
+	})
+
+	if count != 5 {
+		t.Errorf("expected ForEachReverse to stop after 5 items, got %d", count)
+	}
+}
+
+func TestForEachRangeReverse(t *testing.T) {
+	tree := New[int64](4)
+	for i := int64(1); i <= 10; i++ {
+		tree.Insert(i, i*10)
+	}
+
+	tests := []struct {
+		name          string
+		from          *int64
+		fromInclusive bool
+		to            *int64
+		toInclusive   bool
+		wantKeys      []int64
+	}{
+		{
+			name:          "closed interval [3,7] descending",
+			from:          ptr(int64(3)),
+			fromInclusive: true,
+			to:            ptr(int64(7)),
+			toInclusive:   true,
+			wantKeys:      []int64{7, 6, 5, 4, 3},
+		},
+		{
+			name:          "open interval (3,7) descending",
+			from:          ptr(int64(3)),
+			fromInclusive: false,
+			to:            ptr(int64(7)),
+			toInclusive:   false,
+			wantKeys:      []int64{6, 5, 4},
+		},
+		{
+			name:          "half-open [3,7) descending",
+			from:          ptr(int64(3)),
+			fromInclusive: true,
+			to:            ptr(int64(7)),
+			toInclusive:   false,
+			wantKeys:      []int64{6, 5, 4, 3},
+		},
+		{
+			name:          "half-open (3,7] descending",
+			from:          ptr(int64(3)),
+			fromInclusive: false,
+			to:            ptr(int64(7)),
+			toInclusive:   true,
+			wantKeys:      []int64{7, 6, 5, 4},
+		},
+		{
+			name:          "no lower bound (,5] descending",
+			from:          nil,
+			fromInclusive: false,
+			to:            ptr(int64(5)),
+			toInclusive:   true,
+			wantKeys:      []int64{5, 4, 3, 2, 1},
+		},
+		{
+			name:          "no upper bound [5,) descending",
+			from:          ptr(int64(5)),
+			fromInclusive: true,
+			to:            nil,
+			toInclusive:   false,
+			wantKeys:      []int64{10, 9, 8, 7, 6, 5},
+		},
+		{
+			name:          "no bounds (all) descending",
+			from:          nil,
+			fromInclusive: false,
+			to:            nil,
+			toInclusive:   false,
+			wantKeys:      []int64{10, 9, 8, 7, 6, 5, 4, 3, 2, 1},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got []int64
+			tree.ForEachRangeReverse(tt.from, tt.fromInclusive, tt.to, tt.toInclusive, func(key int64, value any) bool {
+				got = append(got, key)
+				return true
+			})
+			if len(got) != len(tt.wantKeys) {
+				t.Fatalf("expected %d keys, got %d: %v", len(tt.wantKeys), len(got), got)
+			}
+			for i := range tt.wantKeys {
+				if got[i] != tt.wantKeys[i] {
+					t.Errorf("position %d: expected %d, got %d", i, tt.wantKeys[i], got[i])
+				}
+			}
+		})
+	}
+}
+
+func TestForEachRangeReverseNoMatch(t *testing.T) {
+	tree := New[int64](4)
+	for i := int64(1); i <= 5; i++ {
+		tree.Insert(i, nil)
+	}
+
+	var got []int64
+	from := int64(10)
+	to := int64(20)
+	tree.ForEachRangeReverse(&from, true, &to, true, func(key int64, value any) bool {
+		got = append(got, key)
+		return true
+	})
+	if len(got) != 0 {
+		t.Errorf("expected 0 keys, got %d: %v", len(got), got)
+	}
+}
+
+func TestForEachReverseStringKeys(t *testing.T) {
+	tree := New[string](4)
+	words := []string{"apple", "banana", "cherry", "date", "elderberry", "fig", "grape"}
+	for _, w := range words {
+		tree.Put(w, nil)
+	}
+
+	var got []string
+	tree.ForEachReverse(func(key string, value any) bool {
+		got = append(got, key)
+		return true
+	})
+
+	expected := []string{"grape", "fig", "elderberry", "date", "cherry", "banana", "apple"}
+	if len(got) != len(expected) {
+		t.Fatalf("expected %d keys, got %d: %v", len(expected), len(got), got)
+	}
+	for i := range expected {
+		if got[i] != expected[i] {
+			t.Errorf("position %d: expected %s, got %s", i, expected[i], got[i])
+		}
+	}
+}
+
 func TestStringBTreeSortedKeys(t *testing.T) {
 	tree := New[string](4)
 	input := []string{"z", "m", "a", "f", "x", "b"}

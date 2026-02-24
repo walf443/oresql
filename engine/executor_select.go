@@ -13,6 +13,17 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 		return e.executeSelectWithoutTable(stmt)
 	}
 
+	// Try index-ordered scan for ORDER BY optimization
+	if len(stmt.OrderBy) > 0 && len(stmt.Joins) == 0 && stmt.TableAlias == "" &&
+		len(stmt.GroupBy) == 0 && !hasAggregate(stmt.Columns) && !stmt.Distinct {
+		info, err := e.catalog.GetTable(stmt.TableName)
+		if err == nil {
+			if ior := e.tryIndexOrder(stmt.OrderBy, stmt.Where, info, stmt.Limit != nil); ior != nil {
+				return e.executeSelectWithIndexOrder(stmt, info, ior)
+			}
+		}
+	}
+
 	// Determine if early limit termination is safe
 	canEarlyLimit := stmt.Limit != nil &&
 		len(stmt.OrderBy) == 0 &&
@@ -125,6 +136,261 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 	rows = applyLimit(rows, stmt.Limit)
 
 	return &Result{Columns: colNames, Rows: rows}, nil
+}
+
+// executeSelectWithIndexOrder executes a SELECT using index-ordered scan.
+// WHERE is applied during scan (Phase 2 skipped).
+// For fullOrder, ORDER BY sort is skipped entirely.
+// For partialOrder, sort is applied on a reduced row set.
+func (e *Executor) executeSelectWithIndexOrder(
+	stmt *ast.SelectStmt, info *TableInfo, ior *indexOrderResult,
+) (*Result, error) {
+	rows, eval, err := e.scanSourceOrderedByIndex(stmt, info, ior)
+	if err != nil {
+		return nil, err
+	}
+
+	// For partialOrder, need to sort by remaining ORDER BY columns
+	if !ior.fullOrder {
+		if stmt.Limit != nil {
+			topK := int(*stmt.Limit)
+			if stmt.Offset != nil {
+				topK += int(*stmt.Offset)
+			}
+			rows, err = sortRowsTopK(rows, stmt.OrderBy, eval, rowIdentity, topK)
+		} else {
+			rows, err = sortRows(rows, stmt.OrderBy, eval, rowIdentity)
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Phase 5: Projection
+	colNames, colExprs, isStar, err := resolveSelectColumns(stmt.Columns, eval)
+	if err != nil {
+		return nil, err
+	}
+	rows, err = projectRows(rows, colExprs, isStar, eval)
+	if err != nil {
+		return nil, err
+	}
+
+	// Phase 7: OFFSET
+	rows = applyOffset(rows, stmt.Offset)
+
+	// Phase 8: LIMIT
+	rows = applyLimit(rows, stmt.Limit)
+
+	return &Result{Columns: colNames, Rows: rows}, nil
+}
+
+// scanSourceOrderedByIndex scans rows using index order to satisfy ORDER BY.
+// Returns rows in the correct order for fullOrder, or partially ordered rows for partialOrder.
+// WHERE filtering is applied during the scan.
+func (e *Executor) scanSourceOrderedByIndex(
+	stmt *ast.SelectStmt, info *TableInfo, ior *indexOrderResult,
+) ([]Row, ExprEvaluator, error) {
+	eval := newTableEvaluator(e, info)
+	lower := strings.ToLower(info.Name)
+	tbl := e.storage.tables[lower]
+
+	needed := 0
+	if stmt.Limit != nil {
+		needed = int(*stmt.Limit)
+		if stmt.Offset != nil {
+			needed += int(*stmt.Offset)
+		}
+	}
+
+	if ior.fullOrder {
+		return e.scanFullOrder(stmt, info, ior, tbl, eval, needed)
+	}
+	return e.scanPartialOrder(stmt, info, ior, tbl, eval, needed)
+}
+
+// scanFullOrder handles the case where ORDER BY is a single column with an index.
+// No sort needed after scan; rows are in final order.
+func (e *Executor) scanFullOrder(
+	stmt *ast.SelectStmt, info *TableInfo, ior *indexOrderResult,
+	tbl *Table, eval ExprEvaluator, needed int,
+) ([]Row, ExprEvaluator, error) {
+	var rows []Row
+
+	if ior.usePK {
+		// PK order scan
+		iterFn := func(key int64, value any) bool {
+			row := value.(Row)
+			if stmt.Where != nil {
+				val, err := eval.Eval(stmt.Where, row)
+				if err != nil {
+					return false
+				}
+				b, ok := val.(bool)
+				if !ok || !b {
+					return true
+				}
+			}
+			rows = append(rows, row)
+			if needed > 0 && len(rows) >= needed {
+				return false
+			}
+			return true
+		}
+		if ior.reverse {
+			tbl.tree.ForEachReverse(iterFn)
+		} else {
+			tbl.tree.ForEach(iterFn)
+		}
+	} else {
+		// Secondary index order scan
+		ior.index.OrderedRangeScan(
+			ior.fromVal, ior.fromInclusive,
+			ior.toVal, ior.toInclusive,
+			ior.reverse,
+			func(rowKey int64) bool {
+				val, found := tbl.tree.Get(rowKey)
+				if !found {
+					return true
+				}
+				row := val.(Row)
+				if stmt.Where != nil {
+					wVal, err := eval.Eval(stmt.Where, row)
+					if err != nil {
+						return false
+					}
+					b, ok := wVal.(bool)
+					if !ok || !b {
+						return true
+					}
+				}
+				rows = append(rows, row)
+				if needed > 0 && len(rows) >= needed {
+					return false
+				}
+				return true
+			},
+		)
+	}
+
+	// For non-PK, nullable columns without LIMIT: move NULLs to end
+	if !ior.usePK && ior.index != nil {
+		colIdx := ior.index.Info.ColumnIdxs[0]
+		col := info.Columns[colIdx]
+		if !col.NotNull && !col.PrimaryKey {
+			// Move NULL rows to end
+			var nonNull, nullRows []Row
+			for _, row := range rows {
+				if row[colIdx] == nil {
+					nullRows = append(nullRows, row)
+				} else {
+					nonNull = append(nonNull, row)
+				}
+			}
+			rows = append(nonNull, nullRows...)
+		}
+	}
+
+	return rows, eval, nil
+}
+
+// scanPartialOrder handles ORDER BY with multiple columns where only the first has an index.
+// Reads rows in first-column order, applying group boundary cutoff for LIMIT optimization.
+func (e *Executor) scanPartialOrder(
+	stmt *ast.SelectStmt, info *TableInfo, ior *indexOrderResult,
+	tbl *Table, eval ExprEvaluator, needed int,
+) ([]Row, ExprEvaluator, error) {
+	var rows []Row
+
+	// Determine the column index for the first ORDER BY column
+	ident := stmt.OrderBy[0].Expr.(*ast.IdentExpr)
+	orderCol, _ := info.FindColumn(ident.Name)
+	orderColIdx := orderCol.Index
+
+	var prevKeyVal Value
+	firstRow := true
+
+	scanFn := func(rowKey int64) bool {
+		val, found := tbl.tree.Get(rowKey)
+		if !found {
+			return true
+		}
+		row := val.(Row)
+		if stmt.Where != nil {
+			wVal, err := eval.Eval(stmt.Where, row)
+			if err != nil {
+				return false
+			}
+			b, ok := wVal.(bool)
+			if !ok || !b {
+				return true
+			}
+		}
+
+		currentKeyVal := row[orderColIdx]
+		if needed > 0 && len(rows) >= needed && !firstRow {
+			// Check if first column value changed
+			if !valuesEqual(currentKeyVal, prevKeyVal) {
+				return false // stop
+			}
+		}
+		prevKeyVal = currentKeyVal
+		firstRow = false
+		rows = append(rows, row)
+		return true
+	}
+
+	if ior.usePK {
+		iterFn := func(key int64, value any) bool {
+			row := value.(Row)
+			if stmt.Where != nil {
+				wVal, err := eval.Eval(stmt.Where, row)
+				if err != nil {
+					return false
+				}
+				b, ok := wVal.(bool)
+				if !ok || !b {
+					return true
+				}
+			}
+
+			currentKeyVal := row[orderColIdx]
+			if needed > 0 && len(rows) >= needed && !firstRow {
+				if !valuesEqual(currentKeyVal, prevKeyVal) {
+					return false
+				}
+			}
+			prevKeyVal = currentKeyVal
+			firstRow = false
+			rows = append(rows, row)
+			return true
+		}
+		if ior.reverse {
+			tbl.tree.ForEachReverse(iterFn)
+		} else {
+			tbl.tree.ForEach(iterFn)
+		}
+	} else {
+		ior.index.OrderedRangeScan(
+			ior.fromVal, ior.fromInclusive,
+			ior.toVal, ior.toInclusive,
+			ior.reverse,
+			scanFn,
+		)
+	}
+
+	return rows, eval, nil
+}
+
+// valuesEqual compares two Values for equality (including nil == nil).
+func valuesEqual(a, b Value) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return compareValues(a, b) == 0
 }
 
 // scanSource returns the source rows and an appropriate evaluator for the query.

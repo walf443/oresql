@@ -393,6 +393,110 @@ func (n *node[K]) forEachRange(from *K, fromInclusive bool, to *K, toInclusive b
 	return true
 }
 
+// ForEachReverse iterates over all entries in descending key order.
+// The callback should return true to continue, false to stop.
+func (t *BTree[K]) ForEachReverse(fn func(key K, value any) bool) {
+	if t.root != nil {
+		t.root.forEachReverse(fn)
+	}
+}
+
+func (n *node[K]) forEachReverse(fn func(key K, value any) bool) bool {
+	// Visit rightmost child first, then entries right-to-left
+	if !n.leaf {
+		if !n.children[len(n.entries)].forEachReverse(fn) {
+			return false
+		}
+	}
+	for i := len(n.entries) - 1; i >= 0; i-- {
+		if !fn(n.entries[i].key, n.entries[i].value) {
+			return false
+		}
+		if !n.leaf {
+			if !n.children[i].forEachReverse(fn) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// ForEachRangeReverse iterates over entries whose keys fall within the specified range in descending order.
+// from == nil means no lower bound; to == nil means no upper bound.
+// fromInclusive/toInclusive control whether the boundaries are included.
+// The callback should return true to continue, false to stop.
+func (t *BTree[K]) ForEachRangeReverse(from *K, fromInclusive bool, to *K, toInclusive bool, fn func(key K, value any) bool) {
+	if t.root != nil {
+		t.root.forEachRangeReverse(from, fromInclusive, to, toInclusive, fn)
+	}
+}
+
+func (n *node[K]) forEachRangeReverse(from *K, fromInclusive bool, to *K, toInclusive bool, fn func(key K, value any) bool) bool {
+	// Find starting index: we scan entries from right to left
+	endIdx := len(n.entries) - 1
+	if to != nil {
+		// Find position of *to; entries[i] with key > *to can be skipped
+		endIdx = n.search(*to)
+		if endIdx < len(n.entries) && n.entries[endIdx].key == *to {
+			if !toInclusive {
+				endIdx--
+			}
+		} else {
+			endIdx--
+		}
+	}
+
+	// Visit the rightmost child that could contain keys <= endIdx entry
+	if !n.leaf && endIdx+1 < len(n.children) {
+		if !n.children[endIdx+1].forEachRangeReverse(from, fromInclusive, to, toInclusive, fn) {
+			return false
+		}
+	}
+
+	for i := endIdx; i >= 0; i-- {
+		key := n.entries[i].key
+
+		// Check lower bound: if key is below the lower bound, stop
+		if from != nil {
+			if fromInclusive {
+				if key < *from {
+					return true
+				}
+			} else {
+				if key <= *from {
+					return true
+				}
+			}
+		}
+
+		// Check upper bound: skip keys above upper bound
+		if to != nil {
+			if toInclusive {
+				if key > *to {
+					goto visitChild
+				}
+			} else {
+				if key >= *to {
+					goto visitChild
+				}
+			}
+		}
+
+		if !fn(key, n.entries[i].value) {
+			return false
+		}
+
+	visitChild:
+		if !n.leaf {
+			if !n.children[i].forEachRangeReverse(from, fromInclusive, to, toInclusive, fn) {
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
 func (n *node[K]) forEach(fn func(key K, value any) bool) bool {
 	for i, e := range n.entries {
 		if !n.leaf {

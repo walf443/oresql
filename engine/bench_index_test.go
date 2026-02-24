@@ -941,3 +941,115 @@ func BenchmarkSelectOrderByNoLimit_100000(b *testing.B) {
 		}
 	}
 }
+
+// --- ORDER BY + index benchmarks ---
+
+func BenchmarkOrderByWithIndex_10000(b *testing.B) {
+	exec := setupBenchTable(b, 10000, true)
+	sql := "SELECT * FROM bench ORDER BY val LIMIT 10"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkOrderByNoIndex_10000(b *testing.B) {
+	exec := setupBenchTable(b, 10000, false)
+	sql := "SELECT * FROM bench ORDER BY val LIMIT 10"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkOrderByDescWithIndex_10000(b *testing.B) {
+	exec := setupBenchTable(b, 10000, true)
+	sql := "SELECT * FROM bench ORDER BY val DESC LIMIT 10"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkOrderByWhereRangeWithIndex_10000(b *testing.B) {
+	exec := setupBenchTable(b, 10000, true)
+	sql := "SELECT * FROM bench WHERE val > 50000 ORDER BY val LIMIT 10"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkOrderByPKAsc_10000(b *testing.B) {
+	exec := setupBenchTable(b, 10000, false)
+	sql := "SELECT * FROM bench ORDER BY id LIMIT 10"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkOrderByPKAsc_100000(b *testing.B) {
+	exec := setupBenchTable(b, 100000, false)
+	sql := "SELECT * FROM bench ORDER BY id LIMIT 10"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkOrderByPKDesc_10000(b *testing.B) {
+	exec := setupBenchTable(b, 10000, false)
+	sql := "SELECT * FROM bench ORDER BY id DESC LIMIT 10"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkOrderByPKDesc_100000(b *testing.B) {
+	exec := setupBenchTable(b, 100000, false)
+	sql := "SELECT * FROM bench ORDER BY id DESC LIMIT 10"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkOrderByPKNoLimit_10000(b *testing.B) {
+	exec := setupBenchTable(b, 10000, false)
+	sql := "SELECT * FROM bench ORDER BY id"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkOrderByPKNoLimit_100000(b *testing.B) {
+	exec := setupBenchTable(b, 100000, false)
+	sql := "SELECT * FROM bench ORDER BY id"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

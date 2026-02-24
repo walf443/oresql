@@ -1022,3 +1022,256 @@ func TestOrderByLimitTopKWithNull(t *testing.T) {
 		}
 	}
 }
+
+// --- Index ORDER BY tests ---
+
+func TestIndexOrderByAsc(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT)")
+	run(t, exec, "CREATE INDEX idx_val ON t(val)")
+	for i := 1; i <= 10; i++ {
+		run(t, exec, fmt.Sprintf("INSERT INTO t VALUES (%d, %d)", i, (11-i)*10))
+	}
+
+	result := run(t, exec, "SELECT id, val FROM t ORDER BY val ASC")
+	if len(result.Rows) != 10 {
+		t.Fatalf("expected 10 rows, got %d", len(result.Rows))
+	}
+	for i := 0; i < 10; i++ {
+		expected := int64((i + 1) * 10)
+		if result.Rows[i][1] != expected {
+			t.Errorf("row %d: expected val=%d, got %v", i, expected, result.Rows[i][1])
+		}
+	}
+}
+
+func TestIndexOrderByDesc(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT)")
+	run(t, exec, "CREATE INDEX idx_val ON t(val)")
+	for i := 1; i <= 10; i++ {
+		run(t, exec, fmt.Sprintf("INSERT INTO t VALUES (%d, %d)", i, i*10))
+	}
+
+	result := run(t, exec, "SELECT id, val FROM t ORDER BY val DESC")
+	if len(result.Rows) != 10 {
+		t.Fatalf("expected 10 rows, got %d", len(result.Rows))
+	}
+	for i := 0; i < 10; i++ {
+		expected := int64((10 - i) * 10)
+		if result.Rows[i][1] != expected {
+			t.Errorf("row %d: expected val=%d, got %v", i, expected, result.Rows[i][1])
+		}
+	}
+}
+
+func TestPKOrderByAscDesc(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT)")
+	for i := 1; i <= 5; i++ {
+		run(t, exec, fmt.Sprintf("INSERT INTO t VALUES (%d, %d)", i, i*10))
+	}
+
+	// ASC
+	result := run(t, exec, "SELECT id FROM t ORDER BY id ASC")
+	expected := []int64{1, 2, 3, 4, 5}
+	for i, exp := range expected {
+		if result.Rows[i][0] != exp {
+			t.Errorf("ASC[%d]: expected %d, got %v", i, exp, result.Rows[i][0])
+		}
+	}
+
+	// DESC
+	result = run(t, exec, "SELECT id FROM t ORDER BY id DESC")
+	expected = []int64{5, 4, 3, 2, 1}
+	for i, exp := range expected {
+		if result.Rows[i][0] != exp {
+			t.Errorf("DESC[%d]: expected %d, got %v", i, exp, result.Rows[i][0])
+		}
+	}
+}
+
+func TestIndexOrderByLimit(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT)")
+	run(t, exec, "CREATE INDEX idx_val ON t(val)")
+	for i := 1; i <= 100; i++ {
+		run(t, exec, fmt.Sprintf("INSERT INTO t VALUES (%d, %d)", i, i*10))
+	}
+
+	result := run(t, exec, "SELECT val FROM t ORDER BY val ASC LIMIT 5")
+	if len(result.Rows) != 5 {
+		t.Fatalf("expected 5 rows, got %d", len(result.Rows))
+	}
+	expected := []int64{10, 20, 30, 40, 50}
+	for i, exp := range expected {
+		if result.Rows[i][0] != exp {
+			t.Errorf("row %d: expected %d, got %v", i, exp, result.Rows[i][0])
+		}
+	}
+
+	result = run(t, exec, "SELECT val FROM t ORDER BY val DESC LIMIT 5")
+	if len(result.Rows) != 5 {
+		t.Fatalf("expected 5 rows, got %d", len(result.Rows))
+	}
+	expected = []int64{1000, 990, 980, 970, 960}
+	for i, exp := range expected {
+		if result.Rows[i][0] != exp {
+			t.Errorf("DESC row %d: expected %d, got %v", i, exp, result.Rows[i][0])
+		}
+	}
+}
+
+func TestIndexOrderByWithWhereRange(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT)")
+	run(t, exec, "CREATE INDEX idx_val ON t(val)")
+	for i := 1; i <= 100; i++ {
+		run(t, exec, fmt.Sprintf("INSERT INTO t VALUES (%d, %d)", i, i))
+	}
+
+	result := run(t, exec, "SELECT val FROM t WHERE val > 50 ORDER BY val ASC LIMIT 5")
+	if len(result.Rows) != 5 {
+		t.Fatalf("expected 5 rows, got %d", len(result.Rows))
+	}
+	expected := []int64{51, 52, 53, 54, 55}
+	for i, exp := range expected {
+		if result.Rows[i][0] != exp {
+			t.Errorf("row %d: expected %d, got %v", i, exp, result.Rows[i][0])
+		}
+	}
+}
+
+func TestIndexOrderByOffsetLimit(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT)")
+	run(t, exec, "CREATE INDEX idx_val ON t(val)")
+	for i := 1; i <= 20; i++ {
+		run(t, exec, fmt.Sprintf("INSERT INTO t VALUES (%d, %d)", i, i*10))
+	}
+
+	result := run(t, exec, "SELECT val FROM t ORDER BY val ASC LIMIT 3 OFFSET 5")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	expected := []int64{60, 70, 80}
+	for i, exp := range expected {
+		if result.Rows[i][0] != exp {
+			t.Errorf("row %d: expected %d, got %v", i, exp, result.Rows[i][0])
+		}
+	}
+}
+
+func TestIndexOrderByDuplicates(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT)")
+	run(t, exec, "CREATE INDEX idx_val ON t(val)")
+	// Insert duplicate val values
+	run(t, exec, "INSERT INTO t VALUES (1, 30)")
+	run(t, exec, "INSERT INTO t VALUES (2, 10)")
+	run(t, exec, "INSERT INTO t VALUES (3, 20)")
+	run(t, exec, "INSERT INTO t VALUES (4, 10)")
+	run(t, exec, "INSERT INTO t VALUES (5, 30)")
+	run(t, exec, "INSERT INTO t VALUES (6, 20)")
+
+	result := run(t, exec, "SELECT val FROM t ORDER BY val ASC")
+	if len(result.Rows) != 6 {
+		t.Fatalf("expected 6 rows, got %d", len(result.Rows))
+	}
+	expected := []int64{10, 10, 20, 20, 30, 30}
+	for i, exp := range expected {
+		if result.Rows[i][0] != exp {
+			t.Errorf("row %d: expected %d, got %v", i, exp, result.Rows[i][0])
+		}
+	}
+}
+
+func TestIndexOrderByMultiColumn(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, col1 INT, col2 INT)")
+	run(t, exec, "CREATE INDEX idx_col1 ON t(col1)")
+	run(t, exec, "INSERT INTO t VALUES (1, 2, 30)")
+	run(t, exec, "INSERT INTO t VALUES (2, 1, 20)")
+	run(t, exec, "INSERT INTO t VALUES (3, 2, 10)")
+	run(t, exec, "INSERT INTO t VALUES (4, 1, 40)")
+	run(t, exec, "INSERT INTO t VALUES (5, 3, 50)")
+
+	result := run(t, exec, "SELECT col1, col2 FROM t ORDER BY col1 ASC, col2 ASC")
+	if len(result.Rows) != 5 {
+		t.Fatalf("expected 5 rows, got %d", len(result.Rows))
+	}
+	type pair struct{ c1, c2 int64 }
+	expected := []pair{{1, 20}, {1, 40}, {2, 10}, {2, 30}, {3, 50}}
+	for i, exp := range expected {
+		if result.Rows[i][0] != exp.c1 || result.Rows[i][1] != exp.c2 {
+			t.Errorf("row %d: expected (%d,%d), got (%v,%v)", i, exp.c1, exp.c2, result.Rows[i][0], result.Rows[i][1])
+		}
+	}
+}
+
+func TestIndexOrderByMultiColumnLimit(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, col1 INT, col2 INT)")
+	run(t, exec, "CREATE INDEX idx_col1 ON t(col1)")
+	// col1: 1,1,1,2,2,2,3,3,3
+	for i := 1; i <= 9; i++ {
+		run(t, exec, fmt.Sprintf("INSERT INTO t VALUES (%d, %d, %d)", i, (i-1)/3+1, (10-i)*10))
+	}
+
+	result := run(t, exec, "SELECT col1, col2 FROM t ORDER BY col1 ASC, col2 ASC LIMIT 4")
+	if len(result.Rows) != 4 {
+		t.Fatalf("expected 4 rows, got %d", len(result.Rows))
+	}
+	type pair struct{ c1, c2 int64 }
+	expected := []pair{{1, 70}, {1, 80}, {1, 90}, {2, 40}}
+	for i, exp := range expected {
+		if result.Rows[i][0] != exp.c1 || result.Rows[i][1] != exp.c2 {
+			t.Errorf("row %d: expected (%d,%d), got (%v,%v)", i, exp.c1, exp.c2, result.Rows[i][0], result.Rows[i][1])
+		}
+	}
+}
+
+func TestOrderByNonIndexedFallback(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT, other INT)")
+	run(t, exec, "CREATE INDEX idx_val ON t(val)")
+	for i := 1; i <= 5; i++ {
+		run(t, exec, fmt.Sprintf("INSERT INTO t VALUES (%d, %d, %d)", i, i*10, (6-i)*10))
+	}
+
+	// ORDER BY other (no index) should still work via normal sort path
+	result := run(t, exec, "SELECT other FROM t ORDER BY other ASC")
+	if len(result.Rows) != 5 {
+		t.Fatalf("expected 5 rows, got %d", len(result.Rows))
+	}
+	expected := []int64{10, 20, 30, 40, 50}
+	for i, exp := range expected {
+		if result.Rows[i][0] != exp {
+			t.Errorf("row %d: expected %d, got %v", i, exp, result.Rows[i][0])
+		}
+	}
+}
+
+func TestOrderByWithGroupByFallback(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT, grp INT)")
+	run(t, exec, "CREATE INDEX idx_grp ON t(grp)")
+	for i := 1; i <= 10; i++ {
+		run(t, exec, fmt.Sprintf("INSERT INTO t VALUES (%d, %d, %d)", i, i*10, i%3))
+	}
+
+	// GROUP BY + ORDER BY should use fallback (not index order)
+	result := run(t, exec, "SELECT grp, COUNT(*) FROM t GROUP BY grp ORDER BY grp ASC")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(0) {
+		t.Errorf("row 0: expected grp=0, got %v", result.Rows[0][0])
+	}
+	if result.Rows[1][0] != int64(1) {
+		t.Errorf("row 1: expected grp=1, got %v", result.Rows[1][0])
+	}
+	if result.Rows[2][0] != int64(2) {
+		t.Errorf("row 2: expected grp=2, got %v", result.Rows[2][0])
+	}
+}

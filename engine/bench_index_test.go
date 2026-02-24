@@ -895,3 +895,49 @@ func BenchmarkDistinctWithOrder_10000(b *testing.B) {
 		}
 	}
 }
+
+// --- ORDER BY + LIMIT heap top-K benchmarks ---
+
+func BenchmarkSelectOrderByLimit_10000(b *testing.B) {
+	exec := setupBenchTable(b, 10000, false)
+	sql := "SELECT * FROM bench ORDER BY val LIMIT 10"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkSelectOrderByLimit_100000(b *testing.B) {
+	exec := setupBenchTable(b, 100000, false)
+	sql := "SELECT * FROM bench ORDER BY val LIMIT 10"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkSelectOrderByNoLimit_10000(b *testing.B) {
+	exec := setupBenchTable(b, 10000, false)
+	sql := "SELECT * FROM bench ORDER BY val"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkSelectOrderByNoLimit_100000(b *testing.B) {
+	exec := setupBenchTable(b, 100000, false)
+	sql := "SELECT * FROM bench ORDER BY val"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"container/heap"
 	"fmt"
 	"sort"
 
@@ -224,6 +225,116 @@ func resolveSelectColumns(columns []ast.Expr, eval ExprEvaluator) ([]string, []a
 		}
 	}
 	return colNames, colExprs, false, nil
+}
+
+// sortKey holds pre-computed ORDER BY values for a row.
+type sortKey struct {
+	values []Value
+	index  int // original index in the input slice
+}
+
+// topKHeap is a max-heap of sortKeys, keeping at most K smallest elements.
+// "Max-heap" means the largest element is at the top, so we can efficiently
+// evict it when a smaller element arrives.
+type topKHeap struct {
+	keys    []sortKey
+	orderBy []ast.OrderByClause
+}
+
+func (h *topKHeap) Len() int { return len(h.keys) }
+func (h *topKHeap) Less(i, j int) bool {
+	// Reversed comparison: largest at top for max-heap
+	return compareSortKeys(h.keys[i].values, h.keys[j].values, h.orderBy) > 0
+}
+func (h *topKHeap) Swap(i, j int) { h.keys[i], h.keys[j] = h.keys[j], h.keys[i] }
+func (h *topKHeap) Push(x any)    { h.keys = append(h.keys, x.(sortKey)) }
+func (h *topKHeap) Pop() any {
+	old := h.keys
+	n := len(old)
+	x := old[n-1]
+	h.keys = old[:n-1]
+	return x
+}
+
+// compareSortKeys compares two sort key value slices using ORDER BY clauses.
+// Returns negative if a < b, positive if a > b, 0 if equal.
+func compareSortKeys(a, b []Value, orderBy []ast.OrderByClause) int {
+	for i, ob := range orderBy {
+		vi, vj := a[i], b[i]
+		// NULLs always sort last regardless of ASC/DESC
+		if vi == nil && vj == nil {
+			continue
+		}
+		if vi == nil {
+			return 1 // NULL sorts last → a is "larger"
+		}
+		if vj == nil {
+			return -1 // NULL sorts last → b is "larger"
+		}
+		cmp := compareValues(vi, vj)
+		if cmp == 0 {
+			continue
+		}
+		if ob.Desc {
+			cmp = -cmp
+		}
+		return cmp
+	}
+	return 0
+}
+
+// sortRowsTopK sorts rows by ORDER BY and returns at most limit rows.
+// Uses heap-based top-K when beneficial (limit*4 < len(rows)), otherwise falls back to full sort.
+func sortRowsTopK[T any](rows []T, orderBy []ast.OrderByClause, eval ExprEvaluator,
+	rowOf func(T) Row, limit int) ([]T, error) {
+
+	if len(orderBy) == 0 || len(rows) == 0 {
+		return rows, nil
+	}
+	if limit <= 0 || limit*4 >= len(rows) {
+		// Fall back to full sort (not worth heap overhead)
+		return sortRows(rows, orderBy, eval, rowOf)
+	}
+
+	// Phase 1: Pre-compute sort keys for all rows — O(N * C) evaluations
+	keys := make([]sortKey, len(rows))
+	for i, item := range rows {
+		vals := make([]Value, len(orderBy))
+		for j, ob := range orderBy {
+			v, err := eval.Eval(ob.Expr, rowOf(item))
+			if err != nil {
+				return nil, err
+			}
+			vals[j] = v
+		}
+		keys[i] = sortKey{values: vals, index: i}
+	}
+
+	// Phase 2: Build max-heap of size K — O(N log K)
+	h := &topKHeap{orderBy: orderBy}
+	heap.Init(h)
+	for _, k := range keys {
+		if h.Len() < limit {
+			heap.Push(h, k)
+		} else if compareSortKeys(k.values, h.keys[0].values, orderBy) < 0 {
+			// New element is smaller than the max in heap → replace
+			h.keys[0] = k
+			heap.Fix(h, 0)
+		}
+	}
+
+	// Phase 3: Extract results in sorted order — O(K log K)
+	n := h.Len()
+	sorted := make([]sortKey, n)
+	for i := n - 1; i >= 0; i-- {
+		sorted[i] = heap.Pop(h).(sortKey)
+	}
+
+	result := make([]T, n)
+	for i, sk := range sorted {
+		result[i] = rows[sk.index]
+	}
+	return result, nil
 }
 
 // projectRows projects each row to the selected columns using the evaluator.

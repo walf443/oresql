@@ -32,7 +32,11 @@ func (e *Executor) executeDelete(stmt *ast.DeleteStmt) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	allRows, err = sortRows(allRows, stmt.OrderBy, eval, rowOfKeyRow)
+	if stmt.Limit != nil && len(stmt.OrderBy) > 0 {
+		allRows, err = sortRowsTopK(allRows, stmt.OrderBy, eval, rowOfKeyRow, int(*stmt.Limit))
+	} else {
+		allRows, err = sortRows(allRows, stmt.OrderBy, eval, rowOfKeyRow)
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -905,3 +905,120 @@ func TestStringFunctionsWithTable(t *testing.T) {
 		t.Errorf("expected id=2, got %v", result.Rows[0][0])
 	}
 }
+
+func TestOrderByLimitTopK(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (val INT)")
+	run(t, exec, "INSERT INTO t VALUES (5)")
+	run(t, exec, "INSERT INTO t VALUES (3)")
+	run(t, exec, "INSERT INTO t VALUES (1)")
+	run(t, exec, "INSERT INTO t VALUES (4)")
+	run(t, exec, "INSERT INTO t VALUES (2)")
+
+	// Case A: ORDER BY ASC + LIMIT
+	result := run(t, exec, "SELECT val FROM t ORDER BY val ASC LIMIT 3")
+	if len(result.Rows) != 3 {
+		t.Fatalf("Case A: expected 3 rows, got %d", len(result.Rows))
+	}
+	expected := []int64{1, 2, 3}
+	for i, exp := range expected {
+		if result.Rows[i][0] != exp {
+			t.Errorf("Case A[%d]: expected %d, got %v", i, exp, result.Rows[i][0])
+		}
+	}
+
+	// Case B: ORDER BY DESC + LIMIT
+	result = run(t, exec, "SELECT val FROM t ORDER BY val DESC LIMIT 2")
+	if len(result.Rows) != 2 {
+		t.Fatalf("Case B: expected 2 rows, got %d", len(result.Rows))
+	}
+	expected = []int64{5, 4}
+	for i, exp := range expected {
+		if result.Rows[i][0] != exp {
+			t.Errorf("Case B[%d]: expected %d, got %v", i, exp, result.Rows[i][0])
+		}
+	}
+
+	// Case C: ORDER BY + LIMIT + OFFSET
+	result = run(t, exec, "SELECT val FROM t ORDER BY val ASC LIMIT 2 OFFSET 1")
+	if len(result.Rows) != 2 {
+		t.Fatalf("Case C: expected 2 rows, got %d", len(result.Rows))
+	}
+	expected = []int64{2, 3}
+	for i, exp := range expected {
+		if result.Rows[i][0] != exp {
+			t.Errorf("Case C[%d]: expected %d, got %v", i, exp, result.Rows[i][0])
+		}
+	}
+
+	// Case F: LIMIT larger than row count (returns all rows sorted)
+	result = run(t, exec, "SELECT val FROM t ORDER BY val ASC LIMIT 100")
+	if len(result.Rows) != 5 {
+		t.Fatalf("Case F: expected 5 rows, got %d", len(result.Rows))
+	}
+	expected = []int64{1, 2, 3, 4, 5}
+	for i, exp := range expected {
+		if result.Rows[i][0] != exp {
+			t.Errorf("Case F[%d]: expected %d, got %v", i, exp, result.Rows[i][0])
+		}
+	}
+}
+
+func TestOrderByLimitTopKMultiColumn(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t2 (col1 INT, col2 TEXT)")
+	run(t, exec, "INSERT INTO t2 VALUES (1, 'b')")
+	run(t, exec, "INSERT INTO t2 VALUES (1, 'a')")
+	run(t, exec, "INSERT INTO t2 VALUES (2, 'c')")
+	run(t, exec, "INSERT INTO t2 VALUES (2, 'a')")
+
+	// Case D: Multi-column ORDER BY + LIMIT
+	result := run(t, exec, "SELECT col1, col2 FROM t2 ORDER BY col1 ASC, col2 ASC LIMIT 3")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	type row struct {
+		col1 int64
+		col2 string
+	}
+	expectedRows := []row{{1, "a"}, {1, "b"}, {2, "a"}}
+	for i, exp := range expectedRows {
+		if result.Rows[i][0] != exp.col1 || result.Rows[i][1] != exp.col2 {
+			t.Errorf("row[%d]: expected (%d, %s), got (%v, %v)", i, exp.col1, exp.col2, result.Rows[i][0], result.Rows[i][1])
+		}
+	}
+}
+
+func TestOrderByLimitTopKWithNull(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE tn (val INT)")
+	run(t, exec, "INSERT INTO tn VALUES (3)")
+	run(t, exec, "INSERT INTO tn VALUES (NULL)")
+	run(t, exec, "INSERT INTO tn VALUES (1)")
+	run(t, exec, "INSERT INTO tn VALUES (NULL)")
+	run(t, exec, "INSERT INTO tn VALUES (2)")
+
+	// Case E: NULLs sort last for ASC
+	result := run(t, exec, "SELECT val FROM tn ORDER BY val ASC LIMIT 3")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	expected := []interface{}{int64(1), int64(2), int64(3)}
+	for i, exp := range expected {
+		if result.Rows[i][0] != exp {
+			t.Errorf("ASC[%d]: expected %v, got %v", i, exp, result.Rows[i][0])
+		}
+	}
+
+	// NULLs sort last for DESC too
+	result = run(t, exec, "SELECT val FROM tn ORDER BY val DESC LIMIT 3")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	expected = []interface{}{int64(3), int64(2), int64(1)}
+	for i, exp := range expected {
+		if result.Rows[i][0] != exp {
+			t.Errorf("DESC[%d]: expected %v, got %v", i, exp, result.Rows[i][0])
+		}
+	}
+}

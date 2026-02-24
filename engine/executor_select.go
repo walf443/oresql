@@ -91,8 +91,16 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 		}
 	}
 
-	// Phase 4: ORDER BY
-	rows, err = sortRows(rows, stmt.OrderBy, eval, rowIdentity)
+	// Phase 4: ORDER BY (use heap-based top-K when LIMIT is present)
+	if stmt.Limit != nil && len(stmt.OrderBy) > 0 {
+		topK := int(*stmt.Limit)
+		if stmt.Offset != nil {
+			topK += int(*stmt.Offset)
+		}
+		rows, err = sortRowsTopK(rows, stmt.OrderBy, eval, rowIdentity, topK)
+	} else {
+		rows, err = sortRows(rows, stmt.OrderBy, eval, rowIdentity)
+	}
 	if err != nil {
 		return nil, err
 	}

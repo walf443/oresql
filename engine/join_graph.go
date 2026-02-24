@@ -855,7 +855,11 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 
 		// Nested loop join
 		isLeftJoin := edge != nil && edge.JoinType == ast.JoinLeft
-		var joined []Row
+		cap := 64
+		if earlyLimit > 0 {
+			cap = earlyLimit
+		}
+		joined := make([]Row, 0, cap)
 		earlyLimitReached := false
 		for _, outerRow := range currentRows {
 			if earlyLimitReached {
@@ -895,7 +899,7 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 						keys = nextIdx.Lookup([]Value{lookupVal})
 						// Intersect with LocalWhere index keys if available
 						if innerWhereKeys != nil {
-							var intersected []int64
+							intersected := make([]int64, 0, len(keys))
 							for _, k := range keys {
 								if _, ok := innerWhereKeys[k]; ok {
 									intersected = append(intersected, k)

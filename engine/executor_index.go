@@ -159,7 +159,7 @@ func collectInConditions(expr ast.Expr, result map[string][]Value) {
 // dedupKeys removes duplicate int64 keys, preserving order.
 func dedupKeys(keys []int64) []int64 {
 	seen := make(map[int64]bool)
-	var result []int64
+	result := make([]int64, 0, len(keys))
 	for _, k := range keys {
 		if !seen[k] {
 			seen[k] = true

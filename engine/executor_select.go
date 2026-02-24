@@ -215,7 +215,11 @@ func (e *Executor) scanFullOrder(
 	stmt *ast.SelectStmt, info *TableInfo, ior *indexOrderResult,
 	tbl *Table, eval ExprEvaluator, needed int,
 ) ([]Row, ExprEvaluator, error) {
-	var rows []Row
+	cap := 64
+	if needed > 0 {
+		cap = needed
+	}
+	rows := make([]Row, 0, cap)
 
 	if ior.usePK {
 		// PK order scan
@@ -300,7 +304,11 @@ func (e *Executor) scanPartialOrder(
 	stmt *ast.SelectStmt, info *TableInfo, ior *indexOrderResult,
 	tbl *Table, eval ExprEvaluator, needed int,
 ) ([]Row, ExprEvaluator, error) {
-	var rows []Row
+	cap := 64
+	if needed > 0 {
+		cap = needed
+	}
+	rows := make([]Row, 0, cap)
 
 	// Determine the column index for the first ORDER BY column
 	ident := stmt.OrderBy[0].Expr.(*ast.IdentExpr)
@@ -517,7 +525,7 @@ func (e *Executor) applyGroupByWithGrouping(stmt *ast.SelectStmt, rows []Row, ev
 func (e *Executor) applyAggregateOnly(stmt *ast.SelectStmt, rows []Row, eval ExprEvaluator) ([]Row, []string, ExprEvaluator, error) {
 	info := extractTableInfo(eval)
 
-	var colNames []string
+	colNames := make([]string, 0, len(stmt.Columns))
 	resultRow := make(Row, len(stmt.Columns))
 	for i, colExpr := range stmt.Columns {
 		alias := ""
@@ -561,7 +569,7 @@ func extractTableInfo(eval ExprEvaluator) *TableInfo {
 
 // resolveGroupByColumnNames resolves column names for GROUP BY result.
 func resolveGroupByColumnNames(columns []ast.Expr, eval ExprEvaluator) ([]string, error) {
-	var colNames []string
+	colNames := make([]string, 0, len(columns))
 	for _, colExpr := range columns {
 		alias := ""
 		inner := colExpr
@@ -589,7 +597,7 @@ func resolveGroupByColumnNames(columns []ast.Expr, eval ExprEvaluator) ([]string
 
 // executeSelectWithoutTable handles SELECT without FROM (e.g. SELECT 1, 'hello').
 func (e *Executor) executeSelectWithoutTable(stmt *ast.SelectStmt) (*Result, error) {
-	var colNames []string
+	colNames := make([]string, 0, len(stmt.Columns))
 	var row Row
 
 	eval := newLiteralEvaluator(e)
@@ -841,7 +849,7 @@ func hasAggregate(columns []ast.Expr) bool {
 // dedup removes duplicate rows, preserving order of first occurrence.
 func dedup(rows []Row) []Row {
 	seen := make(map[string]bool)
-	var result []Row
+	result := make([]Row, 0, len(rows))
 	for _, row := range rows {
 		key := fmt.Sprintf("%v", []Value(row))
 		if !seen[key] {

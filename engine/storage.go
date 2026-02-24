@@ -679,7 +679,7 @@ func (s *Storage) GetByKeys(tableName string, keys []int64) ([]Row, error) {
 	if !ok {
 		return nil, fmt.Errorf("table %q does not exist in storage", tableName)
 	}
-	var rows []Row
+	rows := make([]Row, 0, len(keys))
 	for _, key := range keys {
 		val, found := tbl.tree.Get(key)
 		if found {
@@ -696,7 +696,7 @@ func (s *Storage) GetKeyRowsByKeys(tableName string, keys []int64) ([]KeyRow, er
 	if !ok {
 		return nil, fmt.Errorf("table %q does not exist in storage", tableName)
 	}
-	var rows []KeyRow
+	rows := make([]KeyRow, 0, len(keys))
 	for _, key := range keys {
 		val, found := tbl.tree.Get(key)
 		if found {
@@ -739,7 +739,11 @@ func (s *Storage) ScanOrdered(tableName string, reverse bool, limit int) ([]Row,
 	if !ok {
 		return nil, fmt.Errorf("table %q does not exist in storage", tableName)
 	}
-	var rows []Row
+	cap := 64
+	if limit > 0 {
+		cap = limit
+	}
+	rows := make([]Row, 0, cap)
 	stopped := false
 	iterFn := func(key int64, value any) bool {
 		rows = append(rows, value.(Row))

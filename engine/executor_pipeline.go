@@ -114,7 +114,7 @@ func applyLimit[T any](rows []T, limit *int64) []T {
 // Returns at most limit rows that pass the WHERE filter.
 // If where is nil, returns the first limit rows.
 func filterWhereLimit[T any](rows []T, where ast.Expr, eval ExprEvaluator, rowOf func(T) Row, limit int) ([]T, error) {
-	var filtered []T
+	filtered := make([]T, 0, limit)
 	for _, item := range rows {
 		if where != nil {
 			val, err := eval.Eval(where, rowOf(item))
@@ -142,7 +142,7 @@ func filterWhereLimit[T any](rows []T, where ast.Expr, eval ExprEvaluator, rowOf
 // Returns at most limit unique projected rows.
 func filterProjectDedupLimit(rows []Row, where ast.Expr, colExprs []ast.Expr, isStar bool, eval ExprEvaluator, limit int) ([]Row, error) {
 	seen := make(map[string]bool)
-	var result []Row
+	result := make([]Row, 0, limit)
 	cols := eval.ColumnList()
 	for _, row := range rows {
 		if where != nil {
@@ -343,7 +343,7 @@ func projectRows(rows []Row, colExprs []ast.Expr, isStar bool, eval ExprEvaluato
 	if len(rows) == 0 {
 		return rows, nil
 	}
-	var resultRows []Row
+	resultRows := make([]Row, 0, len(rows))
 	if isStar {
 		cols := eval.ColumnList()
 		for _, row := range rows {

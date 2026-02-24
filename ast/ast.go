@@ -89,6 +89,7 @@ func (s *SelectStmt) statementNode()   {}
 const (
 	SetOpUnion     = "UNION"
 	SetOpIntersect = "INTERSECT"
+	SetOpExcept    = "EXCEPT"
 )
 
 // SetOpStmt represents SELECT ... UNION|INTERSECT [ALL] SELECT ...

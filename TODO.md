@@ -42,7 +42,7 @@
 
 - [x] UNION / UNION ALL
 - [x] INTERSECT
-- [ ] EXCEPT
+- [x] EXCEPT
 
 ## サブクエリ
 

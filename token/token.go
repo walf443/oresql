@@ -108,6 +108,7 @@ const (
 	EXISTS    // EXISTS keyword
 	UNION     // UNION keyword
 	INTERSECT // INTERSECT keyword
+	EXCEPT    // EXCEPT keyword
 	ALL       // ALL keyword
 )
 
@@ -208,6 +209,7 @@ var tokenNames = map[TokenType]string{
 	EXISTS:       "EXISTS",
 	UNION:        "UNION",
 	INTERSECT:    "INTERSECT",
+	EXCEPT:       "EXCEPT",
 	ALL:          "ALL",
 }
 
@@ -298,6 +300,7 @@ var keywords = map[string]TokenType{
 	"EXISTS":    EXISTS,
 	"UNION":     UNION,
 	"INTERSECT": INTERSECT,
+	"EXCEPT":    EXCEPT,
 	"ALL":       ALL,
 }
 

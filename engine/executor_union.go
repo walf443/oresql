@@ -48,6 +48,8 @@ func (e *Executor) executeSetOp(stmt *ast.SetOpStmt) (*Result, error) {
 		}
 	case ast.SetOpIntersect:
 		rows = intersectRows(leftResult.Rows, rightResult.Rows, stmt.All)
+	case ast.SetOpExcept:
+		rows = exceptRows(leftResult.Rows, rightResult.Rows, stmt.All)
 	}
 
 	// 5. ORDER BY
@@ -96,6 +98,36 @@ func intersectRows(left, right []Row, all bool) []Row {
 				rightSet[key]-- // consume one match
 				result = append(result, row)
 			} else {
+				if seen[key] == 0 {
+					result = append(result, row)
+				}
+				seen[key]++
+			}
+		}
+	}
+	return result
+}
+
+// exceptRows returns rows from left that are not in right.
+func exceptRows(left, right []Row, all bool) []Row {
+	// Build a count map from right rows
+	rightSet := make(map[KeyEncoding]int, len(right))
+	for _, row := range right {
+		rightSet[encodeValues(row)]++
+	}
+
+	result := make([]Row, 0, len(left))
+	seen := make(map[KeyEncoding]int, len(left)) // for dedup when ALL is false
+	for _, row := range left {
+		key := encodeValues(row)
+		if all {
+			if rightSet[key] > 0 {
+				rightSet[key]-- // consume one match, skip this row
+			} else {
+				result = append(result, row)
+			}
+		} else {
+			if rightSet[key] == 0 {
 				if seen[key] == 0 {
 					result = append(result, row)
 				}

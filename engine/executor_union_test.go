@@ -642,3 +642,171 @@ func TestIntersectTypeMismatch(t *testing.T) {
 		t.Errorf("expected type mismatch error, got: %v", err)
 	}
 }
+
+func TestExceptBasic(t *testing.T) {
+	e := NewExecutor()
+	setupUnionTables(t, e)
+
+	result, err := e.ExecuteSQL("SELECT id, name FROM t1 EXCEPT SELECT id, name FROM t2")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// t1: (1,alice), (2,bob), (3,charlie)
+	// t2: (2,bob), (3,charlie), (4,dave)
+	// EXCEPT: rows in t1 but not in t2 → (1,alice) → 1 row
+	if len(result.Rows) != 1 {
+		t.Errorf("expected 1 row, got %d", len(result.Rows))
+		for _, row := range result.Rows {
+			t.Logf("  row: %v", row)
+		}
+	}
+	if len(result.Rows) == 1 {
+		if result.Rows[0][0] != int64(1) || result.Rows[0][1] != "alice" {
+			t.Errorf("expected (1, alice), got %v", result.Rows[0])
+		}
+	}
+}
+
+func TestExceptAll(t *testing.T) {
+	e := NewExecutor()
+
+	stmts := []string{
+		"CREATE TABLE ea (id INT)",
+		"INSERT INTO ea VALUES (1)",
+		"INSERT INTO ea VALUES (2)",
+		"INSERT INTO ea VALUES (2)",
+		"INSERT INTO ea VALUES (2)",
+		"INSERT INTO ea VALUES (3)",
+		"CREATE TABLE eb (id INT)",
+		"INSERT INTO eb VALUES (2)",
+		"INSERT INTO eb VALUES (2)",
+		"INSERT INTO eb VALUES (3)",
+	}
+	for _, sql := range stmts {
+		if _, err := e.ExecuteSQL(sql); err != nil {
+			t.Fatalf("setup failed: %s: %v", sql, err)
+		}
+	}
+
+	result, err := e.ExecuteSQL("SELECT id FROM ea EXCEPT ALL SELECT id FROM eb")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// ea: 1, 2, 2, 2, 3
+	// eb: 2, 2, 3
+	// EXCEPT ALL: 1 remains (not in eb), 2 appears 3-2=1 time, 3 appears 1-1=0 times → 2 rows
+	if len(result.Rows) != 2 {
+		t.Errorf("expected 2 rows, got %d", len(result.Rows))
+		for _, row := range result.Rows {
+			t.Logf("  row: %v", row)
+		}
+	}
+}
+
+func TestExceptNoMatch(t *testing.T) {
+	e := NewExecutor()
+	setupUnionTables(t, e)
+
+	// All t2 rows are in t1 or not — here t1 subset check
+	result, err := e.ExecuteSQL("SELECT id, name FROM t1 EXCEPT SELECT id, name FROM t3")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// t1: (1,alice), (2,bob), (3,charlie)
+	// t3: (4,dave), (5,eve)
+	// No overlap → all t1 rows remain → 3 rows
+	if len(result.Rows) != 3 {
+		t.Errorf("expected 3 rows, got %d", len(result.Rows))
+	}
+}
+
+func TestExceptAllRemoved(t *testing.T) {
+	e := NewExecutor()
+	setupUnionTables(t, e)
+
+	// t2 contains all of t1's common rows plus more
+	result, err := e.ExecuteSQL("SELECT id, name FROM t2 EXCEPT SELECT id, name FROM t1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// t2: (2,bob), (3,charlie), (4,dave)
+	// t1: (1,alice), (2,bob), (3,charlie)
+	// EXCEPT: (4,dave) → 1 row
+	if len(result.Rows) != 1 {
+		t.Errorf("expected 1 row, got %d", len(result.Rows))
+	}
+	if len(result.Rows) == 1 {
+		if result.Rows[0][0] != int64(4) || result.Rows[0][1] != "dave" {
+			t.Errorf("expected (4, dave), got %v", result.Rows[0])
+		}
+	}
+}
+
+func TestExceptWithOrderBy(t *testing.T) {
+	e := NewExecutor()
+	setupUnionTables(t, e)
+
+	result, err := e.ExecuteSQL("SELECT id, name FROM t1 UNION SELECT id, name FROM t2 EXCEPT SELECT id, name FROM t3 ORDER BY id")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// t1 UNION t2 = {1,2,3,4}, then {1,2,3,4} EXCEPT t3{4,5} = {1,2,3} → 3 rows
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+
+	expectedIDs := []int64{1, 2, 3}
+	for i, expectedID := range expectedIDs {
+		if result.Rows[i][0] != expectedID {
+			t.Errorf("row %d: expected id=%d, got %v", i, expectedID, result.Rows[i][0])
+		}
+	}
+}
+
+func TestExceptChain(t *testing.T) {
+	e := NewExecutor()
+	setupUnionTables(t, e)
+
+	// t1: 1,2,3  t2: 2,3,4
+	// t1 EXCEPT t2 = {1}, then {1} EXCEPT t3{4,5} = {1} → 1 row
+	result, err := e.ExecuteSQL("SELECT id, name FROM t1 EXCEPT SELECT id, name FROM t2 EXCEPT SELECT id, name FROM t3")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Rows) != 1 {
+		t.Errorf("expected 1 row, got %d", len(result.Rows))
+		for _, row := range result.Rows {
+			t.Logf("  row: %v", row)
+		}
+	}
+}
+
+func TestExceptTypeMismatch(t *testing.T) {
+	e := NewExecutor()
+
+	stmts := []string{
+		"CREATE TABLE et1 (id INT, val INT)",
+		"INSERT INTO et1 VALUES (1, 100)",
+		"CREATE TABLE et2 (id INT, val TEXT)",
+		"INSERT INTO et2 VALUES (1, 'hello')",
+	}
+	for _, sql := range stmts {
+		if _, err := e.ExecuteSQL(sql); err != nil {
+			t.Fatalf("setup failed: %s: %v", sql, err)
+		}
+	}
+
+	_, err := e.ExecuteSQL("SELECT id, val FROM et1 EXCEPT SELECT id, val FROM et2")
+	if err == nil {
+		t.Fatal("expected error for type mismatch, got nil")
+	}
+	if !strings.Contains(err.Error(), "type mismatch") {
+		t.Errorf("expected type mismatch error, got: %v", err)
+	}
+}

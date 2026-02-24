@@ -1956,6 +1956,44 @@ func TestParseIntersectAll(t *testing.T) {
 	}
 }
 
+func TestParseExcept(t *testing.T) {
+	stmt := parse(t, "SELECT a FROM t1 EXCEPT SELECT b FROM t2")
+	u, ok := stmt.(*ast.SetOpStmt)
+	if !ok {
+		t.Fatalf("expected SetOpStmt, got %T", stmt)
+	}
+	if u.Op != ast.SetOpExcept {
+		t.Errorf("expected Op=%q, got %q", ast.SetOpExcept, u.Op)
+	}
+	if u.All {
+		t.Error("expected All=false for EXCEPT")
+	}
+	left, ok := u.Left.(*ast.SelectStmt)
+	if !ok {
+		t.Fatalf("expected left to be SelectStmt, got %T", u.Left)
+	}
+	if left.TableName != "t1" {
+		t.Errorf("left table: expected %q, got %q", "t1", left.TableName)
+	}
+	if u.Right.TableName != "t2" {
+		t.Errorf("right table: expected %q, got %q", "t2", u.Right.TableName)
+	}
+}
+
+func TestParseExceptAll(t *testing.T) {
+	stmt := parse(t, "SELECT a FROM t1 EXCEPT ALL SELECT b FROM t2")
+	u, ok := stmt.(*ast.SetOpStmt)
+	if !ok {
+		t.Fatalf("expected SetOpStmt, got %T", stmt)
+	}
+	if u.Op != ast.SetOpExcept {
+		t.Errorf("expected Op=%q, got %q", ast.SetOpExcept, u.Op)
+	}
+	if !u.All {
+		t.Error("expected All=true for EXCEPT ALL")
+	}
+}
+
 func TestParseError(t *testing.T) {
 	inputs := []string{
 		"CREATE",

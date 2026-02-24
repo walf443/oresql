@@ -553,13 +553,15 @@ func (p *Parser) parseSelect() (ast.Statement, error) {
 
 	var result ast.Statement = left
 
-	// Parse UNION/INTERSECT [ALL] chains
-	for p.curToken.Type == token.UNION || p.curToken.Type == token.INTERSECT {
+	// Parse UNION/INTERSECT/EXCEPT [ALL] chains
+	for p.curToken.Type == token.UNION || p.curToken.Type == token.INTERSECT || p.curToken.Type == token.EXCEPT {
 		op := ast.SetOpUnion
 		if p.curToken.Type == token.INTERSECT {
 			op = ast.SetOpIntersect
+		} else if p.curToken.Type == token.EXCEPT {
+			op = ast.SetOpExcept
 		}
-		p.nextToken() // skip UNION/INTERSECT
+		p.nextToken() // skip UNION/INTERSECT/EXCEPT
 		isAll := false
 		if p.curToken.Type == token.ALL {
 			isAll = true
@@ -614,7 +616,7 @@ func (p *Parser) parseSelect() (ast.Statement, error) {
 	}
 
 	// Detect invalid: ORDER BY/LIMIT/OFFSET before set operation without parentheses
-	if p.curToken.Type == token.UNION || p.curToken.Type == token.INTERSECT {
+	if p.curToken.Type == token.UNION || p.curToken.Type == token.INTERSECT || p.curToken.Type == token.EXCEPT {
 		return nil, fmt.Errorf("syntax error: use parentheses to apply ORDER BY/LIMIT/OFFSET to individual SELECT in set operation")
 	}
 

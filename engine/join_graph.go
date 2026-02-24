@@ -833,6 +833,19 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 			}
 		}
 
+		// Build hash table for non-index equi-join (Hash Join)
+		var hashTable *hashJoinTable
+		var outerEquiColIdxs []int
+		if nextIdx == nil && edge != nil && len(edge.EquiJoinPairs) > 0 {
+			innerEquiColIdxs, outerColIdxs := resolveAllEquiJoinCols(
+				edge, nextNode, graph, tableOffset,
+			)
+			if innerEquiColIdxs != nil {
+				hashTable = buildHashJoinTable(preFilteredInner, innerEquiColIdxs)
+				outerEquiColIdxs = outerColIdxs
+			}
+		}
+
 		// Prepare inner WHERE for index-looked-up rows
 		var innerWhereStripped ast.Expr
 		var innerWhereKeys map[int64]struct{}
@@ -932,7 +945,21 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 					}
 				}
 			} else {
-				innerCandidates = preFilteredInner
+				if hashTable != nil {
+					// Hash Join probe
+					probeKey, hasKey := hashJoinProbeKey(outerRow, outerEquiColIdxs)
+					if !hasKey {
+						skipInner = true
+					} else {
+						innerCandidates = hashTable.buckets[probeKey]
+						if len(innerCandidates) == 0 {
+							skipInner = true
+						}
+					}
+				} else {
+					// Full nested loop fallback (no equi-join condition)
+					innerCandidates = preFilteredInner
+				}
 			}
 
 			if skipInner {
@@ -957,9 +984,8 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 
 				// Evaluate ON condition
 				if edge != nil {
-					// For index path, equi-join is already satisfied; evaluate residual + full ON for non-index
-					if nextIdx != nil {
-						// Only evaluate residual ON if present
+					if nextIdx != nil || hashTable != nil {
+						// Index or hash join: equi-join already satisfied, evaluate residual only
 						if edge.ResidualOn != nil {
 							match, mErr := evalWhereJoin(edge.ResidualOn, mergedRow, jc)
 							if mErr != nil {
@@ -970,7 +996,7 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 							}
 						}
 					} else {
-						// Non-index: evaluate full ON condition
+						// Full nested loop: evaluate full ON condition
 						match, mErr := evalWhereJoin(edge.OnExpr, mergedRow, jc)
 						if mErr != nil {
 							return nil, nil, mErr

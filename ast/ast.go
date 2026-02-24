@@ -69,20 +69,28 @@ type JoinClause struct {
 	On         Expr
 }
 
-// SelectStmt represents SELECT [DISTINCT] <columns> FROM <table> [WHERE <condition>] [GROUP BY ...] [HAVING ...] [ORDER BY ...] [LIMIT <n>] [OFFSET <n>].
+// NamedWindowDef represents a named window definition in a WINDOW clause.
+type NamedWindowDef struct {
+	Name        string
+	PartitionBy []Expr
+	OrderBy     []OrderByClause
+}
+
+// SelectStmt represents SELECT [DISTINCT] <columns> FROM <table> [WHERE <condition>] [GROUP BY ...] [HAVING ...] [WINDOW ...] [ORDER BY ...] [LIMIT <n>] [OFFSET <n>].
 type SelectStmt struct {
 	Distinct     bool
 	Columns      []Expr
-	TableName    string          // table name (empty when FromSubquery is used)
-	FromSubquery Statement       // FROM subquery (nil = normal table). *SelectStmt or *SetOpStmt
-	TableAlias   string          // optional alias for the FROM table or subquery
-	Joins        []JoinClause    // JOIN clauses (INNER, LEFT)
-	Where        Expr            // nil if no WHERE clause
-	GroupBy      []Expr          // nil if no GROUP BY clause
-	Having       Expr            // nil if no HAVING clause
-	OrderBy      []OrderByClause // nil if no ORDER BY clause
-	Limit        *int64          // nil if no LIMIT clause
-	Offset       *int64          // nil if no OFFSET clause
+	TableName    string           // table name (empty when FromSubquery is used)
+	FromSubquery Statement        // FROM subquery (nil = normal table). *SelectStmt or *SetOpStmt
+	TableAlias   string           // optional alias for the FROM table or subquery
+	Joins        []JoinClause     // JOIN clauses (INNER, LEFT)
+	Where        Expr             // nil if no WHERE clause
+	GroupBy      []Expr           // nil if no GROUP BY clause
+	Having       Expr             // nil if no HAVING clause
+	Windows      []NamedWindowDef // WINDOW clause definitions (nil if not specified)
+	OrderBy      []OrderByClause  // nil if no ORDER BY clause
+	Limit        *int64           // nil if no LIMIT clause
+	Offset       *int64           // nil if no OFFSET clause
 }
 
 func (s *SelectStmt) NodeType() string { return "Select" }
@@ -360,10 +368,11 @@ type ExistsExpr struct {
 func (e *ExistsExpr) NodeType() string { return "Exists" }
 func (e *ExistsExpr) exprNode()        {}
 
-// WindowExpr represents a window function call: NAME([args]) OVER (PARTITION BY ... ORDER BY ...).
+// WindowExpr represents a window function call: NAME([args]) OVER (PARTITION BY ... ORDER BY ...) or NAME([args]) OVER window_name.
 type WindowExpr struct {
 	Name        string          // "ROW_NUMBER", "RANK", "DENSE_RANK", "SUM", "COUNT", "AVG", "MIN", "MAX"
 	Args        []Expr          // nil for ranking functions, e.g. []*IdentExpr for SUM(col)
+	WindowName  string          // reference to named window (empty if inline OVER clause)
 	PartitionBy []Expr          // nil if no PARTITION BY
 	OrderBy     []OrderByClause // nil if no ORDER BY
 }

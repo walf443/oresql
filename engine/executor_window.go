@@ -68,6 +68,11 @@ func (e *Executor) applyWindowFunctions(stmt *ast.SelectStmt, rows []Row, eval E
 		return rows, eval, nil
 	}
 
+	// Resolve named window references
+	if err := resolveNamedWindows(wins, stmt.Windows); err != nil {
+		return nil, nil, err
+	}
+
 	// Extend each row with space for window function results
 	extendedRows := make([]Row, len(rows))
 	for i, row := range rows {
@@ -550,6 +555,27 @@ func computeAggValue(name string, vals []Value, isCountStar bool) Value {
 	default:
 		return nil
 	}
+}
+
+// resolveNamedWindows resolves named window references in WindowExpr.
+func resolveNamedWindows(wins []windowInfo, namedDefs []ast.NamedWindowDef) error {
+	for _, wi := range wins {
+		if wi.winExpr.WindowName != "" {
+			found := false
+			for _, nd := range namedDefs {
+				if strings.EqualFold(nd.Name, wi.winExpr.WindowName) {
+					wi.winExpr.PartitionBy = nd.PartitionBy
+					wi.winExpr.OrderBy = nd.OrderBy
+					found = true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("window %q is not defined", wi.winExpr.WindowName)
+			}
+		}
+	}
+	return nil
 }
 
 // formatWindowExpr returns a display name for a window function.

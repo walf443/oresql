@@ -505,3 +505,141 @@ func TestWindowMixedRankingAndAggregate(t *testing.T) {
 		}
 	}
 }
+
+func TestNamedWindowBasic(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE emp (id INT, dept TEXT, name TEXT)")
+	run(t, exec, "INSERT INTO emp VALUES (1, 'eng', 'alice')")
+	run(t, exec, "INSERT INTO emp VALUES (2, 'eng', 'bob')")
+	run(t, exec, "INSERT INTO emp VALUES (3, 'sales', 'charlie')")
+
+	result := run(t, exec, "SELECT name, ROW_NUMBER() OVER w AS rn FROM emp WINDOW w AS (ORDER BY id)")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	expected := []struct {
+		name string
+		rn   int64
+	}{
+		{"alice", 1},
+		{"bob", 2},
+		{"charlie", 3},
+	}
+	for i, exp := range expected {
+		if result.Rows[i][0] != exp.name {
+			t.Errorf("row %d name: expected %q, got %v", i, exp.name, result.Rows[i][0])
+		}
+		if result.Rows[i][1] != exp.rn {
+			t.Errorf("row %d rn: expected %d, got %v", i, exp.rn, result.Rows[i][1])
+		}
+	}
+}
+
+func TestNamedWindowMultiple(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE emp (id INT, dept TEXT, salary INT)")
+	run(t, exec, "INSERT INTO emp VALUES (1, 'eng', 100)")
+	run(t, exec, "INSERT INTO emp VALUES (2, 'eng', 200)")
+	run(t, exec, "INSERT INTO emp VALUES (3, 'sales', 300)")
+	run(t, exec, "INSERT INTO emp VALUES (4, 'sales', 400)")
+
+	result := run(t, exec, "SELECT dept, SUM(salary) OVER w1 AS dept_total, RANK() OVER w2 AS salary_rank FROM emp WINDOW w1 AS (PARTITION BY dept), w2 AS (PARTITION BY dept ORDER BY salary DESC)")
+	if len(result.Rows) != 4 {
+		t.Fatalf("expected 4 rows, got %d", len(result.Rows))
+	}
+	// Rows are reordered by the first window function (w1: PARTITION BY dept, no ORDER BY).
+	// Within each partition, original order is preserved.
+	// w2 ranks by salary DESC: eng(200→rank1, 100→rank2), sales(400→rank1, 300→rank2)
+	expected := []struct {
+		dept  string
+		total int64
+		rank  int64
+	}{
+		{"eng", 300, 2},   // id=1, salary=100
+		{"eng", 300, 1},   // id=2, salary=200
+		{"sales", 700, 2}, // id=3, salary=300
+		{"sales", 700, 1}, // id=4, salary=400
+	}
+	for i, exp := range expected {
+		if result.Rows[i][0] != exp.dept {
+			t.Errorf("row %d dept: expected %q, got %v", i, exp.dept, result.Rows[i][0])
+		}
+		if result.Rows[i][1] != exp.total {
+			t.Errorf("row %d dept_total: expected %d, got %v", i, exp.total, result.Rows[i][1])
+		}
+		if result.Rows[i][2] != exp.rank {
+			t.Errorf("row %d salary_rank: expected %d, got %v", i, exp.rank, result.Rows[i][2])
+		}
+	}
+}
+
+func TestNamedWindowAggregate(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE emp (id INT, dept TEXT, salary INT)")
+	run(t, exec, "INSERT INTO emp VALUES (1, 'eng', 100)")
+	run(t, exec, "INSERT INTO emp VALUES (2, 'eng', 200)")
+	run(t, exec, "INSERT INTO emp VALUES (3, 'sales', 300)")
+
+	result := run(t, exec, "SELECT dept, salary, SUM(salary) OVER w AS total, COUNT(*) OVER w AS cnt FROM emp WINDOW w AS (PARTITION BY dept)")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	expected := []struct {
+		dept  string
+		sal   int64
+		total int64
+		cnt   int64
+	}{
+		{"eng", 100, 300, 2},
+		{"eng", 200, 300, 2},
+		{"sales", 300, 300, 1},
+	}
+	for i, exp := range expected {
+		if result.Rows[i][0] != exp.dept {
+			t.Errorf("row %d dept: expected %q, got %v", i, exp.dept, result.Rows[i][0])
+		}
+		if result.Rows[i][1] != exp.sal {
+			t.Errorf("row %d salary: expected %d, got %v", i, exp.sal, result.Rows[i][1])
+		}
+		if result.Rows[i][2] != exp.total {
+			t.Errorf("row %d total: expected %d, got %v", i, exp.total, result.Rows[i][2])
+		}
+		if result.Rows[i][3] != exp.cnt {
+			t.Errorf("row %d cnt: expected %d, got %v", i, exp.cnt, result.Rows[i][3])
+		}
+	}
+}
+
+func TestNamedWindowMixed(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, val INT)")
+	run(t, exec, "INSERT INTO t VALUES (1, 100)")
+	run(t, exec, "INSERT INTO t VALUES (2, 200)")
+	run(t, exec, "INSERT INTO t VALUES (3, 100)")
+
+	// Mix named window and inline OVER clause
+	result := run(t, exec, "SELECT id, ROW_NUMBER() OVER w AS rn, SUM(val) OVER () AS total FROM t WINDOW w AS (ORDER BY id)")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	expected := []struct {
+		id    int64
+		rn    int64
+		total int64
+	}{
+		{1, 1, 400},
+		{2, 2, 400},
+		{3, 3, 400},
+	}
+	for i, exp := range expected {
+		if result.Rows[i][0] != exp.id {
+			t.Errorf("row %d id: expected %d, got %v", i, exp.id, result.Rows[i][0])
+		}
+		if result.Rows[i][1] != exp.rn {
+			t.Errorf("row %d rn: expected %d, got %v", i, exp.rn, result.Rows[i][1])
+		}
+		if result.Rows[i][2] != exp.total {
+			t.Errorf("row %d total: expected %d, got %v", i, exp.total, result.Rows[i][2])
+		}
+	}
+}

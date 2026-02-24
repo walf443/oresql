@@ -833,6 +833,15 @@ func (p *Parser) parseSelectCore() (*ast.SelectStmt, error) {
 		}
 	}
 
+	var windows []ast.NamedWindowDef
+	if p.curToken.Type == token.WINDOW {
+		p.nextToken() // skip WINDOW
+		windows, err = p.parseWindowDefList()
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return &ast.SelectStmt{
 		Distinct:     distinct,
 		Columns:      columns,
@@ -843,6 +852,82 @@ func (p *Parser) parseSelectCore() (*ast.SelectStmt, error) {
 		Where:        where,
 		GroupBy:      groupBy,
 		Having:       having,
+		Windows:      windows,
+	}, nil
+}
+
+// parseWindowDefList parses: name AS (PARTITION BY ... ORDER BY ...) [, name AS (...) ...]
+func (p *Parser) parseWindowDefList() ([]ast.NamedWindowDef, error) {
+	var defs []ast.NamedWindowDef
+
+	def, err := p.parseWindowDef()
+	if err != nil {
+		return nil, err
+	}
+	defs = append(defs, def)
+
+	for p.curToken.Type == token.COMMA {
+		p.nextToken() // skip comma
+		def, err := p.parseWindowDef()
+		if err != nil {
+			return nil, err
+		}
+		defs = append(defs, def)
+	}
+
+	return defs, nil
+}
+
+// parseWindowDef parses: name AS ([PARTITION BY expr, ...] [ORDER BY expr [ASC|DESC], ...])
+func (p *Parser) parseWindowDef() (ast.NamedWindowDef, error) {
+	if !p.isIdent() {
+		return ast.NamedWindowDef{}, fmt.Errorf("expected window name, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+	}
+	name := p.curToken.Literal
+	p.nextToken()
+
+	if err := p.expectToken(token.AS); err != nil {
+		return ast.NamedWindowDef{}, err
+	}
+
+	if err := p.expectToken(token.LPAREN); err != nil {
+		return ast.NamedWindowDef{}, err
+	}
+
+	var partitionBy []ast.Expr
+	if p.curToken.Type == token.PARTITION {
+		p.nextToken() // skip PARTITION
+		if err := p.expectToken(token.BY); err != nil {
+			return ast.NamedWindowDef{}, err
+		}
+		var err error
+		partitionBy, err = p.parseGroupByList()
+		if err != nil {
+			return ast.NamedWindowDef{}, err
+		}
+	}
+
+	var orderBy []ast.OrderByClause
+	if p.curToken.Type == token.ORDER {
+		p.nextToken() // skip ORDER
+		if err := p.expectToken(token.BY); err != nil {
+			return ast.NamedWindowDef{}, err
+		}
+		var err error
+		orderBy, err = p.parseOrderByList()
+		if err != nil {
+			return ast.NamedWindowDef{}, err
+		}
+	}
+
+	if err := p.expectToken(token.RPAREN); err != nil {
+		return ast.NamedWindowDef{}, err
+	}
+
+	return ast.NamedWindowDef{
+		Name:        name,
+		PartitionBy: partitionBy,
+		OrderBy:     orderBy,
 	}, nil
 }
 
@@ -1447,6 +1532,7 @@ func (p *Parser) parsePrimary() (ast.Expr, error) {
 }
 
 // parseWindowExpr parses: ROW_NUMBER() OVER ([PARTITION BY expr, ...] [ORDER BY expr [ASC|DESC], ...])
+// or: ROW_NUMBER() OVER window_name
 func (p *Parser) parseWindowExpr() (ast.Expr, error) {
 	name := strings.ToUpper(p.curToken.Literal)
 	p.nextToken() // skip function name
@@ -1462,6 +1548,16 @@ func (p *Parser) parseWindowExpr() (ast.Expr, error) {
 		return nil, fmt.Errorf("expected OVER after %s(), got %s (%q)", name, p.curToken.Type, p.curToken.Literal)
 	}
 	p.nextToken() // skip OVER
+
+	// OVER window_name (named window reference)
+	if p.isIdent() {
+		windowName := p.curToken.Literal
+		p.nextToken()
+		return &ast.WindowExpr{
+			Name:       name,
+			WindowName: windowName,
+		}, nil
+	}
 
 	if err := p.expectToken(token.LPAREN); err != nil {
 		return nil, err
@@ -1505,9 +1601,21 @@ func (p *Parser) parseWindowExpr() (ast.Expr, error) {
 }
 
 // parseWindowOverClause parses: OVER ([PARTITION BY expr, ...] [ORDER BY expr [ASC|DESC], ...])
+// or: OVER window_name
 // after an aggregate function call has already been parsed as a CallExpr.
 func (p *Parser) parseWindowOverClause(call *ast.CallExpr) (ast.Expr, error) {
 	p.nextToken() // skip OVER
+
+	// OVER window_name (named window reference)
+	if p.isIdent() {
+		windowName := p.curToken.Literal
+		p.nextToken()
+		return &ast.WindowExpr{
+			Name:       call.Name,
+			Args:       call.Args,
+			WindowName: windowName,
+		}, nil
+	}
 
 	if err := p.expectToken(token.LPAREN); err != nil {
 		return nil, err

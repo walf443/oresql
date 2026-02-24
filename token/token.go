@@ -117,6 +117,7 @@ const (
 	DENSE_RANK // DENSE_RANK window function
 	OVER       // OVER keyword
 	PARTITION  // PARTITION keyword
+	WINDOW     // WINDOW keyword
 )
 
 var tokenNames = map[TokenType]string{
@@ -223,6 +224,7 @@ var tokenNames = map[TokenType]string{
 	DENSE_RANK:   "DENSE_RANK",
 	OVER:         "OVER",
 	PARTITION:    "PARTITION",
+	WINDOW:       "WINDOW",
 }
 
 func (t TokenType) String() string {
@@ -319,6 +321,7 @@ var keywords = map[string]TokenType{
 	"DENSE_RANK": DENSE_RANK,
 	"OVER":       OVER,
 	"PARTITION":  PARTITION,
+	"WINDOW":     WINDOW,
 }
 
 // LookupIdent returns the keyword TokenType if the identifier is a keyword,

@@ -2293,3 +2293,77 @@ func TestParseWindowAvgOver(t *testing.T) {
 		t.Fatalf("expected 1 ORDER BY, got %d", len(win.OrderBy))
 	}
 }
+
+func TestParseNamedWindow(t *testing.T) {
+	stmt := parse(t, "SELECT name, SUM(salary) OVER w FROM emp WINDOW w AS (PARTITION BY dept ORDER BY id)")
+	sel, ok := stmt.(*ast.SelectStmt)
+	if !ok {
+		t.Fatalf("expected SelectStmt, got %T", stmt)
+	}
+	if len(sel.Windows) != 1 {
+		t.Fatalf("expected 1 named window, got %d", len(sel.Windows))
+	}
+	w := sel.Windows[0]
+	if w.Name != "w" {
+		t.Errorf("window name: expected %q, got %q", "w", w.Name)
+	}
+	if len(w.PartitionBy) != 1 {
+		t.Errorf("expected 1 PARTITION BY expr, got %d", len(w.PartitionBy))
+	}
+	if len(w.OrderBy) != 1 {
+		t.Errorf("expected 1 ORDER BY clause, got %d", len(w.OrderBy))
+	}
+}
+
+func TestParseNamedWindowMultiple(t *testing.T) {
+	stmt := parse(t, "SELECT name, SUM(salary) OVER w1, RANK() OVER w2 FROM emp WINDOW w1 AS (PARTITION BY dept), w2 AS (PARTITION BY dept ORDER BY salary DESC)")
+	sel, ok := stmt.(*ast.SelectStmt)
+	if !ok {
+		t.Fatalf("expected SelectStmt, got %T", stmt)
+	}
+	if len(sel.Windows) != 2 {
+		t.Fatalf("expected 2 named windows, got %d", len(sel.Windows))
+	}
+	if sel.Windows[0].Name != "w1" {
+		t.Errorf("first window name: expected %q, got %q", "w1", sel.Windows[0].Name)
+	}
+	if len(sel.Windows[0].PartitionBy) != 1 {
+		t.Errorf("w1: expected 1 PARTITION BY, got %d", len(sel.Windows[0].PartitionBy))
+	}
+	if len(sel.Windows[0].OrderBy) != 0 {
+		t.Errorf("w1: expected 0 ORDER BY, got %d", len(sel.Windows[0].OrderBy))
+	}
+	if sel.Windows[1].Name != "w2" {
+		t.Errorf("second window name: expected %q, got %q", "w2", sel.Windows[1].Name)
+	}
+	if len(sel.Windows[1].OrderBy) != 1 {
+		t.Errorf("w2: expected 1 ORDER BY, got %d", len(sel.Windows[1].OrderBy))
+	}
+	if !sel.Windows[1].OrderBy[0].Desc {
+		t.Errorf("w2: expected DESC order, got ASC")
+	}
+}
+
+func TestParseOverWindowName(t *testing.T) {
+	stmt := parse(t, "SELECT ROW_NUMBER() OVER w, SUM(salary) OVER w FROM emp WINDOW w AS (ORDER BY id)")
+	sel, ok := stmt.(*ast.SelectStmt)
+	if !ok {
+		t.Fatalf("expected SelectStmt, got %T", stmt)
+	}
+	// Check that both columns reference window name "w"
+	for i, col := range sel.Columns {
+		var winExpr *ast.WindowExpr
+		switch e := col.(type) {
+		case *ast.WindowExpr:
+			winExpr = e
+		case *ast.AliasExpr:
+			winExpr, _ = e.Expr.(*ast.WindowExpr)
+		}
+		if winExpr == nil {
+			t.Fatalf("column %d: expected WindowExpr, got %T", i, col)
+		}
+		if winExpr.WindowName != "w" {
+			t.Errorf("column %d: expected WindowName %q, got %q", i, "w", winExpr.WindowName)
+		}
+	}
+}

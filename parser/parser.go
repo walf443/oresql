@@ -45,6 +45,12 @@ func (p *Parser) Parse() (ast.Statement, error) {
 		stmt, err = p.parseInsert()
 	case token.SELECT:
 		stmt, err = p.parseSelect()
+	case token.LPAREN:
+		if p.peekToken.Type == token.SELECT {
+			stmt, err = p.parseSelect()
+		} else {
+			return nil, fmt.Errorf("unexpected token %s (%q)", p.curToken.Type, p.curToken.Literal)
+		}
 	case token.UPDATE:
 		stmt, err = p.parseUpdate()
 	case token.DELETE:
@@ -536,8 +542,156 @@ func (p *Parser) parseTruncateTable() (*ast.TruncateTableStmt, error) {
 	return &ast.TruncateTableStmt{TableName: tableName}, nil
 }
 
-// parseSelect parses: SELECT <columns> FROM <table> [WHERE <expr>]
-func (p *Parser) parseSelect() (*ast.SelectStmt, error) {
+// parseSelect parses a SELECT statement, potentially followed by UNION [ALL] chains.
+// Returns *ast.SelectStmt when no UNION is present (backward compatible),
+// or *ast.UnionStmt when UNION is used.
+func (p *Parser) parseSelect() (ast.Statement, error) {
+	left, err := p.parseSelectTerm()
+	if err != nil {
+		return nil, err
+	}
+
+	var result ast.Statement = left
+
+	// Parse UNION [ALL] chains
+	for p.curToken.Type == token.UNION {
+		p.nextToken() // skip UNION
+		isAll := false
+		if p.curToken.Type == token.ALL {
+			isAll = true
+			p.nextToken() // skip ALL
+		}
+		right, err := p.parseSelectTerm()
+		if err != nil {
+			return nil, err
+		}
+		result = &ast.UnionStmt{Left: result, Right: right, All: isAll}
+	}
+
+	// Parse trailing ORDER BY / LIMIT / OFFSET (applies to entire result)
+	var orderBy []ast.OrderByClause
+	if p.curToken.Type == token.ORDER {
+		p.nextToken() // skip ORDER
+		if err := p.expectToken(token.BY); err != nil {
+			return nil, err
+		}
+		orderBy, err = p.parseOrderByList()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	var limit *int64
+	if p.curToken.Type == token.LIMIT {
+		p.nextToken() // skip LIMIT
+		if p.curToken.Type != token.INT_LIT {
+			return nil, fmt.Errorf("expected integer after LIMIT, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+		}
+		val, err := strconv.ParseInt(p.curToken.Literal, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid integer for LIMIT: %s", p.curToken.Literal)
+		}
+		limit = &val
+		p.nextToken()
+	}
+
+	var offset *int64
+	if p.curToken.Type == token.OFFSET {
+		p.nextToken() // skip OFFSET
+		if p.curToken.Type != token.INT_LIT {
+			return nil, fmt.Errorf("expected integer after OFFSET, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+		}
+		val, err := strconv.ParseInt(p.curToken.Literal, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid integer for OFFSET: %s", p.curToken.Literal)
+		}
+		offset = &val
+		p.nextToken()
+	}
+
+	// Detect invalid: ORDER BY/LIMIT/OFFSET before UNION without parentheses
+	if p.curToken.Type == token.UNION {
+		return nil, fmt.Errorf("syntax error: use parentheses to apply ORDER BY/LIMIT/OFFSET to individual SELECT in UNION")
+	}
+
+	// Attach ORDER BY / LIMIT / OFFSET to the appropriate node
+	if u, ok := result.(*ast.UnionStmt); ok {
+		u.OrderBy = orderBy
+		u.Limit = limit
+		u.Offset = offset
+		return u, nil
+	}
+
+	// No UNION: attach to SelectStmt (only overwrite if trailing values were parsed)
+	sel := result.(*ast.SelectStmt)
+	if len(orderBy) > 0 {
+		sel.OrderBy = orderBy
+	}
+	if limit != nil {
+		sel.Limit = limit
+	}
+	if offset != nil {
+		sel.Offset = offset
+	}
+	return sel, nil
+}
+
+// parseSelectTerm parses a single SELECT for use in UNION chains.
+// Supports both bare SELECT and parenthesized (SELECT ... ORDER BY ... LIMIT ... OFFSET ...).
+func (p *Parser) parseSelectTerm() (*ast.SelectStmt, error) {
+	if p.curToken.Type == token.LPAREN && p.peekToken.Type == token.SELECT {
+		p.nextToken() // skip (
+		stmt, err := p.parseSelectCore()
+		if err != nil {
+			return nil, err
+		}
+		// Parse ORDER BY / LIMIT / OFFSET inside parentheses
+		if p.curToken.Type == token.ORDER {
+			p.nextToken() // skip ORDER
+			if err := p.expectToken(token.BY); err != nil {
+				return nil, err
+			}
+			orderBy, err := p.parseOrderByList()
+			if err != nil {
+				return nil, err
+			}
+			stmt.OrderBy = orderBy
+		}
+		if p.curToken.Type == token.LIMIT {
+			p.nextToken() // skip LIMIT
+			if p.curToken.Type != token.INT_LIT {
+				return nil, fmt.Errorf("expected integer after LIMIT, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+			}
+			val, err := strconv.ParseInt(p.curToken.Literal, 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("invalid integer for LIMIT: %s", p.curToken.Literal)
+			}
+			stmt.Limit = &val
+			p.nextToken()
+		}
+		if p.curToken.Type == token.OFFSET {
+			p.nextToken() // skip OFFSET
+			if p.curToken.Type != token.INT_LIT {
+				return nil, fmt.Errorf("expected integer after OFFSET, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+			}
+			val, err := strconv.ParseInt(p.curToken.Literal, 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("invalid integer for OFFSET: %s", p.curToken.Literal)
+			}
+			stmt.Offset = &val
+			p.nextToken()
+		}
+		if err := p.expectToken(token.RPAREN); err != nil {
+			return nil, err
+		}
+		return stmt, nil
+	}
+	return p.parseSelectCore()
+}
+
+// parseSelectCore parses a single SELECT statement (without trailing ORDER BY/LIMIT/OFFSET
+// which are handled by parseSelect for UNION support).
+func (p *Parser) parseSelectCore() (*ast.SelectStmt, error) {
 	if err := p.expectToken(token.SELECT); err != nil {
 		return nil, err
 	}
@@ -637,46 +791,6 @@ func (p *Parser) parseSelect() (*ast.SelectStmt, error) {
 		}
 	}
 
-	var orderBy []ast.OrderByClause
-	if p.curToken.Type == token.ORDER {
-		p.nextToken() // skip ORDER
-		if err := p.expectToken(token.BY); err != nil {
-			return nil, err
-		}
-		orderBy, err = p.parseOrderByList()
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	var limit *int64
-	if p.curToken.Type == token.LIMIT {
-		p.nextToken() // skip LIMIT
-		if p.curToken.Type != token.INT_LIT {
-			return nil, fmt.Errorf("expected integer after LIMIT, got %s (%q)", p.curToken.Type, p.curToken.Literal)
-		}
-		val, err := strconv.ParseInt(p.curToken.Literal, 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("invalid integer for LIMIT: %s", p.curToken.Literal)
-		}
-		limit = &val
-		p.nextToken()
-	}
-
-	var offset *int64
-	if p.curToken.Type == token.OFFSET {
-		p.nextToken() // skip OFFSET
-		if p.curToken.Type != token.INT_LIT {
-			return nil, fmt.Errorf("expected integer after OFFSET, got %s (%q)", p.curToken.Type, p.curToken.Literal)
-		}
-		val, err := strconv.ParseInt(p.curToken.Literal, 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("invalid integer for OFFSET: %s", p.curToken.Literal)
-		}
-		offset = &val
-		p.nextToken()
-	}
-
 	return &ast.SelectStmt{
 		Distinct:   distinct,
 		Columns:    columns,
@@ -686,9 +800,6 @@ func (p *Parser) parseSelect() (*ast.SelectStmt, error) {
 		Where:      where,
 		GroupBy:    groupBy,
 		Having:     having,
-		OrderBy:    orderBy,
-		Limit:      limit,
-		Offset:     offset,
 	}, nil
 }
 
@@ -925,7 +1036,7 @@ func (p *Parser) parseExistsExpr(not bool) (ast.Expr, error) {
 	if err := p.expectToken(token.LPAREN); err != nil {
 		return nil, err
 	}
-	stmt, err := p.parseSelect()
+	stmt, err := p.parseSelectCore()
 	if err != nil {
 		return nil, err
 	}
@@ -941,7 +1052,7 @@ func (p *Parser) parseInBody(left ast.Expr, not bool) (ast.Expr, error) {
 		return nil, err
 	}
 	if p.curToken.Type == token.SELECT {
-		stmt, err := p.parseSelect()
+		stmt, err := p.parseSelectCore()
 		if err != nil {
 			return nil, err
 		}
@@ -1248,7 +1359,7 @@ func (p *Parser) parsePrimary() (ast.Expr, error) {
 	case token.LPAREN:
 		p.nextToken() // skip (
 		if p.curToken.Type == token.SELECT {
-			stmt, err := p.parseSelect()
+			stmt, err := p.parseSelectCore()
 			if err != nil {
 				return nil, err
 			}

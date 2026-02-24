@@ -40,7 +40,7 @@
 
 ## 集合演算
 
-- [ ] UNION / UNION ALL
+- [x] UNION / UNION ALL
 - [ ] INTERSECT
 - [ ] EXCEPT
 

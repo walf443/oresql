@@ -1740,6 +1740,184 @@ func TestParseStringFunctions(t *testing.T) {
 	}
 }
 
+func TestParseUnion(t *testing.T) {
+	stmt := parse(t, "SELECT a FROM t1 UNION SELECT b FROM t2")
+	u, ok := stmt.(*ast.UnionStmt)
+	if !ok {
+		t.Fatalf("expected UnionStmt, got %T", stmt)
+	}
+	if u.All {
+		t.Error("expected All=false for UNION")
+	}
+	left, ok := u.Left.(*ast.SelectStmt)
+	if !ok {
+		t.Fatalf("expected left to be SelectStmt, got %T", u.Left)
+	}
+	if left.TableName != "t1" {
+		t.Errorf("left table: expected %q, got %q", "t1", left.TableName)
+	}
+	if u.Right.TableName != "t2" {
+		t.Errorf("right table: expected %q, got %q", "t2", u.Right.TableName)
+	}
+}
+
+func TestParseUnionAll(t *testing.T) {
+	stmt := parse(t, "SELECT a FROM t1 UNION ALL SELECT b FROM t2")
+	u, ok := stmt.(*ast.UnionStmt)
+	if !ok {
+		t.Fatalf("expected UnionStmt, got %T", stmt)
+	}
+	if !u.All {
+		t.Error("expected All=true for UNION ALL")
+	}
+}
+
+func TestParseUnionChain(t *testing.T) {
+	stmt := parse(t, "SELECT a FROM t1 UNION SELECT b FROM t2 UNION SELECT c FROM t3")
+	u, ok := stmt.(*ast.UnionStmt)
+	if !ok {
+		t.Fatalf("expected UnionStmt, got %T", stmt)
+	}
+	// Right is t3
+	if u.Right.TableName != "t3" {
+		t.Errorf("right table: expected %q, got %q", "t3", u.Right.TableName)
+	}
+	// Left is another UnionStmt
+	inner, ok := u.Left.(*ast.UnionStmt)
+	if !ok {
+		t.Fatalf("expected left to be UnionStmt, got %T", u.Left)
+	}
+	innerLeft, ok := inner.Left.(*ast.SelectStmt)
+	if !ok {
+		t.Fatalf("expected inner left to be SelectStmt, got %T", inner.Left)
+	}
+	if innerLeft.TableName != "t1" {
+		t.Errorf("inner left table: expected %q, got %q", "t1", innerLeft.TableName)
+	}
+	if inner.Right.TableName != "t2" {
+		t.Errorf("inner right table: expected %q, got %q", "t2", inner.Right.TableName)
+	}
+}
+
+func TestParseUnionOrderByLimit(t *testing.T) {
+	stmt := parse(t, "SELECT a FROM t1 UNION SELECT a FROM t2 ORDER BY a LIMIT 5 OFFSET 2")
+	u, ok := stmt.(*ast.UnionStmt)
+	if !ok {
+		t.Fatalf("expected UnionStmt, got %T", stmt)
+	}
+	if len(u.OrderBy) != 1 {
+		t.Fatalf("expected 1 ORDER BY clause, got %d", len(u.OrderBy))
+	}
+	ident := u.OrderBy[0].Expr.(*ast.IdentExpr)
+	if ident.Name != "a" {
+		t.Errorf("expected ORDER BY 'a', got %q", ident.Name)
+	}
+	if u.Limit == nil || *u.Limit != 5 {
+		t.Errorf("expected LIMIT 5")
+	}
+	if u.Offset == nil || *u.Offset != 2 {
+		t.Errorf("expected OFFSET 2")
+	}
+}
+
+func TestParseSelectWithoutUnionUnchanged(t *testing.T) {
+	// Without UNION, parseSelect should still return *SelectStmt
+	stmt := parse(t, "SELECT a FROM t1 ORDER BY a LIMIT 10")
+	sel, ok := stmt.(*ast.SelectStmt)
+	if !ok {
+		t.Fatalf("expected SelectStmt without UNION, got %T", stmt)
+	}
+	if sel.TableName != "t1" {
+		t.Errorf("table name: expected %q, got %q", "t1", sel.TableName)
+	}
+	if len(sel.OrderBy) != 1 {
+		t.Fatalf("expected 1 ORDER BY clause, got %d", len(sel.OrderBy))
+	}
+	if sel.Limit == nil || *sel.Limit != 10 {
+		t.Errorf("expected LIMIT 10")
+	}
+}
+
+func TestParseUnionParenthesizedLimit(t *testing.T) {
+	stmt := parse(t, "(SELECT a FROM t1 LIMIT 2) UNION (SELECT a FROM t2 LIMIT 3)")
+	u, ok := stmt.(*ast.UnionStmt)
+	if !ok {
+		t.Fatalf("expected UnionStmt, got %T", stmt)
+	}
+	left, ok := u.Left.(*ast.SelectStmt)
+	if !ok {
+		t.Fatalf("expected left to be SelectStmt, got %T", u.Left)
+	}
+	if left.Limit == nil || *left.Limit != 2 {
+		t.Errorf("left LIMIT: expected 2, got %v", left.Limit)
+	}
+	if u.Right.Limit == nil || *u.Right.Limit != 3 {
+		t.Errorf("right LIMIT: expected 3, got %v", u.Right.Limit)
+	}
+}
+
+func TestParseUnionParenthesizedOrderByLimit(t *testing.T) {
+	stmt := parse(t, "(SELECT a FROM t1 ORDER BY a LIMIT 2) UNION (SELECT a FROM t2 ORDER BY a LIMIT 3) ORDER BY a LIMIT 10")
+	u, ok := stmt.(*ast.UnionStmt)
+	if !ok {
+		t.Fatalf("expected UnionStmt, got %T", stmt)
+	}
+	// Left individual SELECT should have its own ORDER BY and LIMIT
+	left := u.Left.(*ast.SelectStmt)
+	if len(left.OrderBy) != 1 {
+		t.Errorf("left ORDER BY: expected 1 clause, got %d", len(left.OrderBy))
+	}
+	if left.Limit == nil || *left.Limit != 2 {
+		t.Errorf("left LIMIT: expected 2")
+	}
+	// Right individual SELECT
+	if len(u.Right.OrderBy) != 1 {
+		t.Errorf("right ORDER BY: expected 1 clause, got %d", len(u.Right.OrderBy))
+	}
+	if u.Right.Limit == nil || *u.Right.Limit != 3 {
+		t.Errorf("right LIMIT: expected 3")
+	}
+	// Overall UNION ORDER BY / LIMIT
+	if len(u.OrderBy) != 1 {
+		t.Fatalf("union ORDER BY: expected 1 clause, got %d", len(u.OrderBy))
+	}
+	if u.Limit == nil || *u.Limit != 10 {
+		t.Errorf("union LIMIT: expected 10")
+	}
+}
+
+func TestParseUnionBareLimitError(t *testing.T) {
+	// LIMIT before UNION without parentheses should be a syntax error
+	l := lexer.New("SELECT a FROM t1 LIMIT 2 UNION SELECT a FROM t2")
+	p := New(l)
+	_, err := p.Parse()
+	if err == nil {
+		t.Fatal("expected syntax error for bare LIMIT before UNION, got nil")
+	}
+}
+
+func TestParseUnionBareOrderByError(t *testing.T) {
+	// ORDER BY before UNION without parentheses should be a syntax error
+	l := lexer.New("SELECT a FROM t1 ORDER BY a UNION SELECT a FROM t2")
+	p := New(l)
+	_, err := p.Parse()
+	if err == nil {
+		t.Fatal("expected syntax error for bare ORDER BY before UNION, got nil")
+	}
+}
+
+func TestParseParenthesizedSelectOnly(t *testing.T) {
+	// Parenthesized SELECT without UNION should also work
+	stmt := parse(t, "(SELECT a FROM t1 LIMIT 5)")
+	sel, ok := stmt.(*ast.SelectStmt)
+	if !ok {
+		t.Fatalf("expected SelectStmt, got %T", stmt)
+	}
+	if sel.Limit == nil || *sel.Limit != 5 {
+		t.Errorf("expected LIMIT 5")
+	}
+}
+
 func TestParseError(t *testing.T) {
 	inputs := []string{
 		"CREATE",

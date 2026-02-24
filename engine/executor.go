@@ -56,7 +56,9 @@ func (e *Executor) ExecuteSQL(sql string) (*Result, error) {
 		return nil, err
 	}
 	if e.wal != nil {
-		if _, ok := stmt.(*ast.SelectStmt); !ok {
+		_, isSelect := stmt.(*ast.SelectStmt)
+		_, isUnion := stmt.(*ast.UnionStmt)
+		if !isSelect && !isUnion {
 			if err := e.wal.Append(sql); err != nil {
 				return nil, fmt.Errorf("WAL write error: %w", err)
 			}
@@ -104,6 +106,8 @@ func (e *Executor) Execute(stmt ast.Statement) (*Result, error) {
 		return e.executeAlterTableAddColumn(s)
 	case *ast.AlterTableDropColumnStmt:
 		return e.executeAlterTableDropColumn(s)
+	case *ast.UnionStmt:
+		return e.executeUnion(s)
 	default:
 		return nil, fmt.Errorf("unknown statement type: %T", stmt)
 	}

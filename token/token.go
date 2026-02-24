@@ -107,6 +107,7 @@ const (
 	CONCAT    // CONCAT function
 	EXISTS    // EXISTS keyword
 	UNION     // UNION keyword
+	INTERSECT // INTERSECT keyword
 	ALL       // ALL keyword
 )
 
@@ -206,6 +207,7 @@ var tokenNames = map[TokenType]string{
 	CONCAT:       "CONCAT",
 	EXISTS:       "EXISTS",
 	UNION:        "UNION",
+	INTERSECT:    "INTERSECT",
 	ALL:          "ALL",
 }
 
@@ -295,6 +297,7 @@ var keywords = map[string]TokenType{
 	"CONCAT":    CONCAT,
 	"EXISTS":    EXISTS,
 	"UNION":     UNION,
+	"INTERSECT": INTERSECT,
 	"ALL":       ALL,
 }
 

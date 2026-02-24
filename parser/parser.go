@@ -542,9 +542,9 @@ func (p *Parser) parseTruncateTable() (*ast.TruncateTableStmt, error) {
 	return &ast.TruncateTableStmt{TableName: tableName}, nil
 }
 
-// parseSelect parses a SELECT statement, potentially followed by UNION [ALL] chains.
-// Returns *ast.SelectStmt when no UNION is present (backward compatible),
-// or *ast.UnionStmt when UNION is used.
+// parseSelect parses a SELECT statement, potentially followed by UNION/INTERSECT [ALL] chains.
+// Returns *ast.SelectStmt when no set operation is present (backward compatible),
+// or *ast.SetOpStmt when UNION/INTERSECT is used.
 func (p *Parser) parseSelect() (ast.Statement, error) {
 	left, err := p.parseSelectTerm()
 	if err != nil {
@@ -553,9 +553,13 @@ func (p *Parser) parseSelect() (ast.Statement, error) {
 
 	var result ast.Statement = left
 
-	// Parse UNION [ALL] chains
-	for p.curToken.Type == token.UNION {
-		p.nextToken() // skip UNION
+	// Parse UNION/INTERSECT [ALL] chains
+	for p.curToken.Type == token.UNION || p.curToken.Type == token.INTERSECT {
+		op := ast.SetOpUnion
+		if p.curToken.Type == token.INTERSECT {
+			op = ast.SetOpIntersect
+		}
+		p.nextToken() // skip UNION/INTERSECT
 		isAll := false
 		if p.curToken.Type == token.ALL {
 			isAll = true
@@ -565,7 +569,7 @@ func (p *Parser) parseSelect() (ast.Statement, error) {
 		if err != nil {
 			return nil, err
 		}
-		result = &ast.UnionStmt{Left: result, Right: right, All: isAll}
+		result = &ast.SetOpStmt{Left: result, Right: right, Op: op, All: isAll}
 	}
 
 	// Parse trailing ORDER BY / LIMIT / OFFSET (applies to entire result)
@@ -609,13 +613,13 @@ func (p *Parser) parseSelect() (ast.Statement, error) {
 		p.nextToken()
 	}
 
-	// Detect invalid: ORDER BY/LIMIT/OFFSET before UNION without parentheses
-	if p.curToken.Type == token.UNION {
-		return nil, fmt.Errorf("syntax error: use parentheses to apply ORDER BY/LIMIT/OFFSET to individual SELECT in UNION")
+	// Detect invalid: ORDER BY/LIMIT/OFFSET before set operation without parentheses
+	if p.curToken.Type == token.UNION || p.curToken.Type == token.INTERSECT {
+		return nil, fmt.Errorf("syntax error: use parentheses to apply ORDER BY/LIMIT/OFFSET to individual SELECT in set operation")
 	}
 
 	// Attach ORDER BY / LIMIT / OFFSET to the appropriate node
-	if u, ok := result.(*ast.UnionStmt); ok {
+	if u, ok := result.(*ast.SetOpStmt); ok {
 		u.OrderBy = orderBy
 		u.Limit = limit
 		u.Offset = offset

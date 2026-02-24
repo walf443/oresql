@@ -41,7 +41,7 @@
 ## 集合演算
 
 - [x] UNION / UNION ALL
-- [ ] INTERSECT
+- [x] INTERSECT
 - [ ] EXCEPT
 
 ## サブクエリ

@@ -1742,9 +1742,9 @@ func TestParseStringFunctions(t *testing.T) {
 
 func TestParseUnion(t *testing.T) {
 	stmt := parse(t, "SELECT a FROM t1 UNION SELECT b FROM t2")
-	u, ok := stmt.(*ast.UnionStmt)
+	u, ok := stmt.(*ast.SetOpStmt)
 	if !ok {
-		t.Fatalf("expected UnionStmt, got %T", stmt)
+		t.Fatalf("expected SetOpStmt, got %T", stmt)
 	}
 	if u.All {
 		t.Error("expected All=false for UNION")
@@ -1763,9 +1763,9 @@ func TestParseUnion(t *testing.T) {
 
 func TestParseUnionAll(t *testing.T) {
 	stmt := parse(t, "SELECT a FROM t1 UNION ALL SELECT b FROM t2")
-	u, ok := stmt.(*ast.UnionStmt)
+	u, ok := stmt.(*ast.SetOpStmt)
 	if !ok {
-		t.Fatalf("expected UnionStmt, got %T", stmt)
+		t.Fatalf("expected SetOpStmt, got %T", stmt)
 	}
 	if !u.All {
 		t.Error("expected All=true for UNION ALL")
@@ -1774,18 +1774,18 @@ func TestParseUnionAll(t *testing.T) {
 
 func TestParseUnionChain(t *testing.T) {
 	stmt := parse(t, "SELECT a FROM t1 UNION SELECT b FROM t2 UNION SELECT c FROM t3")
-	u, ok := stmt.(*ast.UnionStmt)
+	u, ok := stmt.(*ast.SetOpStmt)
 	if !ok {
-		t.Fatalf("expected UnionStmt, got %T", stmt)
+		t.Fatalf("expected SetOpStmt, got %T", stmt)
 	}
 	// Right is t3
 	if u.Right.TableName != "t3" {
 		t.Errorf("right table: expected %q, got %q", "t3", u.Right.TableName)
 	}
-	// Left is another UnionStmt
-	inner, ok := u.Left.(*ast.UnionStmt)
+	// Left is another SetOpStmt
+	inner, ok := u.Left.(*ast.SetOpStmt)
 	if !ok {
-		t.Fatalf("expected left to be UnionStmt, got %T", u.Left)
+		t.Fatalf("expected left to be SetOpStmt, got %T", u.Left)
 	}
 	innerLeft, ok := inner.Left.(*ast.SelectStmt)
 	if !ok {
@@ -1801,9 +1801,9 @@ func TestParseUnionChain(t *testing.T) {
 
 func TestParseUnionOrderByLimit(t *testing.T) {
 	stmt := parse(t, "SELECT a FROM t1 UNION SELECT a FROM t2 ORDER BY a LIMIT 5 OFFSET 2")
-	u, ok := stmt.(*ast.UnionStmt)
+	u, ok := stmt.(*ast.SetOpStmt)
 	if !ok {
-		t.Fatalf("expected UnionStmt, got %T", stmt)
+		t.Fatalf("expected SetOpStmt, got %T", stmt)
 	}
 	if len(u.OrderBy) != 1 {
 		t.Fatalf("expected 1 ORDER BY clause, got %d", len(u.OrderBy))
@@ -1840,9 +1840,9 @@ func TestParseSelectWithoutUnionUnchanged(t *testing.T) {
 
 func TestParseUnionParenthesizedLimit(t *testing.T) {
 	stmt := parse(t, "(SELECT a FROM t1 LIMIT 2) UNION (SELECT a FROM t2 LIMIT 3)")
-	u, ok := stmt.(*ast.UnionStmt)
+	u, ok := stmt.(*ast.SetOpStmt)
 	if !ok {
-		t.Fatalf("expected UnionStmt, got %T", stmt)
+		t.Fatalf("expected SetOpStmt, got %T", stmt)
 	}
 	left, ok := u.Left.(*ast.SelectStmt)
 	if !ok {
@@ -1858,9 +1858,9 @@ func TestParseUnionParenthesizedLimit(t *testing.T) {
 
 func TestParseUnionParenthesizedOrderByLimit(t *testing.T) {
 	stmt := parse(t, "(SELECT a FROM t1 ORDER BY a LIMIT 2) UNION (SELECT a FROM t2 ORDER BY a LIMIT 3) ORDER BY a LIMIT 10")
-	u, ok := stmt.(*ast.UnionStmt)
+	u, ok := stmt.(*ast.SetOpStmt)
 	if !ok {
-		t.Fatalf("expected UnionStmt, got %T", stmt)
+		t.Fatalf("expected SetOpStmt, got %T", stmt)
 	}
 	// Left individual SELECT should have its own ORDER BY and LIMIT
 	left := u.Left.(*ast.SelectStmt)
@@ -1915,6 +1915,44 @@ func TestParseParenthesizedSelectOnly(t *testing.T) {
 	}
 	if sel.Limit == nil || *sel.Limit != 5 {
 		t.Errorf("expected LIMIT 5")
+	}
+}
+
+func TestParseIntersect(t *testing.T) {
+	stmt := parse(t, "SELECT a FROM t1 INTERSECT SELECT b FROM t2")
+	u, ok := stmt.(*ast.SetOpStmt)
+	if !ok {
+		t.Fatalf("expected SetOpStmt, got %T", stmt)
+	}
+	if u.Op != ast.SetOpIntersect {
+		t.Errorf("expected Op=%q, got %q", ast.SetOpIntersect, u.Op)
+	}
+	if u.All {
+		t.Error("expected All=false for INTERSECT")
+	}
+	left, ok := u.Left.(*ast.SelectStmt)
+	if !ok {
+		t.Fatalf("expected left to be SelectStmt, got %T", u.Left)
+	}
+	if left.TableName != "t1" {
+		t.Errorf("left table: expected %q, got %q", "t1", left.TableName)
+	}
+	if u.Right.TableName != "t2" {
+		t.Errorf("right table: expected %q, got %q", "t2", u.Right.TableName)
+	}
+}
+
+func TestParseIntersectAll(t *testing.T) {
+	stmt := parse(t, "SELECT a FROM t1 INTERSECT ALL SELECT b FROM t2")
+	u, ok := stmt.(*ast.SetOpStmt)
+	if !ok {
+		t.Fatalf("expected SetOpStmt, got %T", stmt)
+	}
+	if u.Op != ast.SetOpIntersect {
+		t.Errorf("expected Op=%q, got %q", ast.SetOpIntersect, u.Op)
+	}
+	if !u.All {
+		t.Error("expected All=true for INTERSECT ALL")
 	}
 }
 

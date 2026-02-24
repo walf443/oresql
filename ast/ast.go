@@ -85,18 +85,25 @@ type SelectStmt struct {
 func (s *SelectStmt) NodeType() string { return "Select" }
 func (s *SelectStmt) statementNode()   {}
 
-// UnionStmt represents SELECT ... UNION [ALL] SELECT ...
-type UnionStmt struct {
-	Left    Statement       // *SelectStmt or *UnionStmt (for chaining)
+// Set operation type constants.
+const (
+	SetOpUnion     = "UNION"
+	SetOpIntersect = "INTERSECT"
+)
+
+// SetOpStmt represents SELECT ... UNION|INTERSECT [ALL] SELECT ...
+type SetOpStmt struct {
+	Left    Statement       // *SelectStmt or *SetOpStmt (for chaining)
 	Right   *SelectStmt     // right-hand SELECT
-	All     bool            // true = UNION ALL, false = UNION (dedup)
+	Op      string          // SetOpUnion or SetOpIntersect
+	All     bool            // true = ALL variant
 	OrderBy []OrderByClause // ORDER BY on the combined result
 	Limit   *int64
 	Offset  *int64
 }
 
-func (s *UnionStmt) NodeType() string { return "Union" }
-func (s *UnionStmt) statementNode()   {}
+func (s *SetOpStmt) NodeType() string { return "SetOp" }
+func (s *SetOpStmt) statementNode()   {}
 
 // IdentExpr represents a column name reference, optionally qualified with a table name.
 type IdentExpr struct {

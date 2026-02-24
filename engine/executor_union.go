@@ -7,8 +7,8 @@ import (
 	"github.com/walf443/oresql/ast"
 )
 
-func (e *Executor) executeUnion(stmt *ast.UnionStmt) (*Result, error) {
-	// 1. Execute left side (may be *SelectStmt or *UnionStmt for chains)
+func (e *Executor) executeSetOp(stmt *ast.SetOpStmt) (*Result, error) {
+	// 1. Execute left side (may be *SelectStmt or *SetOpStmt for chains)
 	leftResult, err := e.Execute(stmt.Left)
 	if err != nil {
 		return nil, err
@@ -22,8 +22,8 @@ func (e *Executor) executeUnion(stmt *ast.UnionStmt) (*Result, error) {
 
 	// 3. Validate column count match
 	if len(leftResult.Columns) != len(rightResult.Columns) {
-		return nil, fmt.Errorf("UNION: column count mismatch: left has %d columns, right has %d columns",
-			len(leftResult.Columns), len(rightResult.Columns))
+		return nil, fmt.Errorf("%s: column count mismatch: left has %d columns, right has %d columns",
+			stmt.Op, len(leftResult.Columns), len(rightResult.Columns))
 	}
 
 	// 3b. Validate column types match
@@ -31,25 +31,29 @@ func (e *Executor) executeUnion(stmt *ast.UnionStmt) (*Result, error) {
 		for i := range leftResult.ColumnTypes {
 			lt, rt := leftResult.ColumnTypes[i], rightResult.ColumnTypes[i]
 			if lt != "" && rt != "" && lt != rt {
-				return nil, fmt.Errorf("UNION: column %d type mismatch: %s vs %s", i+1, lt, rt)
+				return nil, fmt.Errorf("%s: column %d type mismatch: %s vs %s", stmt.Op, i+1, lt, rt)
 			}
 		}
 	}
 
-	// 4. Combine rows
-	rows := make([]Row, 0, len(leftResult.Rows)+len(rightResult.Rows))
-	rows = append(rows, leftResult.Rows...)
-	rows = append(rows, rightResult.Rows...)
-
-	// 5. UNION (non-ALL): remove duplicates
-	if !stmt.All {
-		rows = dedup(rows)
+	// 4. Combine rows based on set operation
+	var rows []Row
+	switch stmt.Op {
+	case ast.SetOpUnion:
+		rows = make([]Row, 0, len(leftResult.Rows)+len(rightResult.Rows))
+		rows = append(rows, leftResult.Rows...)
+		rows = append(rows, rightResult.Rows...)
+		if !stmt.All {
+			rows = dedup(rows)
+		}
+	case ast.SetOpIntersect:
+		rows = intersectRows(leftResult.Rows, rightResult.Rows, stmt.All)
 	}
 
-	// 6. ORDER BY
+	// 5. ORDER BY
 	colNames := leftResult.Columns
 	if len(stmt.OrderBy) > 0 {
-		eval := newUnionEvaluator(e, colNames)
+		eval := newSetOpEvaluator(e, colNames)
 		if stmt.Limit != nil {
 			topK := int(*stmt.Limit)
 			if stmt.Offset != nil {
@@ -64,30 +68,61 @@ func (e *Executor) executeUnion(stmt *ast.UnionStmt) (*Result, error) {
 		}
 	}
 
-	// 7. OFFSET / LIMIT
+	// 6. OFFSET / LIMIT
 	rows = applyOffset(rows, stmt.Offset)
 	rows = applyLimit(rows, stmt.Limit)
 
 	return &Result{Columns: colNames, ColumnTypes: leftResult.ColumnTypes, Rows: rows}, nil
 }
 
-// unionEvaluator evaluates expressions against UNION result rows.
+// intersectRows returns rows common to both left and right.
+func intersectRows(left, right []Row, all bool) []Row {
+	// Build a count map from right rows
+	rightSet := make(map[KeyEncoding]int, len(right))
+	for _, row := range right {
+		rightSet[encodeValues(row)]++
+	}
+
+	cap := len(left)
+	if len(right) < cap {
+		cap = len(right)
+	}
+	result := make([]Row, 0, cap)
+	seen := make(map[KeyEncoding]int, len(left)) // for dedup when ALL is false
+	for _, row := range left {
+		key := encodeValues(row)
+		if rightSet[key] > 0 {
+			if all {
+				rightSet[key]-- // consume one match
+				result = append(result, row)
+			} else {
+				if seen[key] == 0 {
+					result = append(result, row)
+				}
+				seen[key]++
+			}
+		}
+	}
+	return result
+}
+
+// setOpEvaluator evaluates expressions against set operation result rows.
 // Result rows are already projected, so column lookup is by name → index.
-type unionEvaluator struct {
+type setOpEvaluator struct {
 	exec     *Executor
 	colNames []string
 }
 
-func newUnionEvaluator(exec *Executor, colNames []string) *unionEvaluator {
-	return &unionEvaluator{exec: exec, colNames: colNames}
+func newSetOpEvaluator(exec *Executor, colNames []string) *setOpEvaluator {
+	return &setOpEvaluator{exec: exec, colNames: colNames}
 }
 
-func (ue *unionEvaluator) GetExecutor() *Executor { return ue.exec }
+func (se *setOpEvaluator) GetExecutor() *Executor { return se.exec }
 
-func (ue *unionEvaluator) Eval(expr ast.Expr, row Row) (Value, error) {
+func (se *setOpEvaluator) Eval(expr ast.Expr, row Row) (Value, error) {
 	switch e := expr.(type) {
 	case *ast.IdentExpr:
-		col, err := ue.ResolveColumn(e.Table, e.Name)
+		col, err := se.ResolveColumn(e.Table, e.Name)
 		if err != nil {
 			return nil, err
 		}
@@ -101,23 +136,23 @@ func (ue *unionEvaluator) Eval(expr ast.Expr, row Row) (Value, error) {
 	case *ast.NullLitExpr:
 		return nil, nil
 	default:
-		return nil, fmt.Errorf("unsupported expression in UNION ORDER BY: %T", expr)
+		return nil, fmt.Errorf("unsupported expression in set operation ORDER BY: %T", expr)
 	}
 }
 
-func (ue *unionEvaluator) ResolveColumn(tableName, colName string) (*ColumnInfo, error) {
+func (se *setOpEvaluator) ResolveColumn(tableName, colName string) (*ColumnInfo, error) {
 	lower := strings.ToLower(colName)
-	for i, name := range ue.colNames {
+	for i, name := range se.colNames {
 		if strings.ToLower(name) == lower {
 			return &ColumnInfo{Name: name, Index: i}, nil
 		}
 	}
-	return nil, fmt.Errorf("column %q not found in UNION result", colName)
+	return nil, fmt.Errorf("column %q not found in set operation result", colName)
 }
 
-func (ue *unionEvaluator) ColumnList() []ColumnInfo {
-	cols := make([]ColumnInfo, len(ue.colNames))
-	for i, name := range ue.colNames {
+func (se *setOpEvaluator) ColumnList() []ColumnInfo {
+	cols := make([]ColumnInfo, len(se.colNames))
+	for i, name := range se.colNames {
 		cols[i] = ColumnInfo{Name: name, Index: i}
 	}
 	return cols

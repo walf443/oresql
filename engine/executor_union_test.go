@@ -500,3 +500,145 @@ func TestUnionSameTypesOK(t *testing.T) {
 		t.Errorf("expected 3 rows, got %d", len(result.Rows))
 	}
 }
+
+func TestIntersectBasic(t *testing.T) {
+	e := NewExecutor()
+	setupUnionTables(t, e)
+
+	result, err := e.ExecuteSQL("SELECT id, name FROM t1 INTERSECT SELECT id, name FROM t2")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// t1: (1,alice), (2,bob), (3,charlie)
+	// t2: (2,bob), (3,charlie), (4,dave)
+	// INTERSECT: common rows → (2,bob), (3,charlie) → 2 rows
+	if len(result.Rows) != 2 {
+		t.Errorf("expected 2 rows, got %d", len(result.Rows))
+		for _, row := range result.Rows {
+			t.Logf("  row: %v", row)
+		}
+	}
+}
+
+func TestIntersectAll(t *testing.T) {
+	e := NewExecutor()
+
+	stmts := []string{
+		"CREATE TABLE ia (id INT)",
+		"INSERT INTO ia VALUES (1)",
+		"INSERT INTO ia VALUES (2)",
+		"INSERT INTO ia VALUES (2)",
+		"INSERT INTO ia VALUES (3)",
+		"CREATE TABLE ib (id INT)",
+		"INSERT INTO ib VALUES (2)",
+		"INSERT INTO ib VALUES (2)",
+		"INSERT INTO ib VALUES (2)",
+		"INSERT INTO ib VALUES (3)",
+	}
+	for _, sql := range stmts {
+		if _, err := e.ExecuteSQL(sql); err != nil {
+			t.Fatalf("setup failed: %s: %v", sql, err)
+		}
+	}
+
+	result, err := e.ExecuteSQL("SELECT id FROM ia INTERSECT ALL SELECT id FROM ib")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// ia: 1, 2, 2, 3
+	// ib: 2, 2, 2, 3
+	// INTERSECT ALL: 2 appears min(2,3)=2 times, 3 appears min(1,1)=1 time → 3 rows
+	if len(result.Rows) != 3 {
+		t.Errorf("expected 3 rows, got %d", len(result.Rows))
+		for _, row := range result.Rows {
+			t.Logf("  row: %v", row)
+		}
+	}
+}
+
+func TestIntersectNoCommon(t *testing.T) {
+	e := NewExecutor()
+	setupUnionTables(t, e)
+
+	result, err := e.ExecuteSQL("SELECT id, name FROM t1 INTERSECT SELECT id, name FROM t3")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// t1: (1,alice), (2,bob), (3,charlie)
+	// t3: (4,dave), (5,eve)
+	// No common rows → empty
+	if len(result.Rows) != 0 {
+		t.Errorf("expected 0 rows, got %d", len(result.Rows))
+		for _, row := range result.Rows {
+			t.Logf("  row: %v", row)
+		}
+	}
+}
+
+func TestIntersectWithOrderBy(t *testing.T) {
+	e := NewExecutor()
+	setupUnionTables(t, e)
+
+	result, err := e.ExecuteSQL("SELECT id, name FROM t1 INTERSECT SELECT id, name FROM t2 ORDER BY id")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+
+	// Verify order: 2, 3
+	expectedIDs := []int64{2, 3}
+	for i, expectedID := range expectedIDs {
+		if result.Rows[i][0] != expectedID {
+			t.Errorf("row %d: expected id=%d, got %v", i, expectedID, result.Rows[i][0])
+		}
+	}
+}
+
+func TestIntersectChain(t *testing.T) {
+	e := NewExecutor()
+	setupUnionTables(t, e)
+
+	// t1: 1,2,3  t2: 2,3,4  t3: 4,5
+	// t1 INTERSECT t2 = {2,3}, then {2,3} INTERSECT t3 = {} → 0 rows
+	result, err := e.ExecuteSQL("SELECT id, name FROM t1 INTERSECT SELECT id, name FROM t2 INTERSECT SELECT id, name FROM t3")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Rows) != 0 {
+		t.Errorf("expected 0 rows, got %d", len(result.Rows))
+		for _, row := range result.Rows {
+			t.Logf("  row: %v", row)
+		}
+	}
+}
+
+func TestIntersectTypeMismatch(t *testing.T) {
+	e := NewExecutor()
+
+	stmts := []string{
+		"CREATE TABLE it1 (id INT, val INT)",
+		"INSERT INTO it1 VALUES (1, 100)",
+		"CREATE TABLE it2 (id INT, val TEXT)",
+		"INSERT INTO it2 VALUES (1, 'hello')",
+	}
+	for _, sql := range stmts {
+		if _, err := e.ExecuteSQL(sql); err != nil {
+			t.Fatalf("setup failed: %s: %v", sql, err)
+		}
+	}
+
+	_, err := e.ExecuteSQL("SELECT id, val FROM it1 INTERSECT SELECT id, val FROM it2")
+	if err == nil {
+		t.Fatal("expected error for type mismatch, got nil")
+	}
+	if !strings.Contains(err.Error(), "type mismatch") {
+		t.Errorf("expected type mismatch error, got: %v", err)
+	}
+}

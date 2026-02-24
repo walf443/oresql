@@ -514,8 +514,11 @@ func (e *Executor) tryIndexOrder(
 		return nil
 	}
 
-	// Nullable column + LIMIT: fall back to avoid NULL ordering issues
-	if !col.NotNull && !col.PrimaryKey && hasLimit {
+	// Nullable column + LIMIT + ASC: fall back to avoid NULL ordering issues.
+	// For DESC (reverse scan), NULLs (encoded as 0x00, smallest key) naturally
+	// end up at the end of results, matching SQL's "NULL sorts last" semantics.
+	// For ASC, NULLs would appear first, which is incorrect for SQL.
+	if !col.NotNull && !col.PrimaryKey && hasLimit && !reverse {
 		return nil
 	}
 

@@ -1231,6 +1231,75 @@ func TestIndexOrderByMultiColumnLimit(t *testing.T) {
 	}
 }
 
+func TestIndexOrderByNullableDescLimit(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT)")
+	run(t, exec, "CREATE INDEX idx_val ON t(val)")
+	run(t, exec, "INSERT INTO t VALUES (1, 30)")
+	run(t, exec, "INSERT INTO t VALUES (2, NULL)")
+	run(t, exec, "INSERT INTO t VALUES (3, 10)")
+	run(t, exec, "INSERT INTO t VALUES (4, NULL)")
+	run(t, exec, "INSERT INTO t VALUES (5, 20)")
+
+	// DESC + LIMIT on nullable column: NULLs should sort last
+	result := run(t, exec, "SELECT id, val FROM t ORDER BY val DESC LIMIT 3")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	expected := []int64{30, 20, 10}
+	for i, exp := range expected {
+		if result.Rows[i][1] != exp {
+			t.Errorf("row %d: expected val=%d, got %v", i, exp, result.Rows[i][1])
+		}
+	}
+}
+
+func TestIndexOrderByNullableAscLimit(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT)")
+	run(t, exec, "CREATE INDEX idx_val ON t(val)")
+	run(t, exec, "INSERT INTO t VALUES (1, 30)")
+	run(t, exec, "INSERT INTO t VALUES (2, NULL)")
+	run(t, exec, "INSERT INTO t VALUES (3, 10)")
+	run(t, exec, "INSERT INTO t VALUES (4, NULL)")
+	run(t, exec, "INSERT INTO t VALUES (5, 20)")
+
+	// ASC + LIMIT on nullable column: NULLs should sort last
+	result := run(t, exec, "SELECT id, val FROM t ORDER BY val ASC LIMIT 3")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	expected := []int64{10, 20, 30}
+	for i, exp := range expected {
+		if result.Rows[i][1] != exp {
+			t.Errorf("row %d: expected val=%d, got %v", i, exp, result.Rows[i][1])
+		}
+	}
+}
+
+func TestIndexOrderByNullableDescNoLimit(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT)")
+	run(t, exec, "CREATE INDEX idx_val ON t(val)")
+	run(t, exec, "INSERT INTO t VALUES (1, 30)")
+	run(t, exec, "INSERT INTO t VALUES (2, NULL)")
+	run(t, exec, "INSERT INTO t VALUES (3, 10)")
+	run(t, exec, "INSERT INTO t VALUES (4, NULL)")
+	run(t, exec, "INSERT INTO t VALUES (5, 20)")
+
+	// DESC without LIMIT on nullable column: NULLs should sort last
+	result := run(t, exec, "SELECT id, val FROM t ORDER BY val DESC")
+	if len(result.Rows) != 5 {
+		t.Fatalf("expected 5 rows, got %d", len(result.Rows))
+	}
+	expectedVals := []interface{}{int64(30), int64(20), int64(10), nil, nil}
+	for i, exp := range expectedVals {
+		if result.Rows[i][1] != exp {
+			t.Errorf("row %d: expected val=%v, got %v", i, exp, result.Rows[i][1])
+		}
+	}
+}
+
 func TestOrderByNonIndexedFallback(t *testing.T) {
 	exec := NewExecutor()
 	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT, other INT)")

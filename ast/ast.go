@@ -38,10 +38,12 @@ func (s *CreateTableStmt) NodeType() string { return "CreateTable" }
 func (s *CreateTableStmt) statementNode()   {}
 
 // InsertStmt represents INSERT INTO <table> [(<columns>)] VALUES (<values>), ...
+// or INSERT INTO <table> [(<columns>)] SELECT ...
 type InsertStmt struct {
 	TableName string
-	Columns   []string // nil = no column list specified
-	Rows      [][]Expr
+	Columns   []string  // nil = no column list specified
+	Rows      [][]Expr  // VALUES rows (nil when Select is used)
+	Select    Statement // INSERT ... SELECT (nil when VALUES is used)
 }
 
 func (s *InsertStmt) NodeType() string { return "Insert" }

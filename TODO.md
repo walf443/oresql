@@ -20,7 +20,7 @@
 - [x] UPDATE ... SET ... WHERE
 - [x] DELETE FROM ... WHERE
 - [x] INSERT でカラムリストを指定 (`INSERT INTO t (col1, col2) VALUES (...)`)
-- [ ] INSERT ... SELECT
+- [x] INSERT ... SELECT
 
 ## SELECT 句
 

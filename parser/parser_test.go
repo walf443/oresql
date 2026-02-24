@@ -2062,3 +2062,62 @@ func TestParseError(t *testing.T) {
 		}
 	}
 }
+
+func TestParseInsertSelect(t *testing.T) {
+	stmt := parse(t, "INSERT INTO t1 SELECT id, name FROM t2")
+	ins, ok := stmt.(*ast.InsertStmt)
+	if !ok {
+		t.Fatalf("expected InsertStmt, got %T", stmt)
+	}
+	if ins.TableName != "t1" {
+		t.Errorf("table name: expected %q, got %q", "t1", ins.TableName)
+	}
+	if ins.Rows != nil {
+		t.Errorf("expected Rows to be nil for INSERT SELECT")
+	}
+	if ins.Select == nil {
+		t.Fatalf("expected Select to be non-nil")
+	}
+	sel, ok := ins.Select.(*ast.SelectStmt)
+	if !ok {
+		t.Fatalf("expected SelectStmt, got %T", ins.Select)
+	}
+	if sel.TableName != "t2" {
+		t.Errorf("select table: expected %q, got %q", "t2", sel.TableName)
+	}
+}
+
+func TestParseInsertSelectWithColumns(t *testing.T) {
+	stmt := parse(t, "INSERT INTO t1 (id) SELECT id FROM t2")
+	ins, ok := stmt.(*ast.InsertStmt)
+	if !ok {
+		t.Fatalf("expected InsertStmt, got %T", stmt)
+	}
+	if ins.TableName != "t1" {
+		t.Errorf("table name: expected %q, got %q", "t1", ins.TableName)
+	}
+	if len(ins.Columns) != 1 || ins.Columns[0] != "id" {
+		t.Errorf("expected columns [id], got %v", ins.Columns)
+	}
+	if ins.Select == nil {
+		t.Fatalf("expected Select to be non-nil")
+	}
+}
+
+func TestParseInsertSelectUnion(t *testing.T) {
+	stmt := parse(t, "INSERT INTO t1 SELECT id FROM t2 UNION SELECT id FROM t3")
+	ins, ok := stmt.(*ast.InsertStmt)
+	if !ok {
+		t.Fatalf("expected InsertStmt, got %T", stmt)
+	}
+	if ins.TableName != "t1" {
+		t.Errorf("table name: expected %q, got %q", "t1", ins.TableName)
+	}
+	if ins.Select == nil {
+		t.Fatalf("expected Select to be non-nil")
+	}
+	_, ok = ins.Select.(*ast.SetOpStmt)
+	if !ok {
+		t.Fatalf("expected SetOpStmt for UNION, got %T", ins.Select)
+	}
+}

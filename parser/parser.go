@@ -226,6 +226,7 @@ func (p *Parser) parseColumnDef() (ast.ColumnDef, error) {
 }
 
 // parseInsert parses: INSERT INTO <table> [(<columns>)] VALUES (<expr>, ...) [, (<expr>, ...) ...]
+// or: INSERT INTO <table> [(<columns>)] SELECT ...
 func (p *Parser) parseInsert() (*ast.InsertStmt, error) {
 	if err := p.expectToken(token.INSERT); err != nil {
 		return nil, err
@@ -240,8 +241,10 @@ func (p *Parser) parseInsert() (*ast.InsertStmt, error) {
 	tableName := p.curToken.Literal
 	p.nextToken()
 
+	// Parse optional column list: (col1, col2, ...)
+	// Distinguish from (SELECT ...) by peeking after LPAREN
 	var columns []string
-	if p.curToken.Type == token.LPAREN {
+	if p.curToken.Type == token.LPAREN && p.peekToken.Type != token.SELECT {
 		p.nextToken() // skip (
 		var err error
 		columns, err = p.parseIdentList()
@@ -253,6 +256,21 @@ func (p *Parser) parseInsert() (*ast.InsertStmt, error) {
 		}
 	}
 
+	// SELECT branch: INSERT INTO t1 SELECT ... or INSERT INTO t1 (SELECT ...)
+	if p.curToken.Type == token.SELECT ||
+		(p.curToken.Type == token.LPAREN && p.peekToken.Type == token.SELECT) {
+		selectStmt, err := p.parseSelect()
+		if err != nil {
+			return nil, err
+		}
+		return &ast.InsertStmt{
+			TableName: tableName,
+			Columns:   columns,
+			Select:    selectStmt,
+		}, nil
+	}
+
+	// VALUES branch
 	if err := p.expectToken(token.VALUES); err != nil {
 		return nil, err
 	}

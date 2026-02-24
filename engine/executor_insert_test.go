@@ -235,3 +235,94 @@ func TestInsertWithColumnsMultipleRows(t *testing.T) {
 		}
 	}
 }
+
+func TestInsertSelectBasic(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE src (id INT, name TEXT)")
+	run(t, exec, "CREATE TABLE dst (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO src VALUES (1, 'alice'), (2, 'bob')")
+
+	result := run(t, exec, "INSERT INTO dst SELECT * FROM src")
+	if result.Message != "2 rows inserted" {
+		t.Errorf("expected '2 rows inserted', got %q", result.Message)
+	}
+
+	result = run(t, exec, "SELECT * FROM dst ORDER BY id")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(1) || result.Rows[0][1] != "alice" {
+		t.Errorf("row 0: expected (1, 'alice'), got %v", result.Rows[0])
+	}
+	if result.Rows[1][0] != int64(2) || result.Rows[1][1] != "bob" {
+		t.Errorf("row 1: expected (2, 'bob'), got %v", result.Rows[1])
+	}
+}
+
+func TestInsertSelectWithColumns(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE src (id INT, name TEXT)")
+	run(t, exec, "CREATE TABLE dst (id INT, name TEXT DEFAULT 'unknown')")
+	run(t, exec, "INSERT INTO src VALUES (1, 'alice'), (2, 'bob')")
+
+	result := run(t, exec, "INSERT INTO dst (id) SELECT id FROM src")
+	if result.Message != "2 rows inserted" {
+		t.Errorf("expected '2 rows inserted', got %q", result.Message)
+	}
+
+	result = run(t, exec, "SELECT * FROM dst ORDER BY id")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(1) || result.Rows[0][1] != "unknown" {
+		t.Errorf("row 0: expected (1, 'unknown'), got %v", result.Rows[0])
+	}
+}
+
+func TestInsertSelectWithWhere(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE src (id INT, name TEXT)")
+	run(t, exec, "CREATE TABLE dst (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO src VALUES (1, 'alice'), (2, 'bob'), (3, 'charlie')")
+
+	result := run(t, exec, "INSERT INTO dst SELECT * FROM src WHERE id >= 2")
+	if result.Message != "2 rows inserted" {
+		t.Errorf("expected '2 rows inserted', got %q", result.Message)
+	}
+
+	result = run(t, exec, "SELECT * FROM dst ORDER BY id")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != int64(2) {
+		t.Errorf("row 0: expected id=2, got %v", result.Rows[0][0])
+	}
+}
+
+func TestInsertSelectWithUnion(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t1 (id INT)")
+	run(t, exec, "CREATE TABLE t2 (id INT)")
+	run(t, exec, "CREATE TABLE dst (id INT)")
+	run(t, exec, "INSERT INTO t1 VALUES (1), (2)")
+	run(t, exec, "INSERT INTO t2 VALUES (3), (4)")
+
+	result := run(t, exec, "INSERT INTO dst SELECT id FROM t1 UNION ALL SELECT id FROM t2")
+	if result.Message != "4 rows inserted" {
+		t.Errorf("expected '4 rows inserted', got %q", result.Message)
+	}
+
+	result = run(t, exec, "SELECT * FROM dst ORDER BY id")
+	if len(result.Rows) != 4 {
+		t.Fatalf("expected 4 rows, got %d", len(result.Rows))
+	}
+}
+
+func TestInsertSelectColumnCountMismatch(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE src (id INT, name TEXT)")
+	run(t, exec, "CREATE TABLE dst (id INT, name TEXT, age INT)")
+	run(t, exec, "INSERT INTO src VALUES (1, 'alice')")
+
+	runExpectError(t, exec, "INSERT INTO dst SELECT * FROM src")
+}

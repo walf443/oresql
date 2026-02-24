@@ -715,19 +715,37 @@ func (p *Parser) parseSelectCore() (*ast.SelectStmt, error) {
 
 	var tableName string
 	var tableAlias string
+	var fromSubquery ast.Statement
 	var joins []ast.JoinClause
 	var where ast.Expr
 
 	if p.curToken.Type == token.FROM {
 		p.nextToken() // skip FROM
 
-		if !p.isIdent() {
-			return nil, fmt.Errorf("expected table name, got %s (%q)", p.curToken.Type, p.curToken.Literal)
-		}
-		tableName = p.curToken.Literal
-		p.nextToken()
+		if p.curToken.Type == token.LPAREN && p.peekToken.Type == token.SELECT {
+			// FROM subquery: (SELECT ...) AS alias
+			p.nextToken() // skip (
+			subStmt, err := p.parseSelect()
+			if err != nil {
+				return nil, err
+			}
+			if err := p.expectToken(token.RPAREN); err != nil {
+				return nil, err
+			}
+			tableAlias = p.parseTableAlias()
+			if tableAlias == "" {
+				return nil, fmt.Errorf("subquery in FROM must have an alias")
+			}
+			fromSubquery = subStmt
+		} else {
+			if !p.isIdent() {
+				return nil, fmt.Errorf("expected table name, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+			}
+			tableName = p.curToken.Literal
+			p.nextToken()
 
-		tableAlias = p.parseTableAlias()
+			tableAlias = p.parseTableAlias()
+		}
 
 		// Parse JOIN clauses
 		for p.curToken.Type == token.JOIN || p.curToken.Type == token.INNER || p.curToken.Type == token.LEFT {
@@ -798,14 +816,15 @@ func (p *Parser) parseSelectCore() (*ast.SelectStmt, error) {
 	}
 
 	return &ast.SelectStmt{
-		Distinct:   distinct,
-		Columns:    columns,
-		TableName:  tableName,
-		TableAlias: tableAlias,
-		Joins:      joins,
-		Where:      where,
-		GroupBy:    groupBy,
-		Having:     having,
+		Distinct:     distinct,
+		Columns:      columns,
+		TableName:    tableName,
+		FromSubquery: fromSubquery,
+		TableAlias:   tableAlias,
+		Joins:        joins,
+		Where:        where,
+		GroupBy:      groupBy,
+		Having:       having,
 	}, nil
 }
 

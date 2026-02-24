@@ -69,17 +69,18 @@ type JoinClause struct {
 
 // SelectStmt represents SELECT [DISTINCT] <columns> FROM <table> [WHERE <condition>] [GROUP BY ...] [HAVING ...] [ORDER BY ...] [LIMIT <n>] [OFFSET <n>].
 type SelectStmt struct {
-	Distinct   bool
-	Columns    []Expr
-	TableName  string
-	TableAlias string          // optional alias for the FROM table
-	Joins      []JoinClause    // JOIN clauses (INNER, LEFT)
-	Where      Expr            // nil if no WHERE clause
-	GroupBy    []Expr          // nil if no GROUP BY clause
-	Having     Expr            // nil if no HAVING clause
-	OrderBy    []OrderByClause // nil if no ORDER BY clause
-	Limit      *int64          // nil if no LIMIT clause
-	Offset     *int64          // nil if no OFFSET clause
+	Distinct     bool
+	Columns      []Expr
+	TableName    string          // table name (empty when FromSubquery is used)
+	FromSubquery Statement       // FROM subquery (nil = normal table). *SelectStmt or *SetOpStmt
+	TableAlias   string          // optional alias for the FROM table or subquery
+	Joins        []JoinClause    // JOIN clauses (INNER, LEFT)
+	Where        Expr            // nil if no WHERE clause
+	GroupBy      []Expr          // nil if no GROUP BY clause
+	Having       Expr            // nil if no HAVING clause
+	OrderBy      []OrderByClause // nil if no ORDER BY clause
+	Limit        *int64          // nil if no LIMIT clause
+	Offset       *int64          // nil if no OFFSET clause
 }
 
 func (s *SelectStmt) NodeType() string { return "Select" }

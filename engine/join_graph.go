@@ -11,6 +11,7 @@ type JoinGraphNode struct {
 	TableName  string     // lowercase real table name
 	Alias      string     // alias (empty if none)
 	Info       *TableInfo // schema info
+	Rows       []Row      // pre-materialized rows (non-nil for FROM subquery)
 	LocalWhere []ast.Expr // WHERE conditions referencing only this table
 }
 
@@ -195,14 +196,26 @@ func (e *Executor) buildJoinGraph(stmt *ast.SelectStmt) (*JoinGraph, error) {
 	}
 
 	// 1. Create node for FROM table
-	fromInfo, err := e.catalog.GetTable(stmt.TableName)
-	if err != nil {
-		return nil, err
+	var fromInfo *TableInfo
+	var fromRows []Row
+	if stmt.FromSubquery != nil {
+		var err error
+		fromInfo, fromRows, err = e.materializeSubquery(stmt.FromSubquery, stmt.TableAlias)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		var err error
+		fromInfo, err = e.catalog.GetTable(stmt.TableName)
+		if err != nil {
+			return nil, err
+		}
 	}
 	fromNode := &JoinGraphNode{
-		TableName: strings.ToLower(stmt.TableName),
+		TableName: strings.ToLower(fromInfo.Name),
 		Alias:     stmt.TableAlias,
 		Info:      fromInfo,
+		Rows:      fromRows,
 	}
 	fromEffName := fromNode.effectiveName()
 	graph.Nodes[fromEffName] = fromNode
@@ -686,7 +699,25 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 	var drivingRows []Row
 	var err error
 
-	if len(drivingNode.LocalWhere) > 0 {
+	if drivingNode.Rows != nil {
+		// Pre-materialized rows (FROM subquery)
+		drivingRows = drivingNode.Rows
+		if len(drivingNode.LocalWhere) > 0 {
+			combined := combineExprsAND(drivingNode.LocalWhere)
+			stripped := stripTableQualifier(combined, drivingNode.TableName, drivingNode.Alias)
+			var filtered []Row
+			for _, row := range drivingRows {
+				match, mErr := evalWhere(stripped, row, drivingNode.Info)
+				if mErr != nil {
+					return nil, nil, mErr
+				}
+				if match {
+					filtered = append(filtered, row)
+				}
+			}
+			drivingRows = filtered
+		}
+	} else if len(drivingNode.LocalWhere) > 0 {
 		combined := combineExprsAND(drivingNode.LocalWhere)
 		stripped := stripTableQualifier(combined, drivingNode.TableName, drivingNode.Alias)
 
@@ -801,7 +832,25 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 		// Prepare pre-filtered inner rows for non-index path
 		var preFilteredInner []Row
 		if nextIdx == nil {
-			if len(nextNode.LocalWhere) > 0 {
+			if nextNode.Rows != nil {
+				// Pre-materialized rows (FROM subquery)
+				preFilteredInner = nextNode.Rows
+				if len(nextNode.LocalWhere) > 0 {
+					combined := combineExprsAND(nextNode.LocalWhere)
+					stripped := stripTableQualifier(combined, nextNode.TableName, nextNode.Alias)
+					var filtered []Row
+					for _, row := range preFilteredInner {
+						match, mErr := evalWhere(stripped, row, nextNode.Info)
+						if mErr != nil {
+							return nil, nil, mErr
+						}
+						if match {
+							filtered = append(filtered, row)
+						}
+					}
+					preFilteredInner = filtered
+				}
+			} else if len(nextNode.LocalWhere) > 0 {
 				combined := combineExprsAND(nextNode.LocalWhere)
 				stripped := stripTableQualifier(combined, nextNode.TableName, nextNode.Alias)
 				// Try index scan for LocalWhere conditions

@@ -1994,6 +1994,57 @@ func TestParseExceptAll(t *testing.T) {
 	}
 }
 
+func TestParseFromSubquery(t *testing.T) {
+	stmt := parse(t, "SELECT * FROM (SELECT id FROM t1) AS sub")
+	sel, ok := stmt.(*ast.SelectStmt)
+	if !ok {
+		t.Fatalf("expected SelectStmt, got %T", stmt)
+	}
+	if sel.TableName != "" {
+		t.Errorf("expected empty TableName, got %q", sel.TableName)
+	}
+	if sel.FromSubquery == nil {
+		t.Fatal("expected FromSubquery, got nil")
+	}
+	if sel.TableAlias != "sub" {
+		t.Errorf("expected TableAlias %q, got %q", "sub", sel.TableAlias)
+	}
+	inner, ok := sel.FromSubquery.(*ast.SelectStmt)
+	if !ok {
+		t.Fatalf("expected inner SelectStmt, got %T", sel.FromSubquery)
+	}
+	if inner.TableName != "t1" {
+		t.Errorf("inner table: expected %q, got %q", "t1", inner.TableName)
+	}
+}
+
+func TestParseFromSubqueryUnion(t *testing.T) {
+	stmt := parse(t, "SELECT * FROM (SELECT id FROM t1 UNION SELECT id FROM t2) AS sub")
+	sel, ok := stmt.(*ast.SelectStmt)
+	if !ok {
+		t.Fatalf("expected SelectStmt, got %T", stmt)
+	}
+	if sel.FromSubquery == nil {
+		t.Fatal("expected FromSubquery, got nil")
+	}
+	if sel.TableAlias != "sub" {
+		t.Errorf("expected TableAlias %q, got %q", "sub", sel.TableAlias)
+	}
+	_, ok = sel.FromSubquery.(*ast.SetOpStmt)
+	if !ok {
+		t.Fatalf("expected inner SetOpStmt, got %T", sel.FromSubquery)
+	}
+}
+
+func TestParseFromSubqueryNoAlias(t *testing.T) {
+	l := lexer.New("SELECT * FROM (SELECT id FROM t1)")
+	p := New(l)
+	_, err := p.Parse()
+	if err == nil {
+		t.Fatal("expected error for FROM subquery without alias, got nil")
+	}
+}
+
 func TestParseError(t *testing.T) {
 	inputs := []string{
 		"CREATE",

@@ -9,12 +9,13 @@ import (
 
 func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 	// SELECT without FROM: evaluate expressions directly
-	if stmt.TableName == "" {
+	if stmt.TableName == "" && stmt.FromSubquery == nil {
 		return e.executeSelectWithoutTable(stmt)
 	}
 
 	// Try index-ordered scan for ORDER BY optimization
 	if len(stmt.OrderBy) > 0 && len(stmt.Joins) == 0 && stmt.TableAlias == "" &&
+		stmt.FromSubquery == nil &&
 		len(stmt.GroupBy) == 0 && !hasAggregate(stmt.Columns) && !stmt.Distinct {
 		info, err := e.catalog.GetTable(stmt.TableName)
 		if err == nil {
@@ -59,10 +60,10 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 		if err != nil {
 			return nil, err
 		}
-		// For single-table path, apply WHERE + project + dedup in one loop
+		// For single-table / subquery-without-join path, apply WHERE + project + dedup in one loop
 		// For JOIN path, WHERE is already applied in scanSource; pass nil
 		var whereExpr ast.Expr
-		if len(stmt.Joins) == 0 && stmt.TableAlias == "" {
+		if !e.usedJoinPath(stmt) {
 			whereExpr = stmt.Where
 		}
 		rows, err = filterProjectDedupLimit(rows, whereExpr, colExprs, isStar, eval, earlyLimit)
@@ -75,7 +76,7 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 	}
 
 	// Phase 2: WHERE filter (JOIN path handles WHERE internally via scanSource)
-	if len(stmt.Joins) == 0 && stmt.TableAlias == "" {
+	if !e.usedJoinPath(stmt) {
 		if canEarlyLimit {
 			rows, err = filterWhereLimit(rows, stmt.Where, eval, rowIdentity, earlyLimit)
 		} else {
@@ -405,13 +406,65 @@ func valuesEqual(a, b Value) bool {
 	return compareValues(a, b) == 0
 }
 
+// usedJoinPath returns true if scanSource would route through the join path for this stmt.
+// The join path handles WHERE internally, so callers should skip Phase 2 filtering.
+func (e *Executor) usedJoinPath(stmt *ast.SelectStmt) bool {
+	if stmt.FromSubquery != nil {
+		return len(stmt.Joins) > 0
+	}
+	return len(stmt.Joins) > 0 || stmt.TableAlias != ""
+}
+
 // scanSource returns the source rows and an appropriate evaluator for the query.
 // earlyLimit > 0 enables early termination for the JOIN path.
 func (e *Executor) scanSource(stmt *ast.SelectStmt, earlyLimit int) ([]Row, ExprEvaluator, error) {
+	if stmt.FromSubquery != nil {
+		return e.scanSourceSubquery(stmt, earlyLimit)
+	}
 	if len(stmt.Joins) > 0 || stmt.TableAlias != "" {
 		return e.scanSourceJoin(stmt, earlyLimit)
 	}
 	return e.scanSourceSingle(stmt)
+}
+
+// materializeSubquery executes a subquery and returns a virtual TableInfo and the rows.
+// The alias is used as the virtual table name.
+func (e *Executor) materializeSubquery(subquery ast.Statement, alias string) (*TableInfo, []Row, error) {
+	result, err := e.Execute(subquery)
+	if err != nil {
+		return nil, nil, err
+	}
+	cols := make([]ColumnInfo, len(result.Columns))
+	for i, name := range result.Columns {
+		dt := ""
+		if i < len(result.ColumnTypes) {
+			dt = result.ColumnTypes[i]
+		}
+		cols[i] = ColumnInfo{
+			Name:     name,
+			DataType: dt,
+			Index:    i,
+		}
+	}
+	info := &TableInfo{
+		Name:          strings.ToLower(alias),
+		Columns:       cols,
+		PrimaryKeyCol: -1,
+	}
+	return info, result.Rows, nil
+}
+
+// scanSourceSubquery handles FROM subquery. If JOINs are present, delegates to scanSourceJoin
+// after materializing the subquery. Otherwise returns rows with a tableEvaluator.
+func (e *Executor) scanSourceSubquery(stmt *ast.SelectStmt, earlyLimit int) ([]Row, ExprEvaluator, error) {
+	if len(stmt.Joins) > 0 {
+		return e.scanSourceJoin(stmt, earlyLimit)
+	}
+	info, rows, err := e.materializeSubquery(stmt.FromSubquery, stmt.TableAlias)
+	if err != nil {
+		return nil, nil, err
+	}
+	return rows, newTableEvaluator(e, info), nil
 }
 
 // scanSourceSingle scans a single table with optional index optimization.

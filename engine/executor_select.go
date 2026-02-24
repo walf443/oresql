@@ -49,6 +49,9 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 		return nil, err
 	}
 
+	// Resolve column types early (before GROUP BY may replace eval)
+	colTypes := resolveColumnTypes(stmt.Columns, eval)
+
 	// Fast path: DISTINCT + LIMIT without ORDER BY/GROUP BY/aggregate
 	// Combines WHERE, projection, dedup, and early termination in one pass
 	if canEarlyLimit && stmt.Distinct {
@@ -68,7 +71,7 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 		}
 		rows = applyOffset(rows, stmt.Offset)
 		rows = applyLimit(rows, stmt.Limit)
-		return &Result{Columns: colNames, Rows: rows}, nil
+		return &Result{Columns: colNames, ColumnTypes: colTypes, Rows: rows}, nil
 	}
 
 	// Phase 2: WHERE filter (JOIN path handles WHERE internally via scanSource)
@@ -135,7 +138,7 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 	// Phase 8: LIMIT
 	rows = applyLimit(rows, stmt.Limit)
 
-	return &Result{Columns: colNames, Rows: rows}, nil
+	return &Result{Columns: colNames, ColumnTypes: colTypes, Rows: rows}, nil
 }
 
 // executeSelectWithIndexOrder executes a SELECT using index-ordered scan.
@@ -171,6 +174,7 @@ func (e *Executor) executeSelectWithIndexOrder(
 	if err != nil {
 		return nil, err
 	}
+	colTypes := resolveColumnTypes(stmt.Columns, eval)
 	rows, err = projectRows(rows, colExprs, isStar, eval)
 	if err != nil {
 		return nil, err
@@ -182,7 +186,7 @@ func (e *Executor) executeSelectWithIndexOrder(
 	// Phase 8: LIMIT
 	rows = applyLimit(rows, stmt.Limit)
 
-	return &Result{Columns: colNames, Rows: rows}, nil
+	return &Result{Columns: colNames, ColumnTypes: colTypes, Rows: rows}, nil
 }
 
 // scanSourceOrderedByIndex scans rows using index order to satisfy ORDER BY.
@@ -620,7 +624,8 @@ func (e *Executor) executeSelectWithoutTable(stmt *ast.SelectStmt) (*Result, err
 		row = append(row, val)
 	}
 
-	return &Result{Columns: colNames, Rows: []Row{row}}, nil
+	colTypes := resolveColumnTypes(stmt.Columns, eval)
+	return &Result{Columns: colNames, ColumnTypes: colTypes, Rows: []Row{row}}, nil
 }
 
 // evalAggregate evaluates a single aggregate function call against a set of rows.

@@ -10,9 +10,10 @@ import (
 
 // Result holds the output of a query execution.
 type Result struct {
-	Columns []string // column names for SELECT results
-	Rows    []Row    // data rows for SELECT results
-	Message string   // status message for CREATE/INSERT
+	Columns     []string // column names for SELECT results
+	ColumnTypes []string // column types ("INT", "TEXT", "FLOAT") for SELECT results
+	Rows        []Row    // data rows for SELECT results
+	Message     string   // status message for CREATE/INSERT
 }
 
 // Option configures an Executor.

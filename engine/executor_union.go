@@ -26,6 +26,16 @@ func (e *Executor) executeUnion(stmt *ast.UnionStmt) (*Result, error) {
 			len(leftResult.Columns), len(rightResult.Columns))
 	}
 
+	// 3b. Validate column types match
+	if leftResult.ColumnTypes != nil && rightResult.ColumnTypes != nil {
+		for i := range leftResult.ColumnTypes {
+			lt, rt := leftResult.ColumnTypes[i], rightResult.ColumnTypes[i]
+			if lt != "" && rt != "" && lt != rt {
+				return nil, fmt.Errorf("UNION: column %d type mismatch: %s vs %s", i+1, lt, rt)
+			}
+		}
+	}
+
 	// 4. Combine rows
 	rows := make([]Row, 0, len(leftResult.Rows)+len(rightResult.Rows))
 	rows = append(rows, leftResult.Rows...)
@@ -58,7 +68,7 @@ func (e *Executor) executeUnion(stmt *ast.UnionStmt) (*Result, error) {
 	rows = applyOffset(rows, stmt.Offset)
 	rows = applyLimit(rows, stmt.Limit)
 
-	return &Result{Columns: colNames, Rows: rows}, nil
+	return &Result{Columns: colNames, ColumnTypes: leftResult.ColumnTypes, Rows: rows}, nil
 }
 
 // unionEvaluator evaluates expressions against UNION result rows.

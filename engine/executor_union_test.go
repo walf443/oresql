@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -421,5 +422,81 @@ func TestUnionBareLimitError(t *testing.T) {
 	_, err := e.ExecuteSQL("SELECT id FROM t1 LIMIT 2 UNION SELECT id FROM t2")
 	if err == nil {
 		t.Fatal("expected error for bare LIMIT before UNION, got nil")
+	}
+}
+
+func TestUnionTypeMismatchError(t *testing.T) {
+	e := NewExecutor()
+
+	stmts := []string{
+		"CREATE TABLE ti (id INT, val INT)",
+		"INSERT INTO ti VALUES (1, 100)",
+		"CREATE TABLE tt (id INT, val TEXT)",
+		"INSERT INTO tt VALUES (2, 'hello')",
+	}
+	for _, sql := range stmts {
+		if _, err := e.ExecuteSQL(sql); err != nil {
+			t.Fatalf("setup failed: %s: %v", sql, err)
+		}
+	}
+
+	_, err := e.ExecuteSQL("SELECT id, val FROM ti UNION SELECT id, val FROM tt")
+	if err == nil {
+		t.Fatal("expected error for type mismatch (INT vs TEXT), got nil")
+	}
+	if !strings.Contains(err.Error(), "type mismatch") {
+		t.Errorf("expected type mismatch error, got: %v", err)
+	}
+}
+
+func TestUnionAllTypeMismatchError(t *testing.T) {
+	e := NewExecutor()
+
+	stmts := []string{
+		"CREATE TABLE ti2 (id INT, val INT)",
+		"INSERT INTO ti2 VALUES (1, 100)",
+		"CREATE TABLE tt2 (id INT, val TEXT)",
+		"INSERT INTO tt2 VALUES (2, 'hello')",
+	}
+	for _, sql := range stmts {
+		if _, err := e.ExecuteSQL(sql); err != nil {
+			t.Fatalf("setup failed: %s: %v", sql, err)
+		}
+	}
+
+	_, err := e.ExecuteSQL("SELECT id, val FROM ti2 UNION ALL SELECT id, val FROM tt2")
+	if err == nil {
+		t.Fatal("expected error for type mismatch (INT vs TEXT), got nil")
+	}
+	if !strings.Contains(err.Error(), "type mismatch") {
+		t.Errorf("expected type mismatch error, got: %v", err)
+	}
+}
+
+func TestUnionSameTypesOK(t *testing.T) {
+	e := NewExecutor()
+
+	stmts := []string{
+		"CREATE TABLE sa (id INT, val INT)",
+		"INSERT INTO sa VALUES (1, 100)",
+		"INSERT INTO sa VALUES (2, 200)",
+		"CREATE TABLE sb (id INT, val INT)",
+		"INSERT INTO sb VALUES (2, 200)",
+		"INSERT INTO sb VALUES (3, 300)",
+	}
+	for _, sql := range stmts {
+		if _, err := e.ExecuteSQL(sql); err != nil {
+			t.Fatalf("setup failed: %s: %v", sql, err)
+		}
+	}
+
+	result, err := e.ExecuteSQL("SELECT id, val FROM sa UNION SELECT id, val FROM sb")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// (1,100), (2,200), (3,300) → 3 unique rows
+	if len(result.Rows) != 3 {
+		t.Errorf("expected 3 rows, got %d", len(result.Rows))
 	}
 }

@@ -227,6 +227,73 @@ func resolveSelectColumns(columns []ast.Expr, eval ExprEvaluator) ([]string, []a
 	return colNames, colExprs, false, nil
 }
 
+// inferExprType infers the result type of an expression.
+// Returns "INT", "TEXT", "FLOAT", or "" (unknown/compatible with any).
+func inferExprType(expr ast.Expr, eval ExprEvaluator) string {
+	switch e := expr.(type) {
+	case *ast.IdentExpr:
+		col, err := eval.ResolveColumn(e.Table, e.Name)
+		if err != nil {
+			return ""
+		}
+		return col.DataType
+	case *ast.IntLitExpr:
+		return "INT"
+	case *ast.FloatLitExpr:
+		return "FLOAT"
+	case *ast.StringLitExpr:
+		return "TEXT"
+	case *ast.NullLitExpr:
+		return "" // compatible with any type
+	case *ast.CallExpr:
+		switch e.Name {
+		case "COUNT":
+			return "INT"
+		case "AVG":
+			return "FLOAT"
+		case "SUM", "MIN", "MAX":
+			if len(e.Args) > 0 {
+				return inferExprType(e.Args[0], eval)
+			}
+			return ""
+		default:
+			return ""
+		}
+	case *ast.ArithmeticExpr:
+		lt := inferExprType(e.Left, eval)
+		rt := inferExprType(e.Right, eval)
+		if lt == "FLOAT" || rt == "FLOAT" {
+			return "FLOAT"
+		}
+		return "INT"
+	case *ast.AliasExpr:
+		return inferExprType(e.Expr, eval)
+	default:
+		return ""
+	}
+}
+
+// resolveColumnTypes resolves the column types for SELECT columns.
+// Returns a slice of type strings ("INT", "TEXT", "FLOAT", or "" for unknown).
+func resolveColumnTypes(columns []ast.Expr, eval ExprEvaluator) []string {
+	if len(columns) == 1 {
+		if _, ok := columns[0].(*ast.StarExpr); ok {
+			colList := eval.ColumnList()
+			types := make([]string, len(colList))
+			for i, col := range colList {
+				types[i] = col.DataType
+			}
+			return types
+		}
+	}
+
+	types := make([]string, len(columns))
+	for i, colExpr := range columns {
+		types[i] = inferExprType(colExpr, eval)
+	}
+	return types
+}
+
 // sortKey holds pre-computed ORDER BY values for a row.
 type sortKey struct {
 	values []Value

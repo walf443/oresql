@@ -13,15 +13,34 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 		return e.executeSelectWithoutTable(stmt)
 	}
 
+	// Determine if early limit termination is safe
+	canEarlyLimit := stmt.Limit != nil &&
+		len(stmt.OrderBy) == 0 &&
+		len(stmt.GroupBy) == 0 &&
+		!hasAggregate(stmt.Columns) &&
+		!stmt.Distinct
+
+	var earlyLimit int
+	if canEarlyLimit {
+		earlyLimit = int(*stmt.Limit)
+		if stmt.Offset != nil {
+			earlyLimit += int(*stmt.Offset)
+		}
+	}
+
 	// Phase 1: Source rows + evaluator
-	rows, eval, err := e.scanSource(stmt)
+	rows, eval, err := e.scanSource(stmt, earlyLimit)
 	if err != nil {
 		return nil, err
 	}
 
 	// Phase 2: WHERE filter (JOIN path handles WHERE internally via scanSource)
 	if len(stmt.Joins) == 0 && stmt.TableAlias == "" {
-		rows, err = filterWhere(rows, stmt.Where, eval, rowIdentity)
+		if canEarlyLimit {
+			rows, err = filterWhereLimit(rows, stmt.Where, eval, rowIdentity, earlyLimit)
+		} else {
+			rows, err = filterWhere(rows, stmt.Where, eval, rowIdentity)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -75,9 +94,10 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 }
 
 // scanSource returns the source rows and an appropriate evaluator for the query.
-func (e *Executor) scanSource(stmt *ast.SelectStmt) ([]Row, ExprEvaluator, error) {
+// earlyLimit > 0 enables early termination for the JOIN path.
+func (e *Executor) scanSource(stmt *ast.SelectStmt, earlyLimit int) ([]Row, ExprEvaluator, error) {
 	if len(stmt.Joins) > 0 || stmt.TableAlias != "" {
-		return e.scanSourceJoin(stmt)
+		return e.scanSourceJoin(stmt, earlyLimit)
 	}
 	return e.scanSourceSingle(stmt)
 }

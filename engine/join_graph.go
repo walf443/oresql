@@ -667,7 +667,8 @@ func (e *Executor) findCompositeJoinIndex(
 
 // executeJoinRows performs the join operation and returns the joined rows and JoinContext.
 // This is the core join logic without post-processing (ORDER BY, projection, etc.).
-func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order []string) ([]Row, *JoinContext, error) {
+// earlyLimit > 0 enables early termination when enough rows have been collected.
+func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order []string, earlyLimit int) ([]Row, *JoinContext, error) {
 	// Compute column offsets for the fixed-slot approach.
 	// Slots are always in the original TableOrder, regardless of join execution order.
 	totalCols := 0
@@ -855,7 +856,11 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 		// Nested loop join
 		isLeftJoin := edge != nil && edge.JoinType == ast.JoinLeft
 		var joined []Row
+		earlyLimitReached := false
 		for _, outerRow := range currentRows {
+			if earlyLimitReached {
+				break
+			}
 			var innerCandidates []Row
 			skipInner := false
 
@@ -932,6 +937,9 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 					copy(nullPadded, outerRow)
 					// inner slots remain nil (NULL)
 					joined = append(joined, nullPadded)
+					if earlyLimit > 0 && len(joined) >= earlyLimit {
+						earlyLimitReached = true
+					}
 				}
 				continue
 			}
@@ -971,6 +979,10 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 
 				matched = true
 				joined = append(joined, mergedRow)
+				if earlyLimit > 0 && len(joined) >= earlyLimit {
+					earlyLimitReached = true
+					break
+				}
 			}
 
 			if !matched && isLeftJoin {
@@ -978,6 +990,9 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 				copy(nullPadded, outerRow)
 				// inner slots remain nil (NULL)
 				joined = append(joined, nullPadded)
+				if earlyLimit > 0 && len(joined) >= earlyLimit {
+					earlyLimitReached = true
+				}
 			}
 		}
 
@@ -1008,13 +1023,19 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 
 // scanSourceJoin handles the JOIN scan path: builds graph, optimizes order, executes join rows.
 // Returns joined rows and a joinEvaluator for the pipeline.
-func (e *Executor) scanSourceJoin(stmt *ast.SelectStmt) ([]Row, ExprEvaluator, error) {
+// earlyLimit > 0 enables early termination if no CrossWhere conditions exist.
+func (e *Executor) scanSourceJoin(stmt *ast.SelectStmt, earlyLimit int) ([]Row, ExprEvaluator, error) {
 	graph, err := e.buildJoinGraph(stmt)
 	if err != nil {
 		return nil, nil, err
 	}
 	order := e.OptimizeJoinOrder(graph)
-	rows, jc, err := e.executeJoinRows(stmt, graph, order)
+	// Disable early limit if CrossWhere exists (post-join filtering may reduce rows)
+	joinEarlyLimit := earlyLimit
+	if len(graph.CrossWhere) > 0 {
+		joinEarlyLimit = 0
+	}
+	rows, jc, err := e.executeJoinRows(stmt, graph, order, joinEarlyLimit)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -24,7 +24,11 @@ func (e *Executor) executeUpdate(stmt *ast.UpdateStmt) (*Result, error) {
 	}
 
 	// Pipeline: WHERE → ORDER BY → LIMIT
-	allRows, err = filterWhere(allRows, stmt.Where, eval, rowOfKeyRow)
+	if len(stmt.OrderBy) == 0 && stmt.Limit != nil {
+		allRows, err = filterWhereLimit(allRows, stmt.Where, eval, rowOfKeyRow, int(*stmt.Limit))
+	} else {
+		allRows, err = filterWhere(allRows, stmt.Where, eval, rowOfKeyRow)
+	}
 	if err != nil {
 		return nil, err
 	}

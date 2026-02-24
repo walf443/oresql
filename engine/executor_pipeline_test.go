@@ -106,6 +106,56 @@ func TestFilterWhere(t *testing.T) {
 	}
 }
 
+func TestFilterWhereLimit(t *testing.T) {
+	info := &TableInfo{
+		Name: "users",
+		Columns: []ColumnInfo{
+			{Name: "id", DataType: "INT", Index: 0},
+			{Name: "name", DataType: "TEXT", Index: 1},
+		},
+	}
+	eval := newTableEvaluator(nil, info)
+	rows := []Row{
+		{int64(1), "Alice"},
+		{int64(2), "Bob"},
+		{int64(3), "Alice"},
+		{int64(4), "Charlie"},
+		{int64(5), "Alice"},
+	}
+
+	// Filter by name = 'Alice' with limit 2
+	where := &ast.BinaryExpr{
+		Left:  &ast.IdentExpr{Name: "name"},
+		Op:    "=",
+		Right: &ast.StringLitExpr{Value: "Alice"},
+	}
+	result, err := filterWhereLimit(rows, where, eval, rowIdentity, 2)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result) != 2 {
+		t.Errorf("expected 2 rows, got %d", len(result))
+	}
+
+	// Nil where with limit 3 returns first 3 rows
+	result, err = filterWhereLimit(rows, nil, eval, rowIdentity, 3)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result) != 3 {
+		t.Errorf("expected 3 rows, got %d", len(result))
+	}
+
+	// Limit larger than matching rows returns all matching
+	result, err = filterWhereLimit(rows, where, eval, rowIdentity, 10)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result) != 3 {
+		t.Errorf("expected 3 rows, got %d", len(result))
+	}
+}
+
 func TestSortRows(t *testing.T) {
 	info := &TableInfo{
 		Name: "users",

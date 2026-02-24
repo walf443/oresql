@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/walf443/oresql/ast"
@@ -130,6 +131,96 @@ func TestDedup(t *testing.T) {
 				t.Errorf("dedup() returned %d rows, want %d", len(got), tt.want)
 			}
 		})
+	}
+}
+
+// --- LIMIT early termination tests ---
+
+func TestSelectLimitNoOrder(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, val INT)")
+	for i := 1; i <= 10; i++ {
+		run(t, exec, fmt.Sprintf("INSERT INTO t VALUES (%d, %d)", i, i*10))
+	}
+
+	result := run(t, exec, "SELECT * FROM t LIMIT 3")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+}
+
+func TestSelectWhereLimitNoOrder(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, val INT)")
+	for i := 1; i <= 10; i++ {
+		run(t, exec, fmt.Sprintf("INSERT INTO t VALUES (%d, %d)", i, i*10))
+	}
+
+	// WHERE val > 50 matches ids 6,7,8,9,10 → LIMIT 2 returns first 2
+	result := run(t, exec, "SELECT * FROM t WHERE val > 50 LIMIT 2")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+}
+
+func TestSelectLimitOffsetNoOrder(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, val INT)")
+	for i := 1; i <= 10; i++ {
+		run(t, exec, fmt.Sprintf("INSERT INTO t VALUES (%d, %d)", i, i*10))
+	}
+
+	result := run(t, exec, "SELECT * FROM t LIMIT 2 OFFSET 3")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+}
+
+func TestJoinLimitNoOrder(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
+	run(t, exec, "CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, product TEXT)")
+	for i := 1; i <= 5; i++ {
+		run(t, exec, fmt.Sprintf("INSERT INTO users VALUES (%d, 'user_%d')", i, i))
+	}
+	for i := 1; i <= 20; i++ {
+		run(t, exec, fmt.Sprintf("INSERT INTO orders VALUES (%d, %d, 'product_%d')", i, (i-1)%5+1, i))
+	}
+
+	result := run(t, exec, "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id LIMIT 5")
+	if len(result.Rows) != 5 {
+		t.Fatalf("expected 5 rows, got %d", len(result.Rows))
+	}
+}
+
+func TestLeftJoinLimitNoOrder(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
+	run(t, exec, "CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, product TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'Alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'Bob')")
+	run(t, exec, "INSERT INTO users VALUES (3, 'Charlie')")
+	run(t, exec, "INSERT INTO orders VALUES (1, 1, 'apple')")
+	run(t, exec, "INSERT INTO orders VALUES (2, 1, 'banana')")
+
+	// user 1 has 2 orders, users 2,3 have 0 → LEFT JOIN gives 4 rows total
+	result := run(t, exec, "SELECT u.name, o.product FROM users u LEFT JOIN orders o ON u.id = o.user_id LIMIT 3")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+}
+
+func TestGroupByLimitNoEarlyTermination(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (id INT, val INT)")
+	for i := 1; i <= 10; i++ {
+		run(t, exec, fmt.Sprintf("INSERT INTO t VALUES (%d, %d)", i, i%3))
+	}
+
+	// GROUP BY val produces 3 groups (0,1,2), LIMIT 2 should return 2 groups
+	result := run(t, exec, "SELECT val, COUNT(*) FROM t GROUP BY val LIMIT 2")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
 	}
 }
 

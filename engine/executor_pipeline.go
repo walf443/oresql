@@ -109,6 +109,33 @@ func applyLimit[T any](rows []T, limit *int64) []T {
 	return rows
 }
 
+// filterWhereLimit filters rows using the WHERE expression with early termination at limit.
+// Returns at most limit rows that pass the WHERE filter.
+// If where is nil, returns the first limit rows.
+func filterWhereLimit[T any](rows []T, where ast.Expr, eval ExprEvaluator, rowOf func(T) Row, limit int) ([]T, error) {
+	var filtered []T
+	for _, item := range rows {
+		if where != nil {
+			val, err := eval.Eval(where, rowOf(item))
+			if err != nil {
+				return nil, err
+			}
+			b, ok := val.(bool)
+			if !ok {
+				return nil, fmt.Errorf("WHERE expression must evaluate to boolean, got %T", val)
+			}
+			if !b {
+				continue
+			}
+		}
+		filtered = append(filtered, item)
+		if len(filtered) >= limit {
+			break
+		}
+	}
+	return filtered, nil
+}
+
 // resolveSelectColumns resolves column names and expressions from SELECT columns.
 // Returns column names, column expressions (nil for star), isStar flag, and error.
 func resolveSelectColumns(columns []ast.Expr, eval ExprEvaluator) ([]string, []ast.Expr, bool, error) {

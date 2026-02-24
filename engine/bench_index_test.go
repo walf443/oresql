@@ -780,3 +780,60 @@ func BenchmarkJoinSeparateIndexes_10000(b *testing.B) {
 		}
 	}
 }
+
+// --- LIMIT early termination benchmarks ---
+
+func BenchmarkSelectLimitNoOrder_10000(b *testing.B) {
+	exec := setupBenchTable(b, 10000, false)
+	sql := "SELECT * FROM bench LIMIT 10"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkSelectLimitNoOrder_100000(b *testing.B) {
+	exec := setupBenchTable(b, 100000, false)
+	sql := "SELECT * FROM bench LIMIT 10"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkSelectLimitWithOrder_10000(b *testing.B) {
+	exec := setupBenchTable(b, 10000, false)
+	sql := "SELECT * FROM bench ORDER BY val LIMIT 10"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkJoinLimitNoOrder_1000(b *testing.B) {
+	exec := setupJoinBenchTables(b, 1000, true, false)
+	sql := "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id LIMIT 10"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkJoinLimitNoOrder_10000(b *testing.B) {
+	exec := setupJoinBenchTables(b, 10000, true, false)
+	sql := "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id LIMIT 10"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/walf443/oresql/ast"
 	"github.com/walf443/oresql/lexer"
 )
@@ -13,200 +15,118 @@ func parse(t *testing.T, input string) ast.Statement {
 	l := lexer.New(input)
 	p := New(l)
 	stmt, err := p.Parse()
-	if err != nil {
-		t.Fatalf("parse error: %s", err)
-	}
+	require.NoError(t, err)
 	return stmt
 }
 
 func TestParseCreateTable(t *testing.T) {
 	stmt := parse(t, "CREATE TABLE users (id INT, name TEXT)")
-	ct, ok := stmt.(*ast.CreateTableStmt)
-	if !ok {
-		t.Fatalf("expected CreateTableStmt, got %T", stmt)
-	}
-	if ct.TableName != "users" {
-		t.Errorf("table name: expected %q, got %q", "users", ct.TableName)
-	}
-	if len(ct.Columns) != 2 {
-		t.Fatalf("expected 2 columns, got %d", len(ct.Columns))
-	}
-	if ct.Columns[0].Name != "id" || ct.Columns[0].DataType != "INT" {
-		t.Errorf("column 0: expected (id, INT), got (%s, %s)", ct.Columns[0].Name, ct.Columns[0].DataType)
-	}
-	if ct.Columns[1].Name != "name" || ct.Columns[1].DataType != "TEXT" {
-		t.Errorf("column 1: expected (name, TEXT), got (%s, %s)", ct.Columns[1].Name, ct.Columns[1].DataType)
-	}
+	require.IsType(t, &ast.CreateTableStmt{}, stmt)
+	ct := stmt.(*ast.CreateTableStmt)
+	assert.Equal(t, "users", ct.TableName)
+	require.Len(t, ct.Columns, 2, "expected 2 columns")
+	assert.Equal(t, "id", ct.Columns[0].Name)
+	assert.Equal(t, "INT", ct.Columns[0].DataType)
+	assert.Equal(t, "name", ct.Columns[1].Name)
+	assert.Equal(t, "TEXT", ct.Columns[1].DataType)
 }
 
 func TestParseInsert(t *testing.T) {
 	stmt := parse(t, "INSERT INTO users VALUES (1, 'alice')")
-	ins, ok := stmt.(*ast.InsertStmt)
-	if !ok {
-		t.Fatalf("expected InsertStmt, got %T", stmt)
-	}
-	if ins.TableName != "users" {
-		t.Errorf("table name: expected %q, got %q", "users", ins.TableName)
-	}
-	if len(ins.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(ins.Rows))
-	}
-	if len(ins.Rows[0]) != 2 {
-		t.Fatalf("expected 2 values, got %d", len(ins.Rows[0]))
-	}
-	intVal, ok := ins.Rows[0][0].(*ast.IntLitExpr)
-	if !ok {
-		t.Fatalf("value 0: expected IntLitExpr, got %T", ins.Rows[0][0])
-	}
-	if intVal.Value != 1 {
-		t.Errorf("value 0: expected 1, got %d", intVal.Value)
-	}
-	strVal, ok := ins.Rows[0][1].(*ast.StringLitExpr)
-	if !ok {
-		t.Fatalf("value 1: expected StringLitExpr, got %T", ins.Rows[0][1])
-	}
-	if strVal.Value != "alice" {
-		t.Errorf("value 1: expected %q, got %q", "alice", strVal.Value)
-	}
+	require.IsType(t, &ast.InsertStmt{}, stmt)
+	ins := stmt.(*ast.InsertStmt)
+	assert.Equal(t, "users", ins.TableName)
+	require.Len(t, ins.Rows, 1, "expected 1 row")
+	require.Len(t, ins.Rows[0], 2, "expected 2 values")
+	require.IsType(t, &ast.IntLitExpr{}, ins.Rows[0][0])
+	intVal := ins.Rows[0][0].(*ast.IntLitExpr)
+	assert.Equal(t, int64(1), intVal.Value)
+	require.IsType(t, &ast.StringLitExpr{}, ins.Rows[0][1])
+	strVal := ins.Rows[0][1].(*ast.StringLitExpr)
+	assert.Equal(t, "alice", strVal.Value)
 }
 
 func TestParseInsertMultipleRows(t *testing.T) {
 	stmt := parse(t, "INSERT INTO users VALUES (1, 'alice'), (2, 'bob'), (3, 'charlie')")
-	ins, ok := stmt.(*ast.InsertStmt)
-	if !ok {
-		t.Fatalf("expected InsertStmt, got %T", stmt)
-	}
-	if ins.TableName != "users" {
-		t.Errorf("table name: expected %q, got %q", "users", ins.TableName)
-	}
-	if len(ins.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(ins.Rows))
-	}
+	require.IsType(t, &ast.InsertStmt{}, stmt)
+	ins := stmt.(*ast.InsertStmt)
+	assert.Equal(t, "users", ins.TableName)
+	require.Len(t, ins.Rows, 3, "expected 3 rows")
 	// Check each row has 2 values
 	for i, row := range ins.Rows {
-		if len(row) != 2 {
-			t.Errorf("row %d: expected 2 values, got %d", i, len(row))
-		}
+		assert.Len(t, row, 2, "row %d", i)
 	}
 	// Spot check values
-	if ins.Rows[0][0].(*ast.IntLitExpr).Value != 1 {
-		t.Errorf("row 0 value 0: expected 1")
-	}
-	if ins.Rows[1][1].(*ast.StringLitExpr).Value != "bob" {
-		t.Errorf("row 1 value 1: expected 'bob'")
-	}
-	if ins.Rows[2][0].(*ast.IntLitExpr).Value != 3 {
-		t.Errorf("row 2 value 0: expected 3")
-	}
+	assert.Equal(t, int64(1), ins.Rows[0][0].(*ast.IntLitExpr).Value)
+	assert.Equal(t, "bob", ins.Rows[1][1].(*ast.StringLitExpr).Value)
+	assert.Equal(t, int64(3), ins.Rows[2][0].(*ast.IntLitExpr).Value)
 }
 
 func TestParseSelectStar(t *testing.T) {
 	stmt := parse(t, "SELECT * FROM users")
-	sel, ok := stmt.(*ast.SelectStmt)
-	if !ok {
-		t.Fatalf("expected SelectStmt, got %T", stmt)
-	}
-	if sel.TableName != "users" {
-		t.Errorf("table name: expected %q, got %q", "users", sel.TableName)
-	}
-	if len(sel.Columns) != 1 {
-		t.Fatalf("expected 1 column expr, got %d", len(sel.Columns))
-	}
-	if _, ok := sel.Columns[0].(*ast.StarExpr); !ok {
-		t.Errorf("expected StarExpr, got %T", sel.Columns[0])
-	}
-	if sel.Where != nil {
-		t.Errorf("expected no WHERE, got %v", sel.Where)
-	}
+	require.IsType(t, &ast.SelectStmt{}, stmt)
+	sel := stmt.(*ast.SelectStmt)
+	assert.Equal(t, "users", sel.TableName)
+	require.Len(t, sel.Columns, 1, "expected 1 column")
+	assert.IsType(t, &ast.StarExpr{}, sel.Columns[0])
+	assert.Nil(t, sel.Where)
 }
 
 func TestParseSelectColumns(t *testing.T) {
 	stmt := parse(t, "SELECT id, name FROM users")
 	sel := stmt.(*ast.SelectStmt)
-	if len(sel.Columns) != 2 {
-		t.Fatalf("expected 2 columns, got %d", len(sel.Columns))
-	}
+	require.Len(t, sel.Columns, 2, "expected 2 columns")
 	col0 := sel.Columns[0].(*ast.IdentExpr)
 	col1 := sel.Columns[1].(*ast.IdentExpr)
-	if col0.Name != "id" {
-		t.Errorf("column 0: expected %q, got %q", "id", col0.Name)
-	}
-	if col1.Name != "name" {
-		t.Errorf("column 1: expected %q, got %q", "name", col1.Name)
-	}
+	assert.Equal(t, "id", col0.Name)
+	assert.Equal(t, "name", col1.Name)
 }
 
 func TestParseSelectWhere(t *testing.T) {
 	stmt := parse(t, "SELECT name FROM users WHERE id = 1 AND name = 'alice'")
 	sel := stmt.(*ast.SelectStmt)
 
-	if sel.Where == nil {
-		t.Fatal("expected WHERE clause")
-	}
+	require.NotNil(t, sel.Where)
 
-	logical, ok := sel.Where.(*ast.LogicalExpr)
-	if !ok {
-		t.Fatalf("expected LogicalExpr, got %T", sel.Where)
-	}
-	if logical.Op != "AND" {
-		t.Errorf("expected AND, got %s", logical.Op)
-	}
+	require.IsType(t, &ast.LogicalExpr{}, sel.Where)
+	logical := sel.Where.(*ast.LogicalExpr)
+	assert.Equal(t, "AND", logical.Op)
 
 	// Left: id = 1
 	left := logical.Left.(*ast.BinaryExpr)
-	if left.Op != "=" {
-		t.Errorf("left op: expected =, got %s", left.Op)
-	}
-	if left.Left.(*ast.IdentExpr).Name != "id" {
-		t.Errorf("left.left: expected id")
-	}
-	if left.Right.(*ast.IntLitExpr).Value != 1 {
-		t.Errorf("left.right: expected 1")
-	}
+	assert.Equal(t, "=", left.Op)
+	assert.Equal(t, "id", left.Left.(*ast.IdentExpr).Name)
+	assert.Equal(t, int64(1), left.Right.(*ast.IntLitExpr).Value)
 
 	// Right: name = 'alice'
 	right := logical.Right.(*ast.BinaryExpr)
-	if right.Op != "=" {
-		t.Errorf("right op: expected =, got %s", right.Op)
-	}
-	if right.Left.(*ast.IdentExpr).Name != "name" {
-		t.Errorf("right.left: expected name")
-	}
-	if right.Right.(*ast.StringLitExpr).Value != "alice" {
-		t.Errorf("right.right: expected alice")
-	}
+	assert.Equal(t, "=", right.Op)
+	assert.Equal(t, "name", right.Left.(*ast.IdentExpr).Name)
+	assert.Equal(t, "alice", right.Right.(*ast.StringLitExpr).Value)
 }
 
 func TestParseSelectWhereOr(t *testing.T) {
 	stmt := parse(t, "SELECT * FROM users WHERE id = 1 OR id = 2")
 	sel := stmt.(*ast.SelectStmt)
 	logical := sel.Where.(*ast.LogicalExpr)
-	if logical.Op != "OR" {
-		t.Errorf("expected OR, got %s", logical.Op)
-	}
+	assert.Equal(t, "OR", logical.Op)
 }
 
 func TestParseSelectWithSemicolon(t *testing.T) {
 	stmt := parse(t, "SELECT * FROM users;")
-	if _, ok := stmt.(*ast.SelectStmt); !ok {
-		t.Fatalf("expected SelectStmt, got %T", stmt)
-	}
+	require.IsType(t, &ast.SelectStmt{}, stmt)
 }
 
 func TestParseSelectQualifiedColumns(t *testing.T) {
 	stmt := parse(t, "SELECT users.id, users.name FROM users")
 	sel := stmt.(*ast.SelectStmt)
-	if len(sel.Columns) != 2 {
-		t.Fatalf("expected 2 columns, got %d", len(sel.Columns))
-	}
+	require.Len(t, sel.Columns, 2, "expected 2 columns")
 	col0 := sel.Columns[0].(*ast.IdentExpr)
-	if col0.Table != "users" || col0.Name != "id" {
-		t.Errorf("column 0: expected users.id, got %s.%s", col0.Table, col0.Name)
-	}
+	assert.Equal(t, "users", col0.Table)
+	assert.Equal(t, "id", col0.Name)
 	col1 := sel.Columns[1].(*ast.IdentExpr)
-	if col1.Table != "users" || col1.Name != "name" {
-		t.Errorf("column 1: expected users.name, got %s.%s", col1.Table, col1.Name)
-	}
+	assert.Equal(t, "users", col1.Table)
+	assert.Equal(t, "name", col1.Name)
 }
 
 func TestParseSelectQualifiedWhere(t *testing.T) {
@@ -214,1279 +134,714 @@ func TestParseSelectQualifiedWhere(t *testing.T) {
 	sel := stmt.(*ast.SelectStmt)
 	bin := sel.Where.(*ast.BinaryExpr)
 	ident := bin.Left.(*ast.IdentExpr)
-	if ident.Table != "users" || ident.Name != "id" {
-		t.Errorf("expected users.id, got %s.%s", ident.Table, ident.Name)
-	}
+	assert.Equal(t, "users", ident.Table)
+	assert.Equal(t, "id", ident.Name)
 }
 
 func TestParseSelectMixedColumns(t *testing.T) {
 	stmt := parse(t, "SELECT users.id, name FROM users")
 	sel := stmt.(*ast.SelectStmt)
-	if len(sel.Columns) != 2 {
-		t.Fatalf("expected 2 columns, got %d", len(sel.Columns))
-	}
+	require.Len(t, sel.Columns, 2, "expected 2 columns")
 	col0 := sel.Columns[0].(*ast.IdentExpr)
-	if col0.Table != "users" || col0.Name != "id" {
-		t.Errorf("column 0: expected users.id, got %s.%s", col0.Table, col0.Name)
-	}
+	assert.Equal(t, "users", col0.Table)
+	assert.Equal(t, "id", col0.Name)
 	col1 := sel.Columns[1].(*ast.IdentExpr)
-	if col1.Table != "" || col1.Name != "name" {
-		t.Errorf("column 1: expected name (unqualified), got %s.%s", col1.Table, col1.Name)
-	}
+	assert.Equal(t, "", col1.Table)
+	assert.Equal(t, "name", col1.Name)
 }
 
 func TestParseSelectCountStar(t *testing.T) {
 	stmt := parse(t, "SELECT COUNT(*) FROM users")
 	sel := stmt.(*ast.SelectStmt)
-	if len(sel.Columns) != 1 {
-		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
-	}
-	call, ok := sel.Columns[0].(*ast.CallExpr)
-	if !ok {
-		t.Fatalf("expected CallExpr, got %T", sel.Columns[0])
-	}
-	if call.Name != "COUNT" {
-		t.Errorf("expected function name COUNT, got %s", call.Name)
-	}
-	if len(call.Args) != 1 {
-		t.Fatalf("expected 1 arg, got %d", len(call.Args))
-	}
-	if _, ok := call.Args[0].(*ast.StarExpr); !ok {
-		t.Errorf("expected StarExpr arg, got %T", call.Args[0])
-	}
+	require.Len(t, sel.Columns, 1, "expected 1 column")
+	require.IsType(t, &ast.CallExpr{}, sel.Columns[0])
+	call := sel.Columns[0].(*ast.CallExpr)
+	assert.Equal(t, "COUNT", call.Name)
+	require.Len(t, call.Args, 1, "expected 1 arg")
+	assert.IsType(t, &ast.StarExpr{}, call.Args[0])
 }
 
 func TestParseSelectCountStarLowerCase(t *testing.T) {
 	stmt := parse(t, "select count(*) from users")
 	sel := stmt.(*ast.SelectStmt)
 	call := sel.Columns[0].(*ast.CallExpr)
-	if call.Name != "COUNT" {
-		t.Errorf("expected function name COUNT, got %s", call.Name)
-	}
+	assert.Equal(t, "COUNT", call.Name)
 }
 
 func TestParseSelectLiteral(t *testing.T) {
 	stmt := parse(t, "SELECT 1")
 	sel := stmt.(*ast.SelectStmt)
-	if sel.TableName != "" {
-		t.Errorf("expected empty table name, got %q", sel.TableName)
-	}
-	if len(sel.Columns) != 1 {
-		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
-	}
-	lit, ok := sel.Columns[0].(*ast.IntLitExpr)
-	if !ok {
-		t.Fatalf("expected IntLitExpr, got %T", sel.Columns[0])
-	}
-	if lit.Value != 1 {
-		t.Errorf("expected value 1, got %d", lit.Value)
-	}
+	assert.Equal(t, "", sel.TableName)
+	require.Len(t, sel.Columns, 1, "expected 1 column")
+	require.IsType(t, &ast.IntLitExpr{}, sel.Columns[0])
+	lit := sel.Columns[0].(*ast.IntLitExpr)
+	assert.Equal(t, int64(1), lit.Value)
 }
 
 func TestParseIsNull(t *testing.T) {
 	stmt := parse(t, "SELECT * FROM users WHERE name IS NULL")
 	sel := stmt.(*ast.SelectStmt)
-	isNull, ok := sel.Where.(*ast.IsNullExpr)
-	if !ok {
-		t.Fatalf("expected IsNullExpr, got %T", sel.Where)
-	}
+	require.IsType(t, &ast.IsNullExpr{}, sel.Where)
+	isNull := sel.Where.(*ast.IsNullExpr)
 	ident := isNull.Expr.(*ast.IdentExpr)
-	if ident.Name != "name" {
-		t.Errorf("expected column name 'name', got %q", ident.Name)
-	}
-	if isNull.Not {
-		t.Errorf("expected Not=false, got true")
-	}
+	assert.Equal(t, "name", ident.Name)
+	assert.False(t, isNull.Not)
 }
 
 func TestParseIsNotNull(t *testing.T) {
 	stmt := parse(t, "SELECT * FROM users WHERE name IS NOT NULL")
 	sel := stmt.(*ast.SelectStmt)
-	isNull, ok := sel.Where.(*ast.IsNullExpr)
-	if !ok {
-		t.Fatalf("expected IsNullExpr, got %T", sel.Where)
-	}
+	require.IsType(t, &ast.IsNullExpr{}, sel.Where)
+	isNull := sel.Where.(*ast.IsNullExpr)
 	ident := isNull.Expr.(*ast.IdentExpr)
-	if ident.Name != "name" {
-		t.Errorf("expected column name 'name', got %q", ident.Name)
-	}
-	if !isNull.Not {
-		t.Errorf("expected Not=true, got false")
-	}
+	assert.Equal(t, "name", ident.Name)
+	assert.True(t, isNull.Not)
 }
 
 func TestParseInsertNull(t *testing.T) {
 	stmt := parse(t, "INSERT INTO users VALUES (1, NULL)")
 	ins := stmt.(*ast.InsertStmt)
-	if len(ins.Rows[0]) != 2 {
-		t.Fatalf("expected 2 values, got %d", len(ins.Rows[0]))
-	}
-	if _, ok := ins.Rows[0][1].(*ast.NullLitExpr); !ok {
-		t.Errorf("expected NullLitExpr, got %T", ins.Rows[0][1])
-	}
+	require.Len(t, ins.Rows[0], 2, "expected 2 values")
+	assert.IsType(t, &ast.NullLitExpr{}, ins.Rows[0][1])
 }
 
 func TestParseSelectAlias(t *testing.T) {
 	stmt := parse(t, "SELECT id AS user_id FROM users")
 	sel := stmt.(*ast.SelectStmt)
-	if len(sel.Columns) != 1 {
-		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
-	}
-	alias, ok := sel.Columns[0].(*ast.AliasExpr)
-	if !ok {
-		t.Fatalf("expected AliasExpr, got %T", sel.Columns[0])
-	}
-	ident, ok := alias.Expr.(*ast.IdentExpr)
-	if !ok {
-		t.Fatalf("expected IdentExpr inside AliasExpr, got %T", alias.Expr)
-	}
-	if ident.Name != "id" {
-		t.Errorf("expected column name 'id', got %q", ident.Name)
-	}
-	if alias.Alias != "user_id" {
-		t.Errorf("expected alias 'user_id', got %q", alias.Alias)
-	}
+	require.Len(t, sel.Columns, 1, "expected 1 column")
+	require.IsType(t, &ast.AliasExpr{}, sel.Columns[0])
+	alias := sel.Columns[0].(*ast.AliasExpr)
+	require.IsType(t, &ast.IdentExpr{}, alias.Expr)
+	ident := alias.Expr.(*ast.IdentExpr)
+	assert.Equal(t, "id", ident.Name)
+	assert.Equal(t, "user_id", alias.Alias)
 }
 
 func TestParseSelectCountAlias(t *testing.T) {
 	stmt := parse(t, "SELECT COUNT(*) AS total FROM users")
 	sel := stmt.(*ast.SelectStmt)
-	if len(sel.Columns) != 1 {
-		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
-	}
-	alias, ok := sel.Columns[0].(*ast.AliasExpr)
-	if !ok {
-		t.Fatalf("expected AliasExpr, got %T", sel.Columns[0])
-	}
-	call, ok := alias.Expr.(*ast.CallExpr)
-	if !ok {
-		t.Fatalf("expected CallExpr inside AliasExpr, got %T", alias.Expr)
-	}
-	if call.Name != "COUNT" {
-		t.Errorf("expected function name COUNT, got %s", call.Name)
-	}
-	if alias.Alias != "total" {
-		t.Errorf("expected alias 'total', got %q", alias.Alias)
-	}
+	require.Len(t, sel.Columns, 1, "expected 1 column")
+	require.IsType(t, &ast.AliasExpr{}, sel.Columns[0])
+	alias := sel.Columns[0].(*ast.AliasExpr)
+	require.IsType(t, &ast.CallExpr{}, alias.Expr)
+	call := alias.Expr.(*ast.CallExpr)
+	assert.Equal(t, "COUNT", call.Name)
+	assert.Equal(t, "total", alias.Alias)
 }
 
 func TestParseSelectLiteralAlias(t *testing.T) {
 	stmt := parse(t, "SELECT 1 AS one")
 	sel := stmt.(*ast.SelectStmt)
-	if len(sel.Columns) != 1 {
-		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
-	}
-	alias, ok := sel.Columns[0].(*ast.AliasExpr)
-	if !ok {
-		t.Fatalf("expected AliasExpr, got %T", sel.Columns[0])
-	}
-	lit, ok := alias.Expr.(*ast.IntLitExpr)
-	if !ok {
-		t.Fatalf("expected IntLitExpr inside AliasExpr, got %T", alias.Expr)
-	}
-	if lit.Value != 1 {
-		t.Errorf("expected value 1, got %d", lit.Value)
-	}
-	if alias.Alias != "one" {
-		t.Errorf("expected alias 'one', got %q", alias.Alias)
-	}
+	require.Len(t, sel.Columns, 1, "expected 1 column")
+	require.IsType(t, &ast.AliasExpr{}, sel.Columns[0])
+	alias := sel.Columns[0].(*ast.AliasExpr)
+	require.IsType(t, &ast.IntLitExpr{}, alias.Expr)
+	lit := alias.Expr.(*ast.IntLitExpr)
+	assert.Equal(t, int64(1), lit.Value)
+	assert.Equal(t, "one", alias.Alias)
 }
 
 func TestParseSelectQuotedIdent(t *testing.T) {
 	stmt := parse(t, "SELECT `count` FROM t")
 	sel := stmt.(*ast.SelectStmt)
-	if len(sel.Columns) != 1 {
-		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
-	}
-	ident, ok := sel.Columns[0].(*ast.IdentExpr)
-	if !ok {
-		t.Fatalf("expected IdentExpr, got %T", sel.Columns[0])
-	}
-	if ident.Name != "count" {
-		t.Errorf("expected column name 'count', got %q", ident.Name)
-	}
+	require.Len(t, sel.Columns, 1, "expected 1 column")
+	require.IsType(t, &ast.IdentExpr{}, sel.Columns[0])
+	ident := sel.Columns[0].(*ast.IdentExpr)
+	assert.Equal(t, "count", ident.Name)
 }
 
 func TestParseCreateTableQuotedIdent(t *testing.T) {
 	stmt := parse(t, "CREATE TABLE t (`count` INT)")
 	ct := stmt.(*ast.CreateTableStmt)
-	if len(ct.Columns) != 1 {
-		t.Fatalf("expected 1 column, got %d", len(ct.Columns))
-	}
-	if ct.Columns[0].Name != "count" {
-		t.Errorf("expected column name 'count', got %q", ct.Columns[0].Name)
-	}
+	require.Len(t, ct.Columns, 1, "expected 1 column")
+	assert.Equal(t, "count", ct.Columns[0].Name)
 }
 
 func TestParseSelectArithmetic(t *testing.T) {
 	stmt := parse(t, "SELECT 1 * 2")
 	sel := stmt.(*ast.SelectStmt)
-	if len(sel.Columns) != 1 {
-		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
-	}
-	arith, ok := sel.Columns[0].(*ast.ArithmeticExpr)
-	if !ok {
-		t.Fatalf("expected ArithmeticExpr, got %T", sel.Columns[0])
-	}
-	if arith.Op != "*" {
-		t.Errorf("expected op '*', got %q", arith.Op)
-	}
-	if arith.Left.(*ast.IntLitExpr).Value != 1 {
-		t.Errorf("expected left=1")
-	}
-	if arith.Right.(*ast.IntLitExpr).Value != 2 {
-		t.Errorf("expected right=2")
-	}
+	require.Len(t, sel.Columns, 1, "expected 1 column")
+	require.IsType(t, &ast.ArithmeticExpr{}, sel.Columns[0])
+	arith := sel.Columns[0].(*ast.ArithmeticExpr)
+	assert.Equal(t, "*", arith.Op)
+	assert.Equal(t, int64(1), arith.Left.(*ast.IntLitExpr).Value)
+	assert.Equal(t, int64(2), arith.Right.(*ast.IntLitExpr).Value)
 }
 
 func TestParseSelectArithmeticPrecedence(t *testing.T) {
 	// 1 + 2 * 3 should parse as 1 + (2 * 3)
 	stmt := parse(t, "SELECT 1 + 2 * 3")
 	sel := stmt.(*ast.SelectStmt)
-	arith, ok := sel.Columns[0].(*ast.ArithmeticExpr)
-	if !ok {
-		t.Fatalf("expected ArithmeticExpr, got %T", sel.Columns[0])
-	}
-	if arith.Op != "+" {
-		t.Errorf("expected top-level op '+', got %q", arith.Op)
-	}
-	if arith.Left.(*ast.IntLitExpr).Value != 1 {
-		t.Errorf("expected left=1")
-	}
-	right, ok := arith.Right.(*ast.ArithmeticExpr)
-	if !ok {
-		t.Fatalf("expected right to be ArithmeticExpr, got %T", arith.Right)
-	}
-	if right.Op != "*" {
-		t.Errorf("expected right op '*', got %q", right.Op)
-	}
+	require.IsType(t, &ast.ArithmeticExpr{}, sel.Columns[0])
+	arith := sel.Columns[0].(*ast.ArithmeticExpr)
+	assert.Equal(t, "+", arith.Op)
+	assert.Equal(t, int64(1), arith.Left.(*ast.IntLitExpr).Value)
+	require.IsType(t, &ast.ArithmeticExpr{}, arith.Right)
+	right := arith.Right.(*ast.ArithmeticExpr)
+	assert.Equal(t, "*", right.Op)
 }
 
 func TestParseSelectUnaryMinus(t *testing.T) {
 	stmt := parse(t, "SELECT -1")
 	sel := stmt.(*ast.SelectStmt)
-	if len(sel.Columns) != 1 {
-		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
-	}
-	arith, ok := sel.Columns[0].(*ast.ArithmeticExpr)
-	if !ok {
-		t.Fatalf("expected ArithmeticExpr, got %T", sel.Columns[0])
-	}
-	if arith.Op != "-" {
-		t.Errorf("expected op '-', got %q", arith.Op)
-	}
-	if arith.Left.(*ast.IntLitExpr).Value != 0 {
-		t.Errorf("expected left=0")
-	}
-	if arith.Right.(*ast.IntLitExpr).Value != 1 {
-		t.Errorf("expected right=1")
-	}
+	require.Len(t, sel.Columns, 1, "expected 1 column")
+	require.IsType(t, &ast.ArithmeticExpr{}, sel.Columns[0])
+	arith := sel.Columns[0].(*ast.ArithmeticExpr)
+	assert.Equal(t, "-", arith.Op)
+	assert.Equal(t, int64(0), arith.Left.(*ast.IntLitExpr).Value)
+	assert.Equal(t, int64(1), arith.Right.(*ast.IntLitExpr).Value)
 }
 
 func TestParseCreateTableNotNull(t *testing.T) {
 	stmt := parse(t, "CREATE TABLE t (id INT NOT NULL, name TEXT)")
-	ct, ok := stmt.(*ast.CreateTableStmt)
-	if !ok {
-		t.Fatalf("expected CreateTableStmt, got %T", stmt)
-	}
-	if len(ct.Columns) != 2 {
-		t.Fatalf("expected 2 columns, got %d", len(ct.Columns))
-	}
-	if ct.Columns[0].Name != "id" || ct.Columns[0].DataType != "INT" || !ct.Columns[0].NotNull {
-		t.Errorf("column 0: expected (id, INT, NOT NULL), got (%s, %s, NotNull=%v)", ct.Columns[0].Name, ct.Columns[0].DataType, ct.Columns[0].NotNull)
-	}
-	if ct.Columns[1].Name != "name" || ct.Columns[1].DataType != "TEXT" || ct.Columns[1].NotNull {
-		t.Errorf("column 1: expected (name, TEXT, nullable), got (%s, %s, NotNull=%v)", ct.Columns[1].Name, ct.Columns[1].DataType, ct.Columns[1].NotNull)
-	}
+	require.IsType(t, &ast.CreateTableStmt{}, stmt)
+	ct := stmt.(*ast.CreateTableStmt)
+	require.Len(t, ct.Columns, 2, "expected 2 columns")
+	assert.Equal(t, "id", ct.Columns[0].Name)
+	assert.Equal(t, "INT", ct.Columns[0].DataType)
+	assert.True(t, ct.Columns[0].NotNull)
+	assert.Equal(t, "name", ct.Columns[1].Name)
+	assert.Equal(t, "TEXT", ct.Columns[1].DataType)
+	assert.False(t, ct.Columns[1].NotNull)
 }
 
 func TestParseUpdate(t *testing.T) {
 	stmt := parse(t, "UPDATE users SET name = 'bob' WHERE id = 1")
-	upd, ok := stmt.(*ast.UpdateStmt)
-	if !ok {
-		t.Fatalf("expected UpdateStmt, got %T", stmt)
-	}
-	if upd.TableName != "users" {
-		t.Errorf("table name: expected %q, got %q", "users", upd.TableName)
-	}
-	if len(upd.Sets) != 1 {
-		t.Fatalf("expected 1 set clause, got %d", len(upd.Sets))
-	}
-	if upd.Sets[0].Column != "name" {
-		t.Errorf("set column: expected %q, got %q", "name", upd.Sets[0].Column)
-	}
-	strVal, ok := upd.Sets[0].Value.(*ast.StringLitExpr)
-	if !ok {
-		t.Fatalf("set value: expected StringLitExpr, got %T", upd.Sets[0].Value)
-	}
-	if strVal.Value != "bob" {
-		t.Errorf("set value: expected %q, got %q", "bob", strVal.Value)
-	}
-	if upd.Where == nil {
-		t.Fatal("expected WHERE clause")
-	}
+	require.IsType(t, &ast.UpdateStmt{}, stmt)
+	upd := stmt.(*ast.UpdateStmt)
+	assert.Equal(t, "users", upd.TableName)
+	require.Len(t, upd.Sets, 1, "expected 1 SET clauses")
+	assert.Equal(t, "name", upd.Sets[0].Column)
+	require.IsType(t, &ast.StringLitExpr{}, upd.Sets[0].Value)
+	strVal := upd.Sets[0].Value.(*ast.StringLitExpr)
+	assert.Equal(t, "bob", strVal.Value)
+	require.NotNil(t, upd.Where)
 	bin := upd.Where.(*ast.BinaryExpr)
-	if bin.Left.(*ast.IdentExpr).Name != "id" {
-		t.Errorf("where left: expected 'id'")
-	}
-	if bin.Right.(*ast.IntLitExpr).Value != 1 {
-		t.Errorf("where right: expected 1")
-	}
+	assert.Equal(t, "id", bin.Left.(*ast.IdentExpr).Name)
+	assert.Equal(t, int64(1), bin.Right.(*ast.IntLitExpr).Value)
 }
 
 func TestParseUpdateMultipleSet(t *testing.T) {
 	stmt := parse(t, "UPDATE users SET name = 'bob', age = 30 WHERE id = 1")
 	upd := stmt.(*ast.UpdateStmt)
-	if len(upd.Sets) != 2 {
-		t.Fatalf("expected 2 set clauses, got %d", len(upd.Sets))
-	}
-	if upd.Sets[0].Column != "name" {
-		t.Errorf("set 0 column: expected %q, got %q", "name", upd.Sets[0].Column)
-	}
-	if upd.Sets[0].Value.(*ast.StringLitExpr).Value != "bob" {
-		t.Errorf("set 0 value: expected 'bob'")
-	}
-	if upd.Sets[1].Column != "age" {
-		t.Errorf("set 1 column: expected %q, got %q", "age", upd.Sets[1].Column)
-	}
-	if upd.Sets[1].Value.(*ast.IntLitExpr).Value != 30 {
-		t.Errorf("set 1 value: expected 30")
-	}
-	if upd.Where == nil {
-		t.Fatal("expected WHERE clause")
-	}
+	require.Len(t, upd.Sets, 2, "expected 2 SET clauses")
+	assert.Equal(t, "name", upd.Sets[0].Column)
+	assert.Equal(t, "bob", upd.Sets[0].Value.(*ast.StringLitExpr).Value)
+	assert.Equal(t, "age", upd.Sets[1].Column)
+	assert.Equal(t, int64(30), upd.Sets[1].Value.(*ast.IntLitExpr).Value)
+	require.NotNil(t, upd.Where)
 }
 
 func TestParseUpdateNoWhere(t *testing.T) {
 	stmt := parse(t, "UPDATE users SET name = 'bob'")
 	upd := stmt.(*ast.UpdateStmt)
-	if upd.TableName != "users" {
-		t.Errorf("table name: expected %q, got %q", "users", upd.TableName)
-	}
-	if len(upd.Sets) != 1 {
-		t.Fatalf("expected 1 set clause, got %d", len(upd.Sets))
-	}
-	if upd.Where != nil {
-		t.Errorf("expected no WHERE, got %v", upd.Where)
-	}
+	assert.Equal(t, "users", upd.TableName)
+	require.Len(t, upd.Sets, 1, "expected 1 SET clauses")
+	assert.Nil(t, upd.Where)
 }
 
 func TestParseDelete(t *testing.T) {
 	stmt := parse(t, "DELETE FROM users WHERE id = 1")
-	del, ok := stmt.(*ast.DeleteStmt)
-	if !ok {
-		t.Fatalf("expected DeleteStmt, got %T", stmt)
-	}
-	if del.TableName != "users" {
-		t.Errorf("table name: expected %q, got %q", "users", del.TableName)
-	}
-	if del.Where == nil {
-		t.Fatal("expected WHERE clause")
-	}
+	require.IsType(t, &ast.DeleteStmt{}, stmt)
+	del := stmt.(*ast.DeleteStmt)
+	assert.Equal(t, "users", del.TableName)
+	require.NotNil(t, del.Where)
 	bin := del.Where.(*ast.BinaryExpr)
-	if bin.Left.(*ast.IdentExpr).Name != "id" {
-		t.Errorf("where left: expected 'id'")
-	}
-	if bin.Right.(*ast.IntLitExpr).Value != 1 {
-		t.Errorf("where right: expected 1")
-	}
+	assert.Equal(t, "id", bin.Left.(*ast.IdentExpr).Name)
+	assert.Equal(t, int64(1), bin.Right.(*ast.IntLitExpr).Value)
 }
 
 func TestParseDeleteNoWhere(t *testing.T) {
 	stmt := parse(t, "DELETE FROM users")
 	del := stmt.(*ast.DeleteStmt)
-	if del.TableName != "users" {
-		t.Errorf("table name: expected %q, got %q", "users", del.TableName)
-	}
-	if del.Where != nil {
-		t.Errorf("expected no WHERE, got %v", del.Where)
-	}
+	assert.Equal(t, "users", del.TableName)
+	assert.Nil(t, del.Where)
 }
 
 func TestParseUpdateOrderByLimit(t *testing.T) {
 	stmt := parse(t, "UPDATE users SET name = 'bob' WHERE id > 1 ORDER BY id LIMIT 2")
-	upd, ok := stmt.(*ast.UpdateStmt)
-	if !ok {
-		t.Fatalf("expected UpdateStmt, got %T", stmt)
-	}
-	if upd.TableName != "users" {
-		t.Errorf("table name: expected %q, got %q", "users", upd.TableName)
-	}
-	if len(upd.Sets) != 1 {
-		t.Fatalf("expected 1 set clause, got %d", len(upd.Sets))
-	}
-	if upd.Where == nil {
-		t.Fatal("expected WHERE clause")
-	}
-	if len(upd.OrderBy) != 1 {
-		t.Fatalf("expected 1 order by clause, got %d", len(upd.OrderBy))
-	}
-	ident, ok := upd.OrderBy[0].Expr.(*ast.IdentExpr)
-	if !ok {
-		t.Fatalf("expected IdentExpr in ORDER BY, got %T", upd.OrderBy[0].Expr)
-	}
-	if ident.Name != "id" {
-		t.Errorf("order by column: expected 'id', got %q", ident.Name)
-	}
-	if upd.OrderBy[0].Desc {
-		t.Error("expected ASC, got DESC")
-	}
-	if upd.Limit == nil {
-		t.Fatal("expected LIMIT clause")
-	}
-	if *upd.Limit != 2 {
-		t.Errorf("limit: expected 2, got %d", *upd.Limit)
-	}
+	require.IsType(t, &ast.UpdateStmt{}, stmt)
+	upd := stmt.(*ast.UpdateStmt)
+	assert.Equal(t, "users", upd.TableName)
+	require.Len(t, upd.Sets, 1, "expected 1 SET clauses")
+	require.NotNil(t, upd.Where)
+	require.Len(t, upd.OrderBy, 1, "expected 1 ORDER BY clauses")
+	require.IsType(t, &ast.IdentExpr{}, upd.OrderBy[0].Expr)
+	ident := upd.OrderBy[0].Expr.(*ast.IdentExpr)
+	assert.Equal(t, "id", ident.Name)
+	assert.False(t, upd.OrderBy[0].Desc)
+	require.NotNil(t, upd.Limit)
+	assert.Equal(t, int64(2), *upd.Limit)
 }
 
 func TestParseUpdateOrderByOnly(t *testing.T) {
 	stmt := parse(t, "UPDATE users SET name = 'bob' ORDER BY id DESC")
 	upd := stmt.(*ast.UpdateStmt)
-	if upd.Where != nil {
-		t.Errorf("expected no WHERE, got %v", upd.Where)
-	}
-	if len(upd.OrderBy) != 1 {
-		t.Fatalf("expected 1 order by clause, got %d", len(upd.OrderBy))
-	}
-	if !upd.OrderBy[0].Desc {
-		t.Error("expected DESC")
-	}
-	if upd.Limit != nil {
-		t.Errorf("expected no LIMIT, got %v", *upd.Limit)
-	}
+	assert.Nil(t, upd.Where)
+	require.Len(t, upd.OrderBy, 1, "expected 1 ORDER BY clauses")
+	assert.True(t, upd.OrderBy[0].Desc)
+	assert.Nil(t, upd.Limit)
 }
 
 func TestParseUpdateLimitOnly(t *testing.T) {
 	stmt := parse(t, "UPDATE users SET name = 'bob' LIMIT 5")
 	upd := stmt.(*ast.UpdateStmt)
-	if upd.Where != nil {
-		t.Errorf("expected no WHERE, got %v", upd.Where)
-	}
-	if len(upd.OrderBy) != 0 {
-		t.Errorf("expected no ORDER BY, got %d clauses", len(upd.OrderBy))
-	}
-	if upd.Limit == nil {
-		t.Fatal("expected LIMIT clause")
-	}
-	if *upd.Limit != 5 {
-		t.Errorf("limit: expected 5, got %d", *upd.Limit)
-	}
+	assert.Nil(t, upd.Where)
+	assert.Len(t, upd.OrderBy, 0)
+	require.NotNil(t, upd.Limit)
+	assert.Equal(t, int64(5), *upd.Limit)
 }
 
 func TestParseDeleteOrderByLimit(t *testing.T) {
 	stmt := parse(t, "DELETE FROM users WHERE id > 1 ORDER BY id LIMIT 2")
-	del, ok := stmt.(*ast.DeleteStmt)
-	if !ok {
-		t.Fatalf("expected DeleteStmt, got %T", stmt)
-	}
-	if del.TableName != "users" {
-		t.Errorf("table name: expected %q, got %q", "users", del.TableName)
-	}
-	if del.Where == nil {
-		t.Fatal("expected WHERE clause")
-	}
-	if len(del.OrderBy) != 1 {
-		t.Fatalf("expected 1 order by clause, got %d", len(del.OrderBy))
-	}
-	ident, ok := del.OrderBy[0].Expr.(*ast.IdentExpr)
-	if !ok {
-		t.Fatalf("expected IdentExpr in ORDER BY, got %T", del.OrderBy[0].Expr)
-	}
-	if ident.Name != "id" {
-		t.Errorf("order by column: expected 'id', got %q", ident.Name)
-	}
-	if del.Limit == nil {
-		t.Fatal("expected LIMIT clause")
-	}
-	if *del.Limit != 2 {
-		t.Errorf("limit: expected 2, got %d", *del.Limit)
-	}
+	require.IsType(t, &ast.DeleteStmt{}, stmt)
+	del := stmt.(*ast.DeleteStmt)
+	assert.Equal(t, "users", del.TableName)
+	require.NotNil(t, del.Where)
+	require.Len(t, del.OrderBy, 1, "expected 1 ORDER BY clauses")
+	require.IsType(t, &ast.IdentExpr{}, del.OrderBy[0].Expr)
+	ident := del.OrderBy[0].Expr.(*ast.IdentExpr)
+	assert.Equal(t, "id", ident.Name)
+	require.NotNil(t, del.Limit)
+	assert.Equal(t, int64(2), *del.Limit)
 }
 
 func TestParseDeleteLimitOnly(t *testing.T) {
 	stmt := parse(t, "DELETE FROM users LIMIT 3")
 	del := stmt.(*ast.DeleteStmt)
-	if del.Where != nil {
-		t.Errorf("expected no WHERE, got %v", del.Where)
-	}
-	if len(del.OrderBy) != 0 {
-		t.Errorf("expected no ORDER BY, got %d clauses", len(del.OrderBy))
-	}
-	if del.Limit == nil {
-		t.Fatal("expected LIMIT clause")
-	}
-	if *del.Limit != 3 {
-		t.Errorf("limit: expected 3, got %d", *del.Limit)
-	}
+	assert.Nil(t, del.Where)
+	assert.Len(t, del.OrderBy, 0)
+	require.NotNil(t, del.Limit)
+	assert.Equal(t, int64(3), *del.Limit)
 }
 
 func TestParseSelectOrderBySingleColumn(t *testing.T) {
 	stmt := parse(t, "SELECT * FROM users ORDER BY id")
 	sel := stmt.(*ast.SelectStmt)
-	if len(sel.OrderBy) != 1 {
-		t.Fatalf("expected 1 order by clause, got %d", len(sel.OrderBy))
-	}
-	ident, ok := sel.OrderBy[0].Expr.(*ast.IdentExpr)
-	if !ok {
-		t.Fatalf("expected IdentExpr, got %T", sel.OrderBy[0].Expr)
-	}
-	if ident.Name != "id" {
-		t.Errorf("expected column 'id', got %q", ident.Name)
-	}
-	if sel.OrderBy[0].Desc {
-		t.Errorf("expected ASC (Desc=false), got DESC")
-	}
+	require.Len(t, sel.OrderBy, 1, "expected 1 ORDER BY clauses")
+	require.IsType(t, &ast.IdentExpr{}, sel.OrderBy[0].Expr)
+	ident := sel.OrderBy[0].Expr.(*ast.IdentExpr)
+	assert.Equal(t, "id", ident.Name)
+	assert.False(t, sel.OrderBy[0].Desc)
 }
 
 func TestParseSelectOrderByDesc(t *testing.T) {
 	stmt := parse(t, "SELECT * FROM users ORDER BY id DESC")
 	sel := stmt.(*ast.SelectStmt)
-	if len(sel.OrderBy) != 1 {
-		t.Fatalf("expected 1 order by clause, got %d", len(sel.OrderBy))
-	}
-	if !sel.OrderBy[0].Desc {
-		t.Errorf("expected DESC (Desc=true), got ASC")
-	}
+	require.Len(t, sel.OrderBy, 1, "expected 1 ORDER BY clauses")
+	assert.True(t, sel.OrderBy[0].Desc)
 }
 
 func TestParseSelectOrderByAsc(t *testing.T) {
 	stmt := parse(t, "SELECT * FROM users ORDER BY id ASC")
 	sel := stmt.(*ast.SelectStmt)
-	if len(sel.OrderBy) != 1 {
-		t.Fatalf("expected 1 order by clause, got %d", len(sel.OrderBy))
-	}
-	if sel.OrderBy[0].Desc {
-		t.Errorf("expected ASC (Desc=false), got DESC")
-	}
+	require.Len(t, sel.OrderBy, 1, "expected 1 ORDER BY clauses")
+	assert.False(t, sel.OrderBy[0].Desc)
 }
 
 func TestParseSelectOrderByMultipleColumns(t *testing.T) {
 	stmt := parse(t, "SELECT * FROM users ORDER BY name ASC, id DESC")
 	sel := stmt.(*ast.SelectStmt)
-	if len(sel.OrderBy) != 2 {
-		t.Fatalf("expected 2 order by clauses, got %d", len(sel.OrderBy))
-	}
+	require.Len(t, sel.OrderBy, 2, "expected 2 ORDER BY clauses")
 	ident0 := sel.OrderBy[0].Expr.(*ast.IdentExpr)
-	if ident0.Name != "name" {
-		t.Errorf("order by 0: expected 'name', got %q", ident0.Name)
-	}
-	if sel.OrderBy[0].Desc {
-		t.Errorf("order by 0: expected ASC")
-	}
+	assert.Equal(t, "name", ident0.Name)
+	assert.False(t, sel.OrderBy[0].Desc)
 	ident1 := sel.OrderBy[1].Expr.(*ast.IdentExpr)
-	if ident1.Name != "id" {
-		t.Errorf("order by 1: expected 'id', got %q", ident1.Name)
-	}
-	if !sel.OrderBy[1].Desc {
-		t.Errorf("order by 1: expected DESC")
-	}
+	assert.Equal(t, "id", ident1.Name)
+	assert.True(t, sel.OrderBy[1].Desc)
 }
 
 func TestParseSelectWhereOrderBy(t *testing.T) {
 	stmt := parse(t, "SELECT * FROM users WHERE id > 1 ORDER BY name")
 	sel := stmt.(*ast.SelectStmt)
-	if sel.Where == nil {
-		t.Fatal("expected WHERE clause")
-	}
-	if len(sel.OrderBy) != 1 {
-		t.Fatalf("expected 1 order by clause, got %d", len(sel.OrderBy))
-	}
+	require.NotNil(t, sel.Where)
+	require.Len(t, sel.OrderBy, 1, "expected 1 ORDER BY clauses")
 	ident := sel.OrderBy[0].Expr.(*ast.IdentExpr)
-	if ident.Name != "name" {
-		t.Errorf("expected order by 'name', got %q", ident.Name)
-	}
+	assert.Equal(t, "name", ident.Name)
 }
 
 func TestParseSelectLimitOnly(t *testing.T) {
 	stmt := parse(t, "SELECT * FROM users LIMIT 10")
 	sel := stmt.(*ast.SelectStmt)
-	if sel.Limit == nil {
-		t.Fatal("expected LIMIT clause")
-	}
-	if *sel.Limit != 10 {
-		t.Errorf("expected LIMIT 10, got %d", *sel.Limit)
-	}
-	if sel.Offset != nil {
-		t.Errorf("expected no OFFSET, got %d", *sel.Offset)
-	}
+	require.NotNil(t, sel.Limit)
+	assert.Equal(t, int64(10), *sel.Limit)
+	assert.Nil(t, sel.Offset)
 }
 
 func TestParseSelectOffsetOnly(t *testing.T) {
 	stmt := parse(t, "SELECT * FROM users OFFSET 5")
 	sel := stmt.(*ast.SelectStmt)
-	if sel.Offset == nil {
-		t.Fatal("expected OFFSET clause")
-	}
-	if *sel.Offset != 5 {
-		t.Errorf("expected OFFSET 5, got %d", *sel.Offset)
-	}
-	if sel.Limit != nil {
-		t.Errorf("expected no LIMIT, got %d", *sel.Limit)
-	}
+	require.NotNil(t, sel.Offset)
+	assert.Equal(t, int64(5), *sel.Offset)
+	assert.Nil(t, sel.Limit)
 }
 
 func TestParseSelectLimitOffset(t *testing.T) {
 	stmt := parse(t, "SELECT * FROM users LIMIT 10 OFFSET 5")
 	sel := stmt.(*ast.SelectStmt)
-	if sel.Limit == nil {
-		t.Fatal("expected LIMIT clause")
-	}
-	if *sel.Limit != 10 {
-		t.Errorf("expected LIMIT 10, got %d", *sel.Limit)
-	}
-	if sel.Offset == nil {
-		t.Fatal("expected OFFSET clause")
-	}
-	if *sel.Offset != 5 {
-		t.Errorf("expected OFFSET 5, got %d", *sel.Offset)
-	}
+	require.NotNil(t, sel.Limit)
+	assert.Equal(t, int64(10), *sel.Limit)
+	require.NotNil(t, sel.Offset)
+	assert.Equal(t, int64(5), *sel.Offset)
 }
 
 func TestParseSelectOrderByLimitOffset(t *testing.T) {
 	stmt := parse(t, "SELECT * FROM users ORDER BY id ASC LIMIT 2 OFFSET 1")
 	sel := stmt.(*ast.SelectStmt)
-	if len(sel.OrderBy) != 1 {
-		t.Fatalf("expected 1 order by clause, got %d", len(sel.OrderBy))
-	}
-	if sel.Limit == nil || *sel.Limit != 2 {
-		t.Errorf("expected LIMIT 2")
-	}
-	if sel.Offset == nil || *sel.Offset != 1 {
-		t.Errorf("expected OFFSET 1")
-	}
+	require.Len(t, sel.OrderBy, 1, "expected 1 ORDER BY clauses")
+	require.NotNil(t, sel.Limit)
+	assert.Equal(t, int64(2), *sel.Limit)
+	require.NotNil(t, sel.Offset)
+	assert.Equal(t, int64(1), *sel.Offset)
 }
 
 func TestParseTruncateTable(t *testing.T) {
 	stmt := parse(t, "TRUNCATE TABLE users")
-	tt, ok := stmt.(*ast.TruncateTableStmt)
-	if !ok {
-		t.Fatalf("expected TruncateTableStmt, got %T", stmt)
-	}
-	if tt.TableName != "users" {
-		t.Errorf("table name: expected %q, got %q", "users", tt.TableName)
-	}
+	require.IsType(t, &ast.TruncateTableStmt{}, stmt)
+	tt := stmt.(*ast.TruncateTableStmt)
+	assert.Equal(t, "users", tt.TableName)
 }
 
 func TestParseDropTable(t *testing.T) {
 	stmt := parse(t, "DROP TABLE users")
-	dt, ok := stmt.(*ast.DropTableStmt)
-	if !ok {
-		t.Fatalf("expected DropTableStmt, got %T", stmt)
-	}
-	if dt.TableName != "users" {
-		t.Errorf("table name: expected %q, got %q", "users", dt.TableName)
-	}
+	require.IsType(t, &ast.DropTableStmt{}, stmt)
+	dt := stmt.(*ast.DropTableStmt)
+	assert.Equal(t, "users", dt.TableName)
 }
 
 func TestParseSelectGroupBy(t *testing.T) {
 	stmt := parse(t, "SELECT name, COUNT(*) FROM users GROUP BY name")
 	sel := stmt.(*ast.SelectStmt)
-	if len(sel.Columns) != 2 {
-		t.Fatalf("expected 2 columns, got %d", len(sel.Columns))
-	}
-	ident, ok := sel.Columns[0].(*ast.IdentExpr)
-	if !ok {
-		t.Fatalf("expected IdentExpr, got %T", sel.Columns[0])
-	}
-	if ident.Name != "name" {
-		t.Errorf("expected column 'name', got %q", ident.Name)
-	}
-	call, ok := sel.Columns[1].(*ast.CallExpr)
-	if !ok {
-		t.Fatalf("expected CallExpr, got %T", sel.Columns[1])
-	}
-	if call.Name != "COUNT" {
-		t.Errorf("expected function name COUNT, got %s", call.Name)
-	}
-	if len(sel.GroupBy) != 1 {
-		t.Fatalf("expected 1 GROUP BY expr, got %d", len(sel.GroupBy))
-	}
-	gbIdent, ok := sel.GroupBy[0].(*ast.IdentExpr)
-	if !ok {
-		t.Fatalf("expected IdentExpr in GROUP BY, got %T", sel.GroupBy[0])
-	}
-	if gbIdent.Name != "name" {
-		t.Errorf("expected GROUP BY 'name', got %q", gbIdent.Name)
-	}
-	if sel.Having != nil {
-		t.Errorf("expected no HAVING, got %v", sel.Having)
-	}
+	require.Len(t, sel.Columns, 2, "expected 2 columns")
+	require.IsType(t, &ast.IdentExpr{}, sel.Columns[0])
+	ident := sel.Columns[0].(*ast.IdentExpr)
+	assert.Equal(t, "name", ident.Name)
+	require.IsType(t, &ast.CallExpr{}, sel.Columns[1])
+	call := sel.Columns[1].(*ast.CallExpr)
+	assert.Equal(t, "COUNT", call.Name)
+	require.Len(t, sel.GroupBy, 1, "expected 1 GROUP BY clauses")
+	require.IsType(t, &ast.IdentExpr{}, sel.GroupBy[0])
+	gbIdent := sel.GroupBy[0].(*ast.IdentExpr)
+	assert.Equal(t, "name", gbIdent.Name)
+	assert.Nil(t, sel.Having)
 }
 
 func TestParseSelectGroupByHaving(t *testing.T) {
 	stmt := parse(t, "SELECT name FROM users GROUP BY name HAVING COUNT(*) > 1")
 	sel := stmt.(*ast.SelectStmt)
-	if len(sel.GroupBy) != 1 {
-		t.Fatalf("expected 1 GROUP BY expr, got %d", len(sel.GroupBy))
-	}
-	if sel.Having == nil {
-		t.Fatal("expected HAVING clause")
-	}
-	bin, ok := sel.Having.(*ast.BinaryExpr)
-	if !ok {
-		t.Fatalf("expected BinaryExpr in HAVING, got %T", sel.Having)
-	}
-	if bin.Op != ">" {
-		t.Errorf("expected op '>', got %q", bin.Op)
-	}
-	call, ok := bin.Left.(*ast.CallExpr)
-	if !ok {
-		t.Fatalf("expected CallExpr on left of HAVING, got %T", bin.Left)
-	}
-	if call.Name != "COUNT" {
-		t.Errorf("expected COUNT, got %s", call.Name)
-	}
-	if bin.Right.(*ast.IntLitExpr).Value != 1 {
-		t.Errorf("expected right=1")
-	}
+	require.Len(t, sel.GroupBy, 1, "expected 1 GROUP BY clauses")
+	require.NotNil(t, sel.Having)
+	require.IsType(t, &ast.BinaryExpr{}, sel.Having)
+	bin := sel.Having.(*ast.BinaryExpr)
+	assert.Equal(t, ">", bin.Op)
+	require.IsType(t, &ast.CallExpr{}, bin.Left)
+	call := bin.Left.(*ast.CallExpr)
+	assert.Equal(t, "COUNT", call.Name)
+	assert.Equal(t, int64(1), bin.Right.(*ast.IntLitExpr).Value)
 }
 
 func TestParseSelectGroupByMultiple(t *testing.T) {
 	stmt := parse(t, "SELECT col1, col2, COUNT(*) FROM t GROUP BY col1, col2")
 	sel := stmt.(*ast.SelectStmt)
-	if len(sel.GroupBy) != 2 {
-		t.Fatalf("expected 2 GROUP BY exprs, got %d", len(sel.GroupBy))
-	}
-	if sel.GroupBy[0].(*ast.IdentExpr).Name != "col1" {
-		t.Errorf("expected GROUP BY 'col1'")
-	}
-	if sel.GroupBy[1].(*ast.IdentExpr).Name != "col2" {
-		t.Errorf("expected GROUP BY 'col2'")
-	}
+	require.Len(t, sel.GroupBy, 2, "expected 2 GROUP BY clauses")
+	assert.Equal(t, "col1", sel.GroupBy[0].(*ast.IdentExpr).Name)
+	assert.Equal(t, "col2", sel.GroupBy[1].(*ast.IdentExpr).Name)
 }
 
 func TestParseSelectGroupByOrderBy(t *testing.T) {
 	stmt := parse(t, "SELECT name, COUNT(*) FROM users GROUP BY name ORDER BY name ASC")
 	sel := stmt.(*ast.SelectStmt)
-	if len(sel.GroupBy) != 1 {
-		t.Fatalf("expected 1 GROUP BY expr, got %d", len(sel.GroupBy))
-	}
-	if len(sel.OrderBy) != 1 {
-		t.Fatalf("expected 1 ORDER BY clause, got %d", len(sel.OrderBy))
-	}
+	require.Len(t, sel.GroupBy, 1, "expected 1 GROUP BY clauses")
+	require.Len(t, sel.OrderBy, 1, "expected 1 ORDER BY clauses")
 }
 
 func TestParseSelectSumAmount(t *testing.T) {
 	stmt := parse(t, "SELECT SUM(amount) FROM orders")
 	sel := stmt.(*ast.SelectStmt)
-	if len(sel.Columns) != 1 {
-		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
-	}
-	call, ok := sel.Columns[0].(*ast.CallExpr)
-	if !ok {
-		t.Fatalf("expected CallExpr, got %T", sel.Columns[0])
-	}
-	if call.Name != "SUM" {
-		t.Errorf("expected function name SUM, got %s", call.Name)
-	}
-	if len(call.Args) != 1 {
-		t.Fatalf("expected 1 arg, got %d", len(call.Args))
-	}
-	ident, ok := call.Args[0].(*ast.IdentExpr)
-	if !ok {
-		t.Fatalf("expected IdentExpr arg, got %T", call.Args[0])
-	}
-	if ident.Name != "amount" {
-		t.Errorf("expected arg 'amount', got %q", ident.Name)
-	}
+	require.Len(t, sel.Columns, 1, "expected 1 column")
+	require.IsType(t, &ast.CallExpr{}, sel.Columns[0])
+	call := sel.Columns[0].(*ast.CallExpr)
+	assert.Equal(t, "SUM", call.Name)
+	require.Len(t, call.Args, 1, "expected 1 arg")
+	require.IsType(t, &ast.IdentExpr{}, call.Args[0])
+	ident := call.Args[0].(*ast.IdentExpr)
+	assert.Equal(t, "amount", ident.Name)
 }
 
 func TestParseSelectMinMaxId(t *testing.T) {
 	stmt := parse(t, "SELECT MIN(id), MAX(id) FROM users")
 	sel := stmt.(*ast.SelectStmt)
-	if len(sel.Columns) != 2 {
-		t.Fatalf("expected 2 columns, got %d", len(sel.Columns))
-	}
-	minCall, ok := sel.Columns[0].(*ast.CallExpr)
-	if !ok {
-		t.Fatalf("expected CallExpr for MIN, got %T", sel.Columns[0])
-	}
-	if minCall.Name != "MIN" {
-		t.Errorf("expected function name MIN, got %s", minCall.Name)
-	}
-	maxCall, ok := sel.Columns[1].(*ast.CallExpr)
-	if !ok {
-		t.Fatalf("expected CallExpr for MAX, got %T", sel.Columns[1])
-	}
-	if maxCall.Name != "MAX" {
-		t.Errorf("expected function name MAX, got %s", maxCall.Name)
-	}
+	require.Len(t, sel.Columns, 2, "expected 2 columns")
+	require.IsType(t, &ast.CallExpr{}, sel.Columns[0])
+	minCall := sel.Columns[0].(*ast.CallExpr)
+	assert.Equal(t, "MIN", minCall.Name)
+	require.IsType(t, &ast.CallExpr{}, sel.Columns[1])
+	maxCall := sel.Columns[1].(*ast.CallExpr)
+	assert.Equal(t, "MAX", maxCall.Name)
 }
 
 func TestParseSelectAvgAge(t *testing.T) {
 	stmt := parse(t, "SELECT AVG(age) FROM users")
 	sel := stmt.(*ast.SelectStmt)
-	if len(sel.Columns) != 1 {
-		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
-	}
-	call, ok := sel.Columns[0].(*ast.CallExpr)
-	if !ok {
-		t.Fatalf("expected CallExpr, got %T", sel.Columns[0])
-	}
-	if call.Name != "AVG" {
-		t.Errorf("expected function name AVG, got %s", call.Name)
-	}
+	require.Len(t, sel.Columns, 1, "expected 1 column")
+	require.IsType(t, &ast.CallExpr{}, sel.Columns[0])
+	call := sel.Columns[0].(*ast.CallExpr)
+	assert.Equal(t, "AVG", call.Name)
 }
 
 func TestParseSelectGroupBySumHaving(t *testing.T) {
 	stmt := parse(t, "SELECT name, SUM(amount) FROM orders GROUP BY name HAVING SUM(amount) > 100")
 	sel := stmt.(*ast.SelectStmt)
-	if len(sel.Columns) != 2 {
-		t.Fatalf("expected 2 columns, got %d", len(sel.Columns))
-	}
-	call, ok := sel.Columns[1].(*ast.CallExpr)
-	if !ok {
-		t.Fatalf("expected CallExpr, got %T", sel.Columns[1])
-	}
-	if call.Name != "SUM" {
-		t.Errorf("expected function name SUM, got %s", call.Name)
-	}
-	if sel.Having == nil {
-		t.Fatal("expected HAVING clause")
-	}
-	bin, ok := sel.Having.(*ast.BinaryExpr)
-	if !ok {
-		t.Fatalf("expected BinaryExpr in HAVING, got %T", sel.Having)
-	}
-	havingCall, ok := bin.Left.(*ast.CallExpr)
-	if !ok {
-		t.Fatalf("expected CallExpr on left of HAVING, got %T", bin.Left)
-	}
-	if havingCall.Name != "SUM" {
-		t.Errorf("expected SUM in HAVING, got %s", havingCall.Name)
-	}
+	require.Len(t, sel.Columns, 2, "expected 2 columns")
+	require.IsType(t, &ast.CallExpr{}, sel.Columns[1])
+	call := sel.Columns[1].(*ast.CallExpr)
+	assert.Equal(t, "SUM", call.Name)
+	require.NotNil(t, sel.Having)
+	require.IsType(t, &ast.BinaryExpr{}, sel.Having)
+	bin := sel.Having.(*ast.BinaryExpr)
+	require.IsType(t, &ast.CallExpr{}, bin.Left)
+	havingCall := bin.Left.(*ast.CallExpr)
+	assert.Equal(t, "SUM", havingCall.Name)
 }
 
 func TestParseSelectFloatLiteral(t *testing.T) {
 	stmt := parse(t, "SELECT 3.14")
 	sel := stmt.(*ast.SelectStmt)
-	if len(sel.Columns) != 1 {
-		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
-	}
-	lit, ok := sel.Columns[0].(*ast.FloatLitExpr)
-	if !ok {
-		t.Fatalf("expected FloatLitExpr, got %T", sel.Columns[0])
-	}
-	if lit.Value != 3.14 {
-		t.Errorf("expected value 3.14, got %f", lit.Value)
-	}
+	require.Len(t, sel.Columns, 1, "expected 1 column")
+	require.IsType(t, &ast.FloatLitExpr{}, sel.Columns[0])
+	lit := sel.Columns[0].(*ast.FloatLitExpr)
+	assert.Equal(t, 3.14, lit.Value)
 }
 
 func TestParseCreateTableFloat(t *testing.T) {
 	stmt := parse(t, "CREATE TABLE t (val FLOAT)")
-	ct, ok := stmt.(*ast.CreateTableStmt)
-	if !ok {
-		t.Fatalf("expected CreateTableStmt, got %T", stmt)
-	}
-	if len(ct.Columns) != 1 {
-		t.Fatalf("expected 1 column, got %d", len(ct.Columns))
-	}
-	if ct.Columns[0].Name != "val" || ct.Columns[0].DataType != "FLOAT" {
-		t.Errorf("column 0: expected (val, FLOAT), got (%s, %s)", ct.Columns[0].Name, ct.Columns[0].DataType)
-	}
+	require.IsType(t, &ast.CreateTableStmt{}, stmt)
+	ct := stmt.(*ast.CreateTableStmt)
+	require.Len(t, ct.Columns, 1, "expected 1 column")
+	assert.Equal(t, "val", ct.Columns[0].Name)
+	assert.Equal(t, "FLOAT", ct.Columns[0].DataType)
 }
 
 func TestParseSelectDistinct(t *testing.T) {
 	stmt := parse(t, "SELECT DISTINCT name FROM users")
 	sel := stmt.(*ast.SelectStmt)
-	if !sel.Distinct {
-		t.Errorf("expected Distinct=true, got false")
-	}
-	if len(sel.Columns) != 1 {
-		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
-	}
-	ident, ok := sel.Columns[0].(*ast.IdentExpr)
-	if !ok {
-		t.Fatalf("expected IdentExpr, got %T", sel.Columns[0])
-	}
-	if ident.Name != "name" {
-		t.Errorf("expected column 'name', got %q", ident.Name)
-	}
+	assert.True(t, sel.Distinct)
+	require.Len(t, sel.Columns, 1, "expected 1 column")
+	require.IsType(t, &ast.IdentExpr{}, sel.Columns[0])
+	ident := sel.Columns[0].(*ast.IdentExpr)
+	assert.Equal(t, "name", ident.Name)
 }
 
 func TestParseSelectWithoutDistinct(t *testing.T) {
 	stmt := parse(t, "SELECT name FROM users")
 	sel := stmt.(*ast.SelectStmt)
-	if sel.Distinct {
-		t.Errorf("expected Distinct=false, got true")
-	}
+	assert.False(t, sel.Distinct)
 }
 
 func TestParseCreateTableWithDefault(t *testing.T) {
 	stmt := parse(t, "CREATE TABLE t (id INT DEFAULT 0, name TEXT DEFAULT 'unknown')")
-	ct, ok := stmt.(*ast.CreateTableStmt)
-	if !ok {
-		t.Fatalf("expected CreateTableStmt, got %T", stmt)
-	}
-	if len(ct.Columns) != 2 {
-		t.Fatalf("expected 2 columns, got %d", len(ct.Columns))
-	}
-	if ct.Columns[0].Name != "id" || ct.Columns[0].DataType != "INT" {
-		t.Errorf("column 0: expected (id, INT), got (%s, %s)", ct.Columns[0].Name, ct.Columns[0].DataType)
-	}
-	if ct.Columns[0].Default == nil {
-		t.Fatal("column 0: expected DEFAULT expr, got nil")
-	}
-	intLit, ok := ct.Columns[0].Default.(*ast.IntLitExpr)
-	if !ok {
-		t.Fatalf("column 0 default: expected IntLitExpr, got %T", ct.Columns[0].Default)
-	}
-	if intLit.Value != 0 {
-		t.Errorf("column 0 default: expected 0, got %d", intLit.Value)
-	}
-	if ct.Columns[1].Default == nil {
-		t.Fatal("column 1: expected DEFAULT expr, got nil")
-	}
-	strLit, ok := ct.Columns[1].Default.(*ast.StringLitExpr)
-	if !ok {
-		t.Fatalf("column 1 default: expected StringLitExpr, got %T", ct.Columns[1].Default)
-	}
-	if strLit.Value != "unknown" {
-		t.Errorf("column 1 default: expected 'unknown', got %q", strLit.Value)
-	}
+	require.IsType(t, &ast.CreateTableStmt{}, stmt)
+	ct := stmt.(*ast.CreateTableStmt)
+	require.Len(t, ct.Columns, 2, "expected 2 columns")
+	assert.Equal(t, "id", ct.Columns[0].Name)
+	assert.Equal(t, "INT", ct.Columns[0].DataType)
+	require.NotNil(t, ct.Columns[0].Default)
+	require.IsType(t, &ast.IntLitExpr{}, ct.Columns[0].Default)
+	intLit := ct.Columns[0].Default.(*ast.IntLitExpr)
+	assert.Equal(t, int64(0), intLit.Value)
+	require.NotNil(t, ct.Columns[1].Default)
+	require.IsType(t, &ast.StringLitExpr{}, ct.Columns[1].Default)
+	strLit := ct.Columns[1].Default.(*ast.StringLitExpr)
+	assert.Equal(t, "unknown", strLit.Value)
 }
 
 func TestParseCreateTableWithDefaultNull(t *testing.T) {
 	stmt := parse(t, "CREATE TABLE t (id INT, name TEXT DEFAULT NULL)")
 	ct := stmt.(*ast.CreateTableStmt)
-	if ct.Columns[0].Default != nil {
-		t.Errorf("column 0: expected no DEFAULT, got %v", ct.Columns[0].Default)
-	}
-	if ct.Columns[1].Default == nil {
-		t.Fatal("column 1: expected DEFAULT NULL, got nil")
-	}
-	if _, ok := ct.Columns[1].Default.(*ast.NullLitExpr); !ok {
-		t.Errorf("column 1 default: expected NullLitExpr, got %T", ct.Columns[1].Default)
-	}
+	assert.Nil(t, ct.Columns[0].Default)
+	require.NotNil(t, ct.Columns[1].Default)
+	assert.IsType(t, &ast.NullLitExpr{}, ct.Columns[1].Default)
 }
 
 func TestParseCreateTableNotNullDefault(t *testing.T) {
 	stmt := parse(t, "CREATE TABLE t (id INT NOT NULL DEFAULT 1)")
 	ct := stmt.(*ast.CreateTableStmt)
-	if !ct.Columns[0].NotNull {
-		t.Errorf("column 0: expected NOT NULL")
-	}
-	if ct.Columns[0].Default == nil {
-		t.Fatal("column 0: expected DEFAULT expr, got nil")
-	}
-	intLit, ok := ct.Columns[0].Default.(*ast.IntLitExpr)
-	if !ok {
-		t.Fatalf("column 0 default: expected IntLitExpr, got %T", ct.Columns[0].Default)
-	}
-	if intLit.Value != 1 {
-		t.Errorf("column 0 default: expected 1, got %d", intLit.Value)
-	}
+	assert.True(t, ct.Columns[0].NotNull)
+	require.NotNil(t, ct.Columns[0].Default)
+	require.IsType(t, &ast.IntLitExpr{}, ct.Columns[0].Default)
+	intLit := ct.Columns[0].Default.(*ast.IntLitExpr)
+	assert.Equal(t, int64(1), intLit.Value)
 }
 
 func TestParseInsertWithColumns(t *testing.T) {
 	stmt := parse(t, "INSERT INTO users (id, name) VALUES (1, 'alice')")
-	ins, ok := stmt.(*ast.InsertStmt)
-	if !ok {
-		t.Fatalf("expected InsertStmt, got %T", stmt)
-	}
-	if ins.TableName != "users" {
-		t.Errorf("table name: expected %q, got %q", "users", ins.TableName)
-	}
-	if len(ins.Columns) != 2 {
-		t.Fatalf("expected 2 columns, got %d", len(ins.Columns))
-	}
-	if ins.Columns[0] != "id" {
-		t.Errorf("column 0: expected 'id', got %q", ins.Columns[0])
-	}
-	if ins.Columns[1] != "name" {
-		t.Errorf("column 1: expected 'name', got %q", ins.Columns[1])
-	}
-	if len(ins.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(ins.Rows))
-	}
-	if len(ins.Rows[0]) != 2 {
-		t.Fatalf("expected 2 values, got %d", len(ins.Rows[0]))
-	}
+	require.IsType(t, &ast.InsertStmt{}, stmt)
+	ins := stmt.(*ast.InsertStmt)
+	assert.Equal(t, "users", ins.TableName)
+	require.Len(t, ins.Columns, 2, "expected 2 columns")
+	assert.Equal(t, "id", ins.Columns[0])
+	assert.Equal(t, "name", ins.Columns[1])
+	require.Len(t, ins.Rows, 1, "expected 1 row")
+	require.Len(t, ins.Rows[0], 2, "expected 2 values")
 }
 
 func TestParseInsertWithPartialColumns(t *testing.T) {
 	stmt := parse(t, "INSERT INTO users (name) VALUES ('alice')")
 	ins := stmt.(*ast.InsertStmt)
-	if len(ins.Columns) != 1 {
-		t.Fatalf("expected 1 column, got %d", len(ins.Columns))
-	}
-	if ins.Columns[0] != "name" {
-		t.Errorf("column 0: expected 'name', got %q", ins.Columns[0])
-	}
-	if len(ins.Rows[0]) != 1 {
-		t.Fatalf("expected 1 value, got %d", len(ins.Rows[0]))
-	}
+	require.Len(t, ins.Columns, 1, "expected 1 column")
+	assert.Equal(t, "name", ins.Columns[0])
+	require.Len(t, ins.Rows[0], 1, "expected 1 value")
 }
 
 func TestParseInsertWithoutColumns(t *testing.T) {
 	stmt := parse(t, "INSERT INTO users VALUES (1, 'alice')")
 	ins := stmt.(*ast.InsertStmt)
-	if ins.Columns != nil {
-		t.Errorf("expected nil columns, got %v", ins.Columns)
-	}
+	assert.Nil(t, ins.Columns)
 }
 
 func TestParseSelectWhereIn(t *testing.T) {
 	stmt := parse(t, "SELECT * FROM t WHERE id IN (1, 2, 3)")
 	sel := stmt.(*ast.SelectStmt)
-	inExpr, ok := sel.Where.(*ast.InExpr)
-	if !ok {
-		t.Fatalf("expected InExpr, got %T", sel.Where)
-	}
-	if inExpr.Not {
-		t.Errorf("expected Not=false, got true")
-	}
+	require.IsType(t, &ast.InExpr{}, sel.Where)
+	inExpr := sel.Where.(*ast.InExpr)
+	assert.False(t, inExpr.Not)
 	ident := inExpr.Left.(*ast.IdentExpr)
-	if ident.Name != "id" {
-		t.Errorf("expected column 'id', got %q", ident.Name)
-	}
-	if len(inExpr.Values) != 3 {
-		t.Fatalf("expected 3 values, got %d", len(inExpr.Values))
-	}
-	if inExpr.Values[0].(*ast.IntLitExpr).Value != 1 {
-		t.Errorf("expected value 0 = 1")
-	}
-	if inExpr.Values[1].(*ast.IntLitExpr).Value != 2 {
-		t.Errorf("expected value 1 = 2")
-	}
-	if inExpr.Values[2].(*ast.IntLitExpr).Value != 3 {
-		t.Errorf("expected value 2 = 3")
-	}
+	assert.Equal(t, "id", ident.Name)
+	require.Len(t, inExpr.Values, 3, "expected 3 values")
+	assert.Equal(t, int64(1), inExpr.Values[0].(*ast.IntLitExpr).Value)
+	assert.Equal(t, int64(2), inExpr.Values[1].(*ast.IntLitExpr).Value)
+	assert.Equal(t, int64(3), inExpr.Values[2].(*ast.IntLitExpr).Value)
 }
 
 func TestParseSelectWhereNotIn(t *testing.T) {
 	stmt := parse(t, "SELECT * FROM t WHERE name NOT IN ('a', 'b')")
 	sel := stmt.(*ast.SelectStmt)
-	inExpr, ok := sel.Where.(*ast.InExpr)
-	if !ok {
-		t.Fatalf("expected InExpr, got %T", sel.Where)
-	}
-	if !inExpr.Not {
-		t.Errorf("expected Not=true, got false")
-	}
+	require.IsType(t, &ast.InExpr{}, sel.Where)
+	inExpr := sel.Where.(*ast.InExpr)
+	assert.True(t, inExpr.Not)
 	ident := inExpr.Left.(*ast.IdentExpr)
-	if ident.Name != "name" {
-		t.Errorf("expected column 'name', got %q", ident.Name)
-	}
-	if len(inExpr.Values) != 2 {
-		t.Fatalf("expected 2 values, got %d", len(inExpr.Values))
-	}
-	if inExpr.Values[0].(*ast.StringLitExpr).Value != "a" {
-		t.Errorf("expected value 0 = 'a'")
-	}
-	if inExpr.Values[1].(*ast.StringLitExpr).Value != "b" {
-		t.Errorf("expected value 1 = 'b'")
-	}
+	assert.Equal(t, "name", ident.Name)
+	require.Len(t, inExpr.Values, 2, "expected 2 values")
+	assert.Equal(t, "a", inExpr.Values[0].(*ast.StringLitExpr).Value)
+	assert.Equal(t, "b", inExpr.Values[1].(*ast.StringLitExpr).Value)
 }
 
 func TestParseCreateTablePrimaryKey(t *testing.T) {
 	stmt := parse(t, "CREATE TABLE t (id INT PRIMARY KEY, name TEXT)")
-	ct, ok := stmt.(*ast.CreateTableStmt)
-	if !ok {
-		t.Fatalf("expected CreateTableStmt, got %T", stmt)
-	}
-	if len(ct.Columns) != 2 {
-		t.Fatalf("expected 2 columns, got %d", len(ct.Columns))
-	}
-	if ct.Columns[0].Name != "id" || ct.Columns[0].DataType != "INT" {
-		t.Errorf("column 0: expected (id, INT), got (%s, %s)", ct.Columns[0].Name, ct.Columns[0].DataType)
-	}
-	if !ct.Columns[0].PrimaryKey {
-		t.Error("column 0: expected PrimaryKey=true")
-	}
-	if !ct.Columns[0].NotNull {
-		t.Error("column 0: expected NotNull=true (implied by PRIMARY KEY)")
-	}
-	if ct.Columns[1].PrimaryKey {
-		t.Error("column 1: expected PrimaryKey=false")
-	}
+	require.IsType(t, &ast.CreateTableStmt{}, stmt)
+	ct := stmt.(*ast.CreateTableStmt)
+	require.Len(t, ct.Columns, 2, "expected 2 columns")
+	assert.Equal(t, "id", ct.Columns[0].Name)
+	assert.Equal(t, "INT", ct.Columns[0].DataType)
+	assert.True(t, ct.Columns[0].PrimaryKey)
+	assert.True(t, ct.Columns[0].NotNull)
+	assert.False(t, ct.Columns[1].PrimaryKey)
 }
 
 func TestParseCreateTableNotNullPrimaryKey(t *testing.T) {
 	stmt := parse(t, "CREATE TABLE t (id INT NOT NULL PRIMARY KEY, name TEXT)")
-	ct, ok := stmt.(*ast.CreateTableStmt)
-	if !ok {
-		t.Fatalf("expected CreateTableStmt, got %T", stmt)
-	}
-	if len(ct.Columns) != 2 {
-		t.Fatalf("expected 2 columns, got %d", len(ct.Columns))
-	}
-	if !ct.Columns[0].PrimaryKey {
-		t.Error("column 0: expected PrimaryKey=true")
-	}
-	if !ct.Columns[0].NotNull {
-		t.Error("column 0: expected NotNull=true")
-	}
+	require.IsType(t, &ast.CreateTableStmt{}, stmt)
+	ct := stmt.(*ast.CreateTableStmt)
+	require.Len(t, ct.Columns, 2, "expected 2 columns")
+	assert.True(t, ct.Columns[0].PrimaryKey)
+	assert.True(t, ct.Columns[0].NotNull)
 }
 
 func TestParseSelectWhereBetween(t *testing.T) {
 	stmt := parse(t, "SELECT * FROM t WHERE id BETWEEN 1 AND 10")
 	sel := stmt.(*ast.SelectStmt)
-	betweenExpr, ok := sel.Where.(*ast.BetweenExpr)
-	if !ok {
-		t.Fatalf("expected BetweenExpr, got %T", sel.Where)
-	}
-	if betweenExpr.Not {
-		t.Errorf("expected Not=false, got true")
-	}
+	require.IsType(t, &ast.BetweenExpr{}, sel.Where)
+	betweenExpr := sel.Where.(*ast.BetweenExpr)
+	assert.False(t, betweenExpr.Not)
 	ident := betweenExpr.Left.(*ast.IdentExpr)
-	if ident.Name != "id" {
-		t.Errorf("expected column 'id', got %q", ident.Name)
-	}
+	assert.Equal(t, "id", ident.Name)
 	low := betweenExpr.Low.(*ast.IntLitExpr)
-	if low.Value != 1 {
-		t.Errorf("expected low=1, got %d", low.Value)
-	}
+	assert.Equal(t, int64(1), low.Value)
 	high := betweenExpr.High.(*ast.IntLitExpr)
-	if high.Value != 10 {
-		t.Errorf("expected high=10, got %d", high.Value)
-	}
+	assert.Equal(t, int64(10), high.Value)
 }
 
 func TestParseSelectWhereNotBetween(t *testing.T) {
 	stmt := parse(t, "SELECT * FROM t WHERE id NOT BETWEEN 1 AND 10")
 	sel := stmt.(*ast.SelectStmt)
-	betweenExpr, ok := sel.Where.(*ast.BetweenExpr)
-	if !ok {
-		t.Fatalf("expected BetweenExpr, got %T", sel.Where)
-	}
-	if !betweenExpr.Not {
-		t.Errorf("expected Not=true, got false")
-	}
+	require.IsType(t, &ast.BetweenExpr{}, sel.Where)
+	betweenExpr := sel.Where.(*ast.BetweenExpr)
+	assert.True(t, betweenExpr.Not)
 	ident := betweenExpr.Left.(*ast.IdentExpr)
-	if ident.Name != "id" {
-		t.Errorf("expected column 'id', got %q", ident.Name)
-	}
+	assert.Equal(t, "id", ident.Name)
 	low := betweenExpr.Low.(*ast.IntLitExpr)
-	if low.Value != 1 {
-		t.Errorf("expected low=1, got %d", low.Value)
-	}
+	assert.Equal(t, int64(1), low.Value)
 	high := betweenExpr.High.(*ast.IntLitExpr)
-	if high.Value != 10 {
-		t.Errorf("expected high=10, got %d", high.Value)
-	}
+	assert.Equal(t, int64(10), high.Value)
 }
 
 func TestParseSelectWhereLike(t *testing.T) {
 	stmt := parse(t, "SELECT * FROM t WHERE name LIKE '%alice%'")
 	sel := stmt.(*ast.SelectStmt)
-	likeExpr, ok := sel.Where.(*ast.LikeExpr)
-	if !ok {
-		t.Fatalf("expected LikeExpr, got %T", sel.Where)
-	}
-	if likeExpr.Not {
-		t.Errorf("expected Not=false, got true")
-	}
+	require.IsType(t, &ast.LikeExpr{}, sel.Where)
+	likeExpr := sel.Where.(*ast.LikeExpr)
+	assert.False(t, likeExpr.Not)
 	ident := likeExpr.Left.(*ast.IdentExpr)
-	if ident.Name != "name" {
-		t.Errorf("expected column 'name', got %q", ident.Name)
-	}
+	assert.Equal(t, "name", ident.Name)
 	pattern := likeExpr.Pattern.(*ast.StringLitExpr)
-	if pattern.Value != "%alice%" {
-		t.Errorf("expected pattern '%%alice%%', got %q", pattern.Value)
-	}
+	assert.Equal(t, "%alice%", pattern.Value)
 }
 
 func TestParseSelectWhereNotLike(t *testing.T) {
 	stmt := parse(t, "SELECT * FROM t WHERE name NOT LIKE 'bob%'")
 	sel := stmt.(*ast.SelectStmt)
-	likeExpr, ok := sel.Where.(*ast.LikeExpr)
-	if !ok {
-		t.Fatalf("expected LikeExpr, got %T", sel.Where)
-	}
-	if !likeExpr.Not {
-		t.Errorf("expected Not=true, got false")
-	}
+	require.IsType(t, &ast.LikeExpr{}, sel.Where)
+	likeExpr := sel.Where.(*ast.LikeExpr)
+	assert.True(t, likeExpr.Not)
 	ident := likeExpr.Left.(*ast.IdentExpr)
-	if ident.Name != "name" {
-		t.Errorf("expected column 'name', got %q", ident.Name)
-	}
+	assert.Equal(t, "name", ident.Name)
 	pattern := likeExpr.Pattern.(*ast.StringLitExpr)
-	if pattern.Value != "bob%" {
-		t.Errorf("expected pattern 'bob%%', got %q", pattern.Value)
-	}
+	assert.Equal(t, "bob%", pattern.Value)
 }
 
 func TestParseCreateIndex(t *testing.T) {
 	stmt := parse(t, "CREATE INDEX idx_name ON users(name)")
-	ci, ok := stmt.(*ast.CreateIndexStmt)
-	if !ok {
-		t.Fatalf("expected CreateIndexStmt, got %T", stmt)
-	}
-	if ci.IndexName != "idx_name" {
-		t.Errorf("index name: expected %q, got %q", "idx_name", ci.IndexName)
-	}
-	if ci.TableName != "users" {
-		t.Errorf("table name: expected %q, got %q", "users", ci.TableName)
-	}
-	if len(ci.ColumnNames) != 1 || ci.ColumnNames[0] != "name" {
-		t.Errorf("column names: expected [\"name\"], got %v", ci.ColumnNames)
-	}
+	require.IsType(t, &ast.CreateIndexStmt{}, stmt)
+	ci := stmt.(*ast.CreateIndexStmt)
+	assert.Equal(t, "idx_name", ci.IndexName)
+	assert.Equal(t, "users", ci.TableName)
+	require.Len(t, ci.ColumnNames, 1, "expected 1 item")
+	assert.Equal(t, "name", ci.ColumnNames[0])
 }
 
 func TestParseCreateCompositeIndex(t *testing.T) {
 	stmt := parse(t, "CREATE INDEX idx_name_age ON users(name, age)")
-	ci, ok := stmt.(*ast.CreateIndexStmt)
-	if !ok {
-		t.Fatalf("expected CreateIndexStmt, got %T", stmt)
-	}
-	if ci.IndexName != "idx_name_age" {
-		t.Errorf("index name: expected %q, got %q", "idx_name_age", ci.IndexName)
-	}
-	if ci.TableName != "users" {
-		t.Errorf("table name: expected %q, got %q", "users", ci.TableName)
-	}
-	if len(ci.ColumnNames) != 2 {
-		t.Fatalf("expected 2 columns, got %d", len(ci.ColumnNames))
-	}
-	if ci.ColumnNames[0] != "name" {
-		t.Errorf("column 0: expected %q, got %q", "name", ci.ColumnNames[0])
-	}
-	if ci.ColumnNames[1] != "age" {
-		t.Errorf("column 1: expected %q, got %q", "age", ci.ColumnNames[1])
-	}
+	require.IsType(t, &ast.CreateIndexStmt{}, stmt)
+	ci := stmt.(*ast.CreateIndexStmt)
+	assert.Equal(t, "idx_name_age", ci.IndexName)
+	assert.Equal(t, "users", ci.TableName)
+	require.Len(t, ci.ColumnNames, 2, "expected 2 items")
+	assert.Equal(t, "name", ci.ColumnNames[0])
+	assert.Equal(t, "age", ci.ColumnNames[1])
 }
 
 func TestParseDropIndex(t *testing.T) {
 	stmt := parse(t, "DROP INDEX idx_name")
-	di, ok := stmt.(*ast.DropIndexStmt)
-	if !ok {
-		t.Fatalf("expected DropIndexStmt, got %T", stmt)
-	}
-	if di.IndexName != "idx_name" {
-		t.Errorf("index name: expected %q, got %q", "idx_name", di.IndexName)
-	}
+	require.IsType(t, &ast.DropIndexStmt{}, stmt)
+	di := stmt.(*ast.DropIndexStmt)
+	assert.Equal(t, "idx_name", di.IndexName)
 }
 
 func TestParseLeftJoin(t *testing.T) {
 	stmt := parse(t, "SELECT * FROM users LEFT JOIN orders ON users.id = orders.user_id")
-	sel, ok := stmt.(*ast.SelectStmt)
-	if !ok {
-		t.Fatalf("expected SelectStmt, got %T", stmt)
-	}
-	if len(sel.Joins) != 1 {
-		t.Fatalf("expected 1 join, got %d", len(sel.Joins))
-	}
-	if sel.Joins[0].JoinType != ast.JoinLeft {
-		t.Errorf("expected JoinType=%q, got %q", ast.JoinLeft, sel.Joins[0].JoinType)
-	}
-	if sel.Joins[0].TableName != "orders" {
-		t.Errorf("expected table name %q, got %q", "orders", sel.Joins[0].TableName)
-	}
+	require.IsType(t, &ast.SelectStmt{}, stmt)
+	sel := stmt.(*ast.SelectStmt)
+	require.Len(t, sel.Joins, 1, "expected 1 join")
+	assert.Equal(t, ast.JoinLeft, sel.Joins[0].JoinType)
+	assert.Equal(t, "orders", sel.Joins[0].TableName)
 }
 
 func TestParseLeftOuterJoin(t *testing.T) {
 	stmt := parse(t, "SELECT * FROM users LEFT OUTER JOIN orders ON users.id = orders.user_id")
-	sel, ok := stmt.(*ast.SelectStmt)
-	if !ok {
-		t.Fatalf("expected SelectStmt, got %T", stmt)
-	}
-	if len(sel.Joins) != 1 {
-		t.Fatalf("expected 1 join, got %d", len(sel.Joins))
-	}
-	if sel.Joins[0].JoinType != ast.JoinLeft {
-		t.Errorf("expected JoinType=%q, got %q", ast.JoinLeft, sel.Joins[0].JoinType)
-	}
+	require.IsType(t, &ast.SelectStmt{}, stmt)
+	sel := stmt.(*ast.SelectStmt)
+	require.Len(t, sel.Joins, 1, "expected 1 join")
+	assert.Equal(t, ast.JoinLeft, sel.Joins[0].JoinType)
 }
 
 func TestParseInnerJoinType(t *testing.T) {
@@ -1500,188 +855,103 @@ func TestParseInnerJoinType(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			stmt := parse(t, tt.input)
-			sel, ok := stmt.(*ast.SelectStmt)
-			if !ok {
-				t.Fatalf("expected SelectStmt, got %T", stmt)
-			}
-			if len(sel.Joins) != 1 {
-				t.Fatalf("expected 1 join, got %d", len(sel.Joins))
-			}
-			if sel.Joins[0].JoinType != ast.JoinInner {
-				t.Errorf("expected JoinType=%q, got %q", ast.JoinInner, sel.Joins[0].JoinType)
-			}
+			require.IsType(t, &ast.SelectStmt{}, stmt)
+			sel := stmt.(*ast.SelectStmt)
+			require.Len(t, sel.Joins, 1, "expected 1 join")
+			assert.Equal(t, ast.JoinInner, sel.Joins[0].JoinType)
 		})
 	}
 }
 
 func TestParseRightJoin(t *testing.T) {
 	stmt := parse(t, "SELECT * FROM users RIGHT JOIN orders ON users.id = orders.user_id")
-	sel, ok := stmt.(*ast.SelectStmt)
-	if !ok {
-		t.Fatalf("expected SelectStmt, got %T", stmt)
-	}
-	if len(sel.Joins) != 1 {
-		t.Fatalf("expected 1 join, got %d", len(sel.Joins))
-	}
-	if sel.Joins[0].JoinType != ast.JoinRight {
-		t.Errorf("expected JoinType=%q, got %q", ast.JoinRight, sel.Joins[0].JoinType)
-	}
-	if sel.Joins[0].TableName != "orders" {
-		t.Errorf("expected table name %q, got %q", "orders", sel.Joins[0].TableName)
-	}
+	require.IsType(t, &ast.SelectStmt{}, stmt)
+	sel := stmt.(*ast.SelectStmt)
+	require.Len(t, sel.Joins, 1, "expected 1 join")
+	assert.Equal(t, ast.JoinRight, sel.Joins[0].JoinType)
+	assert.Equal(t, "orders", sel.Joins[0].TableName)
 }
 
 func TestParseRightOuterJoin(t *testing.T) {
 	stmt := parse(t, "SELECT * FROM users RIGHT OUTER JOIN orders ON users.id = orders.user_id")
-	sel, ok := stmt.(*ast.SelectStmt)
-	if !ok {
-		t.Fatalf("expected SelectStmt, got %T", stmt)
-	}
-	if len(sel.Joins) != 1 {
-		t.Fatalf("expected 1 join, got %d", len(sel.Joins))
-	}
-	if sel.Joins[0].JoinType != ast.JoinRight {
-		t.Errorf("expected JoinType=%q, got %q", ast.JoinRight, sel.Joins[0].JoinType)
-	}
+	require.IsType(t, &ast.SelectStmt{}, stmt)
+	sel := stmt.(*ast.SelectStmt)
+	require.Len(t, sel.Joins, 1, "expected 1 join")
+	assert.Equal(t, ast.JoinRight, sel.Joins[0].JoinType)
 }
 
 func TestParseCrossJoin(t *testing.T) {
 	stmt := parse(t, "SELECT * FROM t1 CROSS JOIN t2")
-	sel, ok := stmt.(*ast.SelectStmt)
-	if !ok {
-		t.Fatalf("expected SelectStmt, got %T", stmt)
-	}
-	if len(sel.Joins) != 1 {
-		t.Fatalf("expected 1 join, got %d", len(sel.Joins))
-	}
-	if sel.Joins[0].JoinType != ast.JoinCross {
-		t.Errorf("expected JoinType=%q, got %q", ast.JoinCross, sel.Joins[0].JoinType)
-	}
-	if sel.Joins[0].TableName != "t2" {
-		t.Errorf("expected table name %q, got %q", "t2", sel.Joins[0].TableName)
-	}
-	if sel.Joins[0].On != nil {
-		t.Errorf("expected no ON clause for CROSS JOIN, got %v", sel.Joins[0].On)
-	}
+	require.IsType(t, &ast.SelectStmt{}, stmt)
+	sel := stmt.(*ast.SelectStmt)
+	require.Len(t, sel.Joins, 1, "expected 1 join")
+	assert.Equal(t, ast.JoinCross, sel.Joins[0].JoinType)
+	assert.Equal(t, "t2", sel.Joins[0].TableName)
+	assert.Nil(t, sel.Joins[0].On)
 }
 
 func TestParseCrossJoinWithOnError(t *testing.T) {
 	l := lexer.New("SELECT * FROM t1 CROSS JOIN t2 ON t1.id = t2.id")
 	p := New(l)
 	_, err := p.Parse()
-	if err == nil {
-		t.Fatal("expected error for CROSS JOIN with ON clause, got nil")
-	}
+	assert.Error(t, err)
 }
 
 func TestParseCaseSearched(t *testing.T) {
 	stmt := parse(t, "SELECT CASE WHEN id > 0 THEN 'positive' ELSE 'non-positive' END FROM t")
 	sel := stmt.(*ast.SelectStmt)
-	if len(sel.Columns) != 1 {
-		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
-	}
-	caseExpr, ok := sel.Columns[0].(*ast.CaseExpr)
-	if !ok {
-		t.Fatalf("expected CaseExpr, got %T", sel.Columns[0])
-	}
-	if caseExpr.Operand != nil {
-		t.Errorf("expected nil Operand for Searched CASE, got %T", caseExpr.Operand)
-	}
-	if len(caseExpr.Whens) != 1 {
-		t.Fatalf("expected 1 WHEN clause, got %d", len(caseExpr.Whens))
-	}
+	require.Len(t, sel.Columns, 1, "expected 1 column")
+	require.IsType(t, &ast.CaseExpr{}, sel.Columns[0])
+	caseExpr := sel.Columns[0].(*ast.CaseExpr)
+	assert.Nil(t, caseExpr.Operand)
+	require.Len(t, caseExpr.Whens, 1, "expected 1 WHEN clauses")
 	// WHEN condition should be a BinaryExpr (id > 0)
-	_, ok = caseExpr.Whens[0].When.(*ast.BinaryExpr)
-	if !ok {
-		t.Fatalf("expected BinaryExpr in WHEN, got %T", caseExpr.Whens[0].When)
-	}
+	require.IsType(t, &ast.BinaryExpr{}, caseExpr.Whens[0].When)
 	// THEN value
-	thenVal, ok := caseExpr.Whens[0].Then.(*ast.StringLitExpr)
-	if !ok {
-		t.Fatalf("expected StringLitExpr in THEN, got %T", caseExpr.Whens[0].Then)
-	}
-	if thenVal.Value != "positive" {
-		t.Errorf("expected THEN 'positive', got %q", thenVal.Value)
-	}
+	require.IsType(t, &ast.StringLitExpr{}, caseExpr.Whens[0].Then)
+	thenVal := caseExpr.Whens[0].Then.(*ast.StringLitExpr)
+	assert.Equal(t, "positive", thenVal.Value)
 	// ELSE value
-	if caseExpr.Else == nil {
-		t.Fatal("expected ELSE clause")
-	}
-	elseVal, ok := caseExpr.Else.(*ast.StringLitExpr)
-	if !ok {
-		t.Fatalf("expected StringLitExpr in ELSE, got %T", caseExpr.Else)
-	}
-	if elseVal.Value != "non-positive" {
-		t.Errorf("expected ELSE 'non-positive', got %q", elseVal.Value)
-	}
+	require.NotNil(t, caseExpr.Else)
+	require.IsType(t, &ast.StringLitExpr{}, caseExpr.Else)
+	elseVal := caseExpr.Else.(*ast.StringLitExpr)
+	assert.Equal(t, "non-positive", elseVal.Value)
 }
 
 func TestParseCaseSimple(t *testing.T) {
 	stmt := parse(t, "SELECT CASE status WHEN 1 THEN 'active' WHEN 0 THEN 'inactive' END FROM t")
 	sel := stmt.(*ast.SelectStmt)
-	if len(sel.Columns) != 1 {
-		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
-	}
-	caseExpr, ok := sel.Columns[0].(*ast.CaseExpr)
-	if !ok {
-		t.Fatalf("expected CaseExpr, got %T", sel.Columns[0])
-	}
+	require.Len(t, sel.Columns, 1, "expected 1 column")
+	require.IsType(t, &ast.CaseExpr{}, sel.Columns[0])
+	caseExpr := sel.Columns[0].(*ast.CaseExpr)
 	// Operand should be an IdentExpr
-	operand, ok := caseExpr.Operand.(*ast.IdentExpr)
-	if !ok {
-		t.Fatalf("expected IdentExpr as Operand, got %T", caseExpr.Operand)
-	}
-	if operand.Name != "status" {
-		t.Errorf("expected Operand 'status', got %q", operand.Name)
-	}
-	if len(caseExpr.Whens) != 2 {
-		t.Fatalf("expected 2 WHEN clauses, got %d", len(caseExpr.Whens))
-	}
+	require.IsType(t, &ast.IdentExpr{}, caseExpr.Operand)
+	operand := caseExpr.Operand.(*ast.IdentExpr)
+	assert.Equal(t, "status", operand.Name)
+	require.Len(t, caseExpr.Whens, 2, "expected 2 WHEN clauses")
 	// First WHEN: 1 THEN 'active'
-	when1, ok := caseExpr.Whens[0].When.(*ast.IntLitExpr)
-	if !ok {
-		t.Fatalf("expected IntLitExpr in WHEN 0, got %T", caseExpr.Whens[0].When)
-	}
-	if when1.Value != 1 {
-		t.Errorf("expected WHEN value 1, got %d", when1.Value)
-	}
-	then1, ok := caseExpr.Whens[0].Then.(*ast.StringLitExpr)
-	if !ok {
-		t.Fatalf("expected StringLitExpr in THEN 0, got %T", caseExpr.Whens[0].Then)
-	}
-	if then1.Value != "active" {
-		t.Errorf("expected THEN 'active', got %q", then1.Value)
-	}
+	require.IsType(t, &ast.IntLitExpr{}, caseExpr.Whens[0].When)
+	when1 := caseExpr.Whens[0].When.(*ast.IntLitExpr)
+	assert.Equal(t, int64(1), when1.Value)
+	require.IsType(t, &ast.StringLitExpr{}, caseExpr.Whens[0].Then)
+	then1 := caseExpr.Whens[0].Then.(*ast.StringLitExpr)
+	assert.Equal(t, "active", then1.Value)
 	// Second WHEN: 0 THEN 'inactive'
-	when2, ok := caseExpr.Whens[1].When.(*ast.IntLitExpr)
-	if !ok {
-		t.Fatalf("expected IntLitExpr in WHEN 1, got %T", caseExpr.Whens[1].When)
-	}
-	if when2.Value != 0 {
-		t.Errorf("expected WHEN value 0, got %d", when2.Value)
-	}
+	require.IsType(t, &ast.IntLitExpr{}, caseExpr.Whens[1].When)
+	when2 := caseExpr.Whens[1].When.(*ast.IntLitExpr)
+	assert.Equal(t, int64(0), when2.Value)
 	// No ELSE
-	if caseExpr.Else != nil {
-		t.Errorf("expected nil ELSE, got %T", caseExpr.Else)
-	}
+	assert.Nil(t, caseExpr.Else)
 }
 
 func TestParseCaseNoElse(t *testing.T) {
 	stmt := parse(t, "SELECT CASE WHEN id = 1 THEN 'one' END FROM t")
 	sel := stmt.(*ast.SelectStmt)
-	caseExpr, ok := sel.Columns[0].(*ast.CaseExpr)
-	if !ok {
-		t.Fatalf("expected CaseExpr, got %T", sel.Columns[0])
-	}
-	if caseExpr.Operand != nil {
-		t.Errorf("expected nil Operand, got %T", caseExpr.Operand)
-	}
-	if len(caseExpr.Whens) != 1 {
-		t.Fatalf("expected 1 WHEN clause, got %d", len(caseExpr.Whens))
-	}
-	if caseExpr.Else != nil {
-		t.Errorf("expected nil ELSE, got %T", caseExpr.Else)
-	}
+	require.IsType(t, &ast.CaseExpr{}, sel.Columns[0])
+	caseExpr := sel.Columns[0].(*ast.CaseExpr)
+	assert.Nil(t, caseExpr.Operand)
+	require.Len(t, caseExpr.Whens, 1, "expected 1 WHEN clauses")
+	assert.Nil(t, caseExpr.Else)
 }
 
 func TestParseCast(t *testing.T) {
@@ -1698,16 +968,10 @@ func TestParseCast(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			stmt := parse(t, tt.input)
 			sel := stmt.(*ast.SelectStmt)
-			if len(sel.Columns) != 1 {
-				t.Fatalf("expected 1 column, got %d", len(sel.Columns))
-			}
-			cast, ok := sel.Columns[0].(*ast.CastExpr)
-			if !ok {
-				t.Fatalf("expected CastExpr, got %T", sel.Columns[0])
-			}
-			if cast.TargetType != tt.targetType {
-				t.Errorf("expected TargetType=%q, got %q", tt.targetType, cast.TargetType)
-			}
+			require.Len(t, sel.Columns, 1, "expected 1 column")
+			require.IsType(t, &ast.CastExpr{}, sel.Columns[0])
+			cast := sel.Columns[0].(*ast.CastExpr)
+			assert.Equal(t, tt.targetType, cast.TargetType)
 		})
 	}
 }
@@ -1715,46 +979,26 @@ func TestParseCast(t *testing.T) {
 func TestParseCoalesce(t *testing.T) {
 	stmt := parse(t, "SELECT COALESCE(a, b, c) FROM t")
 	sel := stmt.(*ast.SelectStmt)
-	if len(sel.Columns) != 1 {
-		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
-	}
-	call, ok := sel.Columns[0].(*ast.CallExpr)
-	if !ok {
-		t.Fatalf("expected CallExpr, got %T", sel.Columns[0])
-	}
-	if call.Name != "COALESCE" {
-		t.Errorf("expected function name COALESCE, got %q", call.Name)
-	}
-	if len(call.Args) != 3 {
-		t.Fatalf("expected 3 args, got %d", len(call.Args))
-	}
+	require.Len(t, sel.Columns, 1, "expected 1 column")
+	require.IsType(t, &ast.CallExpr{}, sel.Columns[0])
+	call := sel.Columns[0].(*ast.CallExpr)
+	assert.Equal(t, "COALESCE", call.Name)
+	require.Len(t, call.Args, 3, "expected 3 args")
 	for i, name := range []string{"a", "b", "c"} {
-		ident, ok := call.Args[i].(*ast.IdentExpr)
-		if !ok {
-			t.Fatalf("arg %d: expected IdentExpr, got %T", i, call.Args[i])
-		}
-		if ident.Name != name {
-			t.Errorf("arg %d: expected %q, got %q", i, name, ident.Name)
-		}
+		require.IsType(t, &ast.IdentExpr{}, call.Args[i])
+		ident := call.Args[i].(*ast.IdentExpr)
+		assert.Equal(t, name, ident.Name)
 	}
 }
 
 func TestParseNullif(t *testing.T) {
 	stmt := parse(t, "SELECT NULLIF(a, b) FROM t")
 	sel := stmt.(*ast.SelectStmt)
-	if len(sel.Columns) != 1 {
-		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
-	}
-	call, ok := sel.Columns[0].(*ast.CallExpr)
-	if !ok {
-		t.Fatalf("expected CallExpr, got %T", sel.Columns[0])
-	}
-	if call.Name != "NULLIF" {
-		t.Errorf("expected function name NULLIF, got %q", call.Name)
-	}
-	if len(call.Args) != 2 {
-		t.Fatalf("expected 2 args, got %d", len(call.Args))
-	}
+	require.Len(t, sel.Columns, 1, "expected 1 column")
+	require.IsType(t, &ast.CallExpr{}, sel.Columns[0])
+	call := sel.Columns[0].(*ast.CallExpr)
+	assert.Equal(t, "NULLIF", call.Name)
+	require.Len(t, call.Args, 2, "expected 2 args")
 }
 
 func TestParseNumericFunctions(t *testing.T) {
@@ -1775,19 +1019,11 @@ func TestParseNumericFunctions(t *testing.T) {
 		t.Run(tt.funcName, func(t *testing.T) {
 			stmt := parse(t, tt.input)
 			sel := stmt.(*ast.SelectStmt)
-			if len(sel.Columns) != 1 {
-				t.Fatalf("expected 1 column, got %d", len(sel.Columns))
-			}
-			call, ok := sel.Columns[0].(*ast.CallExpr)
-			if !ok {
-				t.Fatalf("expected CallExpr, got %T", sel.Columns[0])
-			}
-			if call.Name != tt.funcName {
-				t.Errorf("expected function name %q, got %q", tt.funcName, call.Name)
-			}
-			if len(call.Args) != tt.argCount {
-				t.Errorf("expected %d args, got %d", tt.argCount, len(call.Args))
-			}
+			require.Len(t, sel.Columns, 1, "expected 1 column")
+			require.IsType(t, &ast.CallExpr{}, sel.Columns[0])
+			call := sel.Columns[0].(*ast.CallExpr)
+			assert.Equal(t, tt.funcName, call.Name)
+			assert.Len(t, call.Args, tt.argCount)
 		})
 	}
 }
@@ -1811,167 +1047,101 @@ func TestParseStringFunctions(t *testing.T) {
 		t.Run(tt.funcName+"_"+fmt.Sprintf("%d", tt.argCount), func(t *testing.T) {
 			stmt := parse(t, tt.input)
 			sel := stmt.(*ast.SelectStmt)
-			if len(sel.Columns) != 1 {
-				t.Fatalf("expected 1 column, got %d", len(sel.Columns))
-			}
-			call, ok := sel.Columns[0].(*ast.CallExpr)
-			if !ok {
-				t.Fatalf("expected CallExpr, got %T", sel.Columns[0])
-			}
-			if call.Name != tt.funcName {
-				t.Errorf("expected function name %q, got %q", tt.funcName, call.Name)
-			}
-			if len(call.Args) != tt.argCount {
-				t.Errorf("expected %d args, got %d", tt.argCount, len(call.Args))
-			}
+			require.Len(t, sel.Columns, 1, "expected 1 column")
+			require.IsType(t, &ast.CallExpr{}, sel.Columns[0])
+			call := sel.Columns[0].(*ast.CallExpr)
+			assert.Equal(t, tt.funcName, call.Name)
+			assert.Len(t, call.Args, tt.argCount)
 		})
 	}
 }
 
 func TestParseUnion(t *testing.T) {
 	stmt := parse(t, "SELECT a FROM t1 UNION SELECT b FROM t2")
-	u, ok := stmt.(*ast.SetOpStmt)
-	if !ok {
-		t.Fatalf("expected SetOpStmt, got %T", stmt)
-	}
-	if u.All {
-		t.Error("expected All=false for UNION")
-	}
-	left, ok := u.Left.(*ast.SelectStmt)
-	if !ok {
-		t.Fatalf("expected left to be SelectStmt, got %T", u.Left)
-	}
-	if left.TableName != "t1" {
-		t.Errorf("left table: expected %q, got %q", "t1", left.TableName)
-	}
-	if u.Right.TableName != "t2" {
-		t.Errorf("right table: expected %q, got %q", "t2", u.Right.TableName)
-	}
+	require.IsType(t, &ast.SetOpStmt{}, stmt)
+	u := stmt.(*ast.SetOpStmt)
+	assert.False(t, u.All)
+	require.IsType(t, &ast.SelectStmt{}, u.Left)
+	left := u.Left.(*ast.SelectStmt)
+	assert.Equal(t, "t1", left.TableName)
+	assert.Equal(t, "t2", u.Right.TableName)
 }
 
 func TestParseUnionAll(t *testing.T) {
 	stmt := parse(t, "SELECT a FROM t1 UNION ALL SELECT b FROM t2")
-	u, ok := stmt.(*ast.SetOpStmt)
-	if !ok {
-		t.Fatalf("expected SetOpStmt, got %T", stmt)
-	}
-	if !u.All {
-		t.Error("expected All=true for UNION ALL")
-	}
+	require.IsType(t, &ast.SetOpStmt{}, stmt)
+	u := stmt.(*ast.SetOpStmt)
+	assert.True(t, u.All)
 }
 
 func TestParseUnionChain(t *testing.T) {
 	stmt := parse(t, "SELECT a FROM t1 UNION SELECT b FROM t2 UNION SELECT c FROM t3")
-	u, ok := stmt.(*ast.SetOpStmt)
-	if !ok {
-		t.Fatalf("expected SetOpStmt, got %T", stmt)
-	}
+	require.IsType(t, &ast.SetOpStmt{}, stmt)
+	u := stmt.(*ast.SetOpStmt)
 	// Right is t3
-	if u.Right.TableName != "t3" {
-		t.Errorf("right table: expected %q, got %q", "t3", u.Right.TableName)
-	}
+	assert.Equal(t, "t3", u.Right.TableName)
 	// Left is another SetOpStmt
-	inner, ok := u.Left.(*ast.SetOpStmt)
-	if !ok {
-		t.Fatalf("expected left to be SetOpStmt, got %T", u.Left)
-	}
-	innerLeft, ok := inner.Left.(*ast.SelectStmt)
-	if !ok {
-		t.Fatalf("expected inner left to be SelectStmt, got %T", inner.Left)
-	}
-	if innerLeft.TableName != "t1" {
-		t.Errorf("inner left table: expected %q, got %q", "t1", innerLeft.TableName)
-	}
-	if inner.Right.TableName != "t2" {
-		t.Errorf("inner right table: expected %q, got %q", "t2", inner.Right.TableName)
-	}
+	require.IsType(t, &ast.SetOpStmt{}, u.Left)
+	inner := u.Left.(*ast.SetOpStmt)
+	require.IsType(t, &ast.SelectStmt{}, inner.Left)
+	innerLeft := inner.Left.(*ast.SelectStmt)
+	assert.Equal(t, "t1", innerLeft.TableName)
+	assert.Equal(t, "t2", inner.Right.TableName)
 }
 
 func TestParseUnionOrderByLimit(t *testing.T) {
 	stmt := parse(t, "SELECT a FROM t1 UNION SELECT a FROM t2 ORDER BY a LIMIT 5 OFFSET 2")
-	u, ok := stmt.(*ast.SetOpStmt)
-	if !ok {
-		t.Fatalf("expected SetOpStmt, got %T", stmt)
-	}
-	if len(u.OrderBy) != 1 {
-		t.Fatalf("expected 1 ORDER BY clause, got %d", len(u.OrderBy))
-	}
+	require.IsType(t, &ast.SetOpStmt{}, stmt)
+	u := stmt.(*ast.SetOpStmt)
+	require.Len(t, u.OrderBy, 1, "expected 1 ORDER BY clauses")
 	ident := u.OrderBy[0].Expr.(*ast.IdentExpr)
-	if ident.Name != "a" {
-		t.Errorf("expected ORDER BY 'a', got %q", ident.Name)
-	}
-	if u.Limit == nil || *u.Limit != 5 {
-		t.Errorf("expected LIMIT 5")
-	}
-	if u.Offset == nil || *u.Offset != 2 {
-		t.Errorf("expected OFFSET 2")
-	}
+	assert.Equal(t, "a", ident.Name)
+	require.NotNil(t, u.Limit)
+	assert.Equal(t, int64(5), *u.Limit)
+	require.NotNil(t, u.Offset)
+	assert.Equal(t, int64(2), *u.Offset)
 }
 
 func TestParseSelectWithoutUnionUnchanged(t *testing.T) {
 	// Without UNION, parseSelect should still return *SelectStmt
 	stmt := parse(t, "SELECT a FROM t1 ORDER BY a LIMIT 10")
-	sel, ok := stmt.(*ast.SelectStmt)
-	if !ok {
-		t.Fatalf("expected SelectStmt without UNION, got %T", stmt)
-	}
-	if sel.TableName != "t1" {
-		t.Errorf("table name: expected %q, got %q", "t1", sel.TableName)
-	}
-	if len(sel.OrderBy) != 1 {
-		t.Fatalf("expected 1 ORDER BY clause, got %d", len(sel.OrderBy))
-	}
-	if sel.Limit == nil || *sel.Limit != 10 {
-		t.Errorf("expected LIMIT 10")
-	}
+	require.IsType(t, &ast.SelectStmt{}, stmt)
+	sel := stmt.(*ast.SelectStmt)
+	assert.Equal(t, "t1", sel.TableName)
+	require.Len(t, sel.OrderBy, 1, "expected 1 ORDER BY clauses")
+	require.NotNil(t, sel.Limit)
+	assert.Equal(t, int64(10), *sel.Limit)
 }
 
 func TestParseUnionParenthesizedLimit(t *testing.T) {
 	stmt := parse(t, "(SELECT a FROM t1 LIMIT 2) UNION (SELECT a FROM t2 LIMIT 3)")
-	u, ok := stmt.(*ast.SetOpStmt)
-	if !ok {
-		t.Fatalf("expected SetOpStmt, got %T", stmt)
-	}
-	left, ok := u.Left.(*ast.SelectStmt)
-	if !ok {
-		t.Fatalf("expected left to be SelectStmt, got %T", u.Left)
-	}
-	if left.Limit == nil || *left.Limit != 2 {
-		t.Errorf("left LIMIT: expected 2, got %v", left.Limit)
-	}
-	if u.Right.Limit == nil || *u.Right.Limit != 3 {
-		t.Errorf("right LIMIT: expected 3, got %v", u.Right.Limit)
-	}
+	require.IsType(t, &ast.SetOpStmt{}, stmt)
+	u := stmt.(*ast.SetOpStmt)
+	require.IsType(t, &ast.SelectStmt{}, u.Left)
+	left := u.Left.(*ast.SelectStmt)
+	require.NotNil(t, left.Limit)
+	assert.Equal(t, int64(2), *left.Limit)
+	require.NotNil(t, u.Right.Limit)
+	assert.Equal(t, int64(3), *u.Right.Limit)
 }
 
 func TestParseUnionParenthesizedOrderByLimit(t *testing.T) {
 	stmt := parse(t, "(SELECT a FROM t1 ORDER BY a LIMIT 2) UNION (SELECT a FROM t2 ORDER BY a LIMIT 3) ORDER BY a LIMIT 10")
-	u, ok := stmt.(*ast.SetOpStmt)
-	if !ok {
-		t.Fatalf("expected SetOpStmt, got %T", stmt)
-	}
+	require.IsType(t, &ast.SetOpStmt{}, stmt)
+	u := stmt.(*ast.SetOpStmt)
 	// Left individual SELECT should have its own ORDER BY and LIMIT
 	left := u.Left.(*ast.SelectStmt)
-	if len(left.OrderBy) != 1 {
-		t.Errorf("left ORDER BY: expected 1 clause, got %d", len(left.OrderBy))
-	}
-	if left.Limit == nil || *left.Limit != 2 {
-		t.Errorf("left LIMIT: expected 2")
-	}
+	assert.Len(t, left.OrderBy, 1)
+	require.NotNil(t, left.Limit)
+	assert.Equal(t, int64(2), *left.Limit)
 	// Right individual SELECT
-	if len(u.Right.OrderBy) != 1 {
-		t.Errorf("right ORDER BY: expected 1 clause, got %d", len(u.Right.OrderBy))
-	}
-	if u.Right.Limit == nil || *u.Right.Limit != 3 {
-		t.Errorf("right LIMIT: expected 3")
-	}
+	assert.Len(t, u.Right.OrderBy, 1)
+	require.NotNil(t, u.Right.Limit)
+	assert.Equal(t, int64(3), *u.Right.Limit)
 	// Overall UNION ORDER BY / LIMIT
-	if len(u.OrderBy) != 1 {
-		t.Fatalf("union ORDER BY: expected 1 clause, got %d", len(u.OrderBy))
-	}
-	if u.Limit == nil || *u.Limit != 10 {
-		t.Errorf("union LIMIT: expected 10")
-	}
+	require.Len(t, u.OrderBy, 1, "expected 1 ORDER BY clauses")
+	require.NotNil(t, u.Limit)
+	assert.Equal(t, int64(10), *u.Limit)
 }
 
 func TestParseUnionBareLimitError(t *testing.T) {
@@ -1979,9 +1149,7 @@ func TestParseUnionBareLimitError(t *testing.T) {
 	l := lexer.New("SELECT a FROM t1 LIMIT 2 UNION SELECT a FROM t2")
 	p := New(l)
 	_, err := p.Parse()
-	if err == nil {
-		t.Fatal("expected syntax error for bare LIMIT before UNION, got nil")
-	}
+	assert.Error(t, err)
 }
 
 func TestParseUnionBareOrderByError(t *testing.T) {
@@ -1989,148 +1157,84 @@ func TestParseUnionBareOrderByError(t *testing.T) {
 	l := lexer.New("SELECT a FROM t1 ORDER BY a UNION SELECT a FROM t2")
 	p := New(l)
 	_, err := p.Parse()
-	if err == nil {
-		t.Fatal("expected syntax error for bare ORDER BY before UNION, got nil")
-	}
+	assert.Error(t, err)
 }
 
 func TestParseParenthesizedSelectOnly(t *testing.T) {
 	// Parenthesized SELECT without UNION should also work
 	stmt := parse(t, "(SELECT a FROM t1 LIMIT 5)")
-	sel, ok := stmt.(*ast.SelectStmt)
-	if !ok {
-		t.Fatalf("expected SelectStmt, got %T", stmt)
-	}
-	if sel.Limit == nil || *sel.Limit != 5 {
-		t.Errorf("expected LIMIT 5")
-	}
+	require.IsType(t, &ast.SelectStmt{}, stmt)
+	sel := stmt.(*ast.SelectStmt)
+	require.NotNil(t, sel.Limit)
+	assert.Equal(t, int64(5), *sel.Limit)
 }
 
 func TestParseIntersect(t *testing.T) {
 	stmt := parse(t, "SELECT a FROM t1 INTERSECT SELECT b FROM t2")
-	u, ok := stmt.(*ast.SetOpStmt)
-	if !ok {
-		t.Fatalf("expected SetOpStmt, got %T", stmt)
-	}
-	if u.Op != ast.SetOpIntersect {
-		t.Errorf("expected Op=%q, got %q", ast.SetOpIntersect, u.Op)
-	}
-	if u.All {
-		t.Error("expected All=false for INTERSECT")
-	}
-	left, ok := u.Left.(*ast.SelectStmt)
-	if !ok {
-		t.Fatalf("expected left to be SelectStmt, got %T", u.Left)
-	}
-	if left.TableName != "t1" {
-		t.Errorf("left table: expected %q, got %q", "t1", left.TableName)
-	}
-	if u.Right.TableName != "t2" {
-		t.Errorf("right table: expected %q, got %q", "t2", u.Right.TableName)
-	}
+	require.IsType(t, &ast.SetOpStmt{}, stmt)
+	u := stmt.(*ast.SetOpStmt)
+	assert.Equal(t, ast.SetOpIntersect, u.Op)
+	assert.False(t, u.All)
+	require.IsType(t, &ast.SelectStmt{}, u.Left)
+	left := u.Left.(*ast.SelectStmt)
+	assert.Equal(t, "t1", left.TableName)
+	assert.Equal(t, "t2", u.Right.TableName)
 }
 
 func TestParseIntersectAll(t *testing.T) {
 	stmt := parse(t, "SELECT a FROM t1 INTERSECT ALL SELECT b FROM t2")
-	u, ok := stmt.(*ast.SetOpStmt)
-	if !ok {
-		t.Fatalf("expected SetOpStmt, got %T", stmt)
-	}
-	if u.Op != ast.SetOpIntersect {
-		t.Errorf("expected Op=%q, got %q", ast.SetOpIntersect, u.Op)
-	}
-	if !u.All {
-		t.Error("expected All=true for INTERSECT ALL")
-	}
+	require.IsType(t, &ast.SetOpStmt{}, stmt)
+	u := stmt.(*ast.SetOpStmt)
+	assert.Equal(t, ast.SetOpIntersect, u.Op)
+	assert.True(t, u.All)
 }
 
 func TestParseExcept(t *testing.T) {
 	stmt := parse(t, "SELECT a FROM t1 EXCEPT SELECT b FROM t2")
-	u, ok := stmt.(*ast.SetOpStmt)
-	if !ok {
-		t.Fatalf("expected SetOpStmt, got %T", stmt)
-	}
-	if u.Op != ast.SetOpExcept {
-		t.Errorf("expected Op=%q, got %q", ast.SetOpExcept, u.Op)
-	}
-	if u.All {
-		t.Error("expected All=false for EXCEPT")
-	}
-	left, ok := u.Left.(*ast.SelectStmt)
-	if !ok {
-		t.Fatalf("expected left to be SelectStmt, got %T", u.Left)
-	}
-	if left.TableName != "t1" {
-		t.Errorf("left table: expected %q, got %q", "t1", left.TableName)
-	}
-	if u.Right.TableName != "t2" {
-		t.Errorf("right table: expected %q, got %q", "t2", u.Right.TableName)
-	}
+	require.IsType(t, &ast.SetOpStmt{}, stmt)
+	u := stmt.(*ast.SetOpStmt)
+	assert.Equal(t, ast.SetOpExcept, u.Op)
+	assert.False(t, u.All)
+	require.IsType(t, &ast.SelectStmt{}, u.Left)
+	left := u.Left.(*ast.SelectStmt)
+	assert.Equal(t, "t1", left.TableName)
+	assert.Equal(t, "t2", u.Right.TableName)
 }
 
 func TestParseExceptAll(t *testing.T) {
 	stmt := parse(t, "SELECT a FROM t1 EXCEPT ALL SELECT b FROM t2")
-	u, ok := stmt.(*ast.SetOpStmt)
-	if !ok {
-		t.Fatalf("expected SetOpStmt, got %T", stmt)
-	}
-	if u.Op != ast.SetOpExcept {
-		t.Errorf("expected Op=%q, got %q", ast.SetOpExcept, u.Op)
-	}
-	if !u.All {
-		t.Error("expected All=true for EXCEPT ALL")
-	}
+	require.IsType(t, &ast.SetOpStmt{}, stmt)
+	u := stmt.(*ast.SetOpStmt)
+	assert.Equal(t, ast.SetOpExcept, u.Op)
+	assert.True(t, u.All)
 }
 
 func TestParseFromSubquery(t *testing.T) {
 	stmt := parse(t, "SELECT * FROM (SELECT id FROM t1) AS sub")
-	sel, ok := stmt.(*ast.SelectStmt)
-	if !ok {
-		t.Fatalf("expected SelectStmt, got %T", stmt)
-	}
-	if sel.TableName != "" {
-		t.Errorf("expected empty TableName, got %q", sel.TableName)
-	}
-	if sel.FromSubquery == nil {
-		t.Fatal("expected FromSubquery, got nil")
-	}
-	if sel.TableAlias != "sub" {
-		t.Errorf("expected TableAlias %q, got %q", "sub", sel.TableAlias)
-	}
-	inner, ok := sel.FromSubquery.(*ast.SelectStmt)
-	if !ok {
-		t.Fatalf("expected inner SelectStmt, got %T", sel.FromSubquery)
-	}
-	if inner.TableName != "t1" {
-		t.Errorf("inner table: expected %q, got %q", "t1", inner.TableName)
-	}
+	require.IsType(t, &ast.SelectStmt{}, stmt)
+	sel := stmt.(*ast.SelectStmt)
+	assert.Equal(t, "", sel.TableName)
+	require.NotNil(t, sel.FromSubquery)
+	assert.Equal(t, "sub", sel.TableAlias)
+	require.IsType(t, &ast.SelectStmt{}, sel.FromSubquery)
+	inner := sel.FromSubquery.(*ast.SelectStmt)
+	assert.Equal(t, "t1", inner.TableName)
 }
 
 func TestParseFromSubqueryUnion(t *testing.T) {
 	stmt := parse(t, "SELECT * FROM (SELECT id FROM t1 UNION SELECT id FROM t2) AS sub")
-	sel, ok := stmt.(*ast.SelectStmt)
-	if !ok {
-		t.Fatalf("expected SelectStmt, got %T", stmt)
-	}
-	if sel.FromSubquery == nil {
-		t.Fatal("expected FromSubquery, got nil")
-	}
-	if sel.TableAlias != "sub" {
-		t.Errorf("expected TableAlias %q, got %q", "sub", sel.TableAlias)
-	}
-	_, ok = sel.FromSubquery.(*ast.SetOpStmt)
-	if !ok {
-		t.Fatalf("expected inner SetOpStmt, got %T", sel.FromSubquery)
-	}
+	require.IsType(t, &ast.SelectStmt{}, stmt)
+	sel := stmt.(*ast.SelectStmt)
+	require.NotNil(t, sel.FromSubquery)
+	assert.Equal(t, "sub", sel.TableAlias)
+	require.IsType(t, &ast.SetOpStmt{}, sel.FromSubquery)
 }
 
 func TestParseFromSubqueryNoAlias(t *testing.T) {
 	l := lexer.New("SELECT * FROM (SELECT id FROM t1)")
 	p := New(l)
 	_, err := p.Parse()
-	if err == nil {
-		t.Fatal("expected error for FROM subquery without alias, got nil")
-	}
+	assert.Error(t, err)
 }
 
 func TestParseError(t *testing.T) {
@@ -2145,299 +1249,153 @@ func TestParseError(t *testing.T) {
 		l := lexer.New(input)
 		p := New(l)
 		_, err := p.Parse()
-		if err == nil {
-			t.Errorf("expected error for %q, got nil", input)
-		}
+		assert.Error(t, err, "expected error for %q", input)
 	}
 }
 
 func TestParseInsertSelect(t *testing.T) {
 	stmt := parse(t, "INSERT INTO t1 SELECT id, name FROM t2")
-	ins, ok := stmt.(*ast.InsertStmt)
-	if !ok {
-		t.Fatalf("expected InsertStmt, got %T", stmt)
-	}
-	if ins.TableName != "t1" {
-		t.Errorf("table name: expected %q, got %q", "t1", ins.TableName)
-	}
-	if ins.Rows != nil {
-		t.Errorf("expected Rows to be nil for INSERT SELECT")
-	}
-	if ins.Select == nil {
-		t.Fatalf("expected Select to be non-nil")
-	}
-	sel, ok := ins.Select.(*ast.SelectStmt)
-	if !ok {
-		t.Fatalf("expected SelectStmt, got %T", ins.Select)
-	}
-	if sel.TableName != "t2" {
-		t.Errorf("select table: expected %q, got %q", "t2", sel.TableName)
-	}
+	require.IsType(t, &ast.InsertStmt{}, stmt)
+	ins := stmt.(*ast.InsertStmt)
+	assert.Equal(t, "t1", ins.TableName)
+	assert.Nil(t, ins.Rows)
+	require.NotNil(t, ins.Select)
+	require.IsType(t, &ast.SelectStmt{}, ins.Select)
+	sel := ins.Select.(*ast.SelectStmt)
+	assert.Equal(t, "t2", sel.TableName)
 }
 
 func TestParseInsertSelectWithColumns(t *testing.T) {
 	stmt := parse(t, "INSERT INTO t1 (id) SELECT id FROM t2")
-	ins, ok := stmt.(*ast.InsertStmt)
-	if !ok {
-		t.Fatalf("expected InsertStmt, got %T", stmt)
-	}
-	if ins.TableName != "t1" {
-		t.Errorf("table name: expected %q, got %q", "t1", ins.TableName)
-	}
-	if len(ins.Columns) != 1 || ins.Columns[0] != "id" {
-		t.Errorf("expected columns [id], got %v", ins.Columns)
-	}
-	if ins.Select == nil {
-		t.Fatalf("expected Select to be non-nil")
-	}
+	require.IsType(t, &ast.InsertStmt{}, stmt)
+	ins := stmt.(*ast.InsertStmt)
+	assert.Equal(t, "t1", ins.TableName)
+	require.Len(t, ins.Columns, 1, "expected 1 column")
+	assert.Equal(t, "id", ins.Columns[0])
+	require.NotNil(t, ins.Select)
 }
 
 func TestParseInsertSelectUnion(t *testing.T) {
 	stmt := parse(t, "INSERT INTO t1 SELECT id FROM t2 UNION SELECT id FROM t3")
-	ins, ok := stmt.(*ast.InsertStmt)
-	if !ok {
-		t.Fatalf("expected InsertStmt, got %T", stmt)
-	}
-	if ins.TableName != "t1" {
-		t.Errorf("table name: expected %q, got %q", "t1", ins.TableName)
-	}
-	if ins.Select == nil {
-		t.Fatalf("expected Select to be non-nil")
-	}
-	_, ok = ins.Select.(*ast.SetOpStmt)
-	if !ok {
-		t.Fatalf("expected SetOpStmt for UNION, got %T", ins.Select)
-	}
+	require.IsType(t, &ast.InsertStmt{}, stmt)
+	ins := stmt.(*ast.InsertStmt)
+	assert.Equal(t, "t1", ins.TableName)
+	require.NotNil(t, ins.Select)
+	require.IsType(t, &ast.SetOpStmt{}, ins.Select)
 }
 
 func TestParseWindowRowNumber(t *testing.T) {
 	stmt := parse(t, "SELECT name, ROW_NUMBER() OVER (ORDER BY id) FROM t")
-	sel, ok := stmt.(*ast.SelectStmt)
-	if !ok {
-		t.Fatalf("expected SelectStmt, got %T", stmt)
-	}
-	if len(sel.Columns) != 2 {
-		t.Fatalf("expected 2 columns, got %d", len(sel.Columns))
-	}
-	win, ok := sel.Columns[1].(*ast.WindowExpr)
-	if !ok {
-		t.Fatalf("expected WindowExpr, got %T", sel.Columns[1])
-	}
-	if win.Name != "ROW_NUMBER" {
-		t.Errorf("window name: expected ROW_NUMBER, got %s", win.Name)
-	}
-	if len(win.PartitionBy) != 0 {
-		t.Errorf("expected no PARTITION BY, got %d", len(win.PartitionBy))
-	}
-	if len(win.OrderBy) != 1 {
-		t.Fatalf("expected 1 ORDER BY, got %d", len(win.OrderBy))
-	}
-	ident, ok := win.OrderBy[0].Expr.(*ast.IdentExpr)
-	if !ok {
-		t.Fatalf("expected IdentExpr in ORDER BY, got %T", win.OrderBy[0].Expr)
-	}
-	if ident.Name != "id" {
-		t.Errorf("ORDER BY column: expected id, got %s", ident.Name)
-	}
+	require.IsType(t, &ast.SelectStmt{}, stmt)
+	sel := stmt.(*ast.SelectStmt)
+	require.Len(t, sel.Columns, 2, "expected 2 columns")
+	require.IsType(t, &ast.WindowExpr{}, sel.Columns[1])
+	win := sel.Columns[1].(*ast.WindowExpr)
+	assert.Equal(t, "ROW_NUMBER", win.Name)
+	assert.Len(t, win.PartitionBy, 0)
+	require.Len(t, win.OrderBy, 1, "expected 1 ORDER BY clauses")
+	require.IsType(t, &ast.IdentExpr{}, win.OrderBy[0].Expr)
+	ident := win.OrderBy[0].Expr.(*ast.IdentExpr)
+	assert.Equal(t, "id", ident.Name)
 }
 
 func TestParseWindowWithPartitionBy(t *testing.T) {
 	stmt := parse(t, "SELECT RANK() OVER (PARTITION BY dept ORDER BY salary DESC) FROM emp")
-	sel, ok := stmt.(*ast.SelectStmt)
-	if !ok {
-		t.Fatalf("expected SelectStmt, got %T", stmt)
-	}
-	if len(sel.Columns) != 1 {
-		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
-	}
-	win, ok := sel.Columns[0].(*ast.WindowExpr)
-	if !ok {
-		t.Fatalf("expected WindowExpr, got %T", sel.Columns[0])
-	}
-	if win.Name != "RANK" {
-		t.Errorf("window name: expected RANK, got %s", win.Name)
-	}
-	if len(win.PartitionBy) != 1 {
-		t.Fatalf("expected 1 PARTITION BY, got %d", len(win.PartitionBy))
-	}
-	if len(win.OrderBy) != 1 {
-		t.Fatalf("expected 1 ORDER BY, got %d", len(win.OrderBy))
-	}
-	if !win.OrderBy[0].Desc {
-		t.Errorf("expected ORDER BY DESC")
-	}
+	require.IsType(t, &ast.SelectStmt{}, stmt)
+	sel := stmt.(*ast.SelectStmt)
+	require.Len(t, sel.Columns, 1, "expected 1 column")
+	require.IsType(t, &ast.WindowExpr{}, sel.Columns[0])
+	win := sel.Columns[0].(*ast.WindowExpr)
+	assert.Equal(t, "RANK", win.Name)
+	require.Len(t, win.PartitionBy, 1, "expected 1 PARTITION BY clauses")
+	require.Len(t, win.OrderBy, 1, "expected 1 ORDER BY clauses")
+	assert.True(t, win.OrderBy[0].Desc)
 }
 
 func TestParseWindowWithAlias(t *testing.T) {
 	stmt := parse(t, "SELECT ROW_NUMBER() OVER (ORDER BY id) AS rn FROM t")
-	sel, ok := stmt.(*ast.SelectStmt)
-	if !ok {
-		t.Fatalf("expected SelectStmt, got %T", stmt)
-	}
-	if len(sel.Columns) != 1 {
-		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
-	}
-	alias, ok := sel.Columns[0].(*ast.AliasExpr)
-	if !ok {
-		t.Fatalf("expected AliasExpr, got %T", sel.Columns[0])
-	}
-	if alias.Alias != "rn" {
-		t.Errorf("alias: expected rn, got %s", alias.Alias)
-	}
-	win, ok := alias.Expr.(*ast.WindowExpr)
-	if !ok {
-		t.Fatalf("expected WindowExpr inside alias, got %T", alias.Expr)
-	}
-	if win.Name != "ROW_NUMBER" {
-		t.Errorf("window name: expected ROW_NUMBER, got %s", win.Name)
-	}
+	require.IsType(t, &ast.SelectStmt{}, stmt)
+	sel := stmt.(*ast.SelectStmt)
+	require.Len(t, sel.Columns, 1, "expected 1 column")
+	require.IsType(t, &ast.AliasExpr{}, sel.Columns[0])
+	alias := sel.Columns[0].(*ast.AliasExpr)
+	assert.Equal(t, "rn", alias.Alias)
+	require.IsType(t, &ast.WindowExpr{}, alias.Expr)
+	win := alias.Expr.(*ast.WindowExpr)
+	assert.Equal(t, "ROW_NUMBER", win.Name)
 }
 
 func TestParseWindowSumOver(t *testing.T) {
 	stmt := parse(t, "SELECT name, SUM(salary) OVER (PARTITION BY dept) FROM emp")
-	sel, ok := stmt.(*ast.SelectStmt)
-	if !ok {
-		t.Fatalf("expected SelectStmt, got %T", stmt)
-	}
-	if len(sel.Columns) != 2 {
-		t.Fatalf("expected 2 columns, got %d", len(sel.Columns))
-	}
-	win, ok := sel.Columns[1].(*ast.WindowExpr)
-	if !ok {
-		t.Fatalf("expected WindowExpr, got %T", sel.Columns[1])
-	}
-	if win.Name != "SUM" {
-		t.Errorf("window name: expected SUM, got %s", win.Name)
-	}
-	if len(win.Args) != 1 {
-		t.Fatalf("expected 1 arg, got %d", len(win.Args))
-	}
-	ident, ok := win.Args[0].(*ast.IdentExpr)
-	if !ok {
-		t.Fatalf("expected IdentExpr arg, got %T", win.Args[0])
-	}
-	if ident.Name != "salary" {
-		t.Errorf("arg name: expected salary, got %s", ident.Name)
-	}
-	if len(win.PartitionBy) != 1 {
-		t.Fatalf("expected 1 PARTITION BY, got %d", len(win.PartitionBy))
-	}
-	if len(win.OrderBy) != 0 {
-		t.Errorf("expected no ORDER BY, got %d", len(win.OrderBy))
-	}
+	require.IsType(t, &ast.SelectStmt{}, stmt)
+	sel := stmt.(*ast.SelectStmt)
+	require.Len(t, sel.Columns, 2, "expected 2 columns")
+	require.IsType(t, &ast.WindowExpr{}, sel.Columns[1])
+	win := sel.Columns[1].(*ast.WindowExpr)
+	assert.Equal(t, "SUM", win.Name)
+	require.Len(t, win.Args, 1, "expected 1 arg")
+	require.IsType(t, &ast.IdentExpr{}, win.Args[0])
+	ident := win.Args[0].(*ast.IdentExpr)
+	assert.Equal(t, "salary", ident.Name)
+	require.Len(t, win.PartitionBy, 1, "expected 1 PARTITION BY clauses")
+	assert.Len(t, win.OrderBy, 0)
 }
 
 func TestParseWindowCountStarOver(t *testing.T) {
 	stmt := parse(t, "SELECT COUNT(*) OVER () FROM t")
-	sel, ok := stmt.(*ast.SelectStmt)
-	if !ok {
-		t.Fatalf("expected SelectStmt, got %T", stmt)
-	}
-	if len(sel.Columns) != 1 {
-		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
-	}
-	win, ok := sel.Columns[0].(*ast.WindowExpr)
-	if !ok {
-		t.Fatalf("expected WindowExpr, got %T", sel.Columns[0])
-	}
-	if win.Name != "COUNT" {
-		t.Errorf("window name: expected COUNT, got %s", win.Name)
-	}
-	if len(win.Args) != 1 {
-		t.Fatalf("expected 1 arg, got %d", len(win.Args))
-	}
-	if _, ok := win.Args[0].(*ast.StarExpr); !ok {
-		t.Fatalf("expected StarExpr arg, got %T", win.Args[0])
-	}
+	require.IsType(t, &ast.SelectStmt{}, stmt)
+	sel := stmt.(*ast.SelectStmt)
+	require.Len(t, sel.Columns, 1, "expected 1 column")
+	require.IsType(t, &ast.WindowExpr{}, sel.Columns[0])
+	win := sel.Columns[0].(*ast.WindowExpr)
+	assert.Equal(t, "COUNT", win.Name)
+	require.Len(t, win.Args, 1, "expected 1 arg")
+	require.IsType(t, &ast.StarExpr{}, win.Args[0])
 }
 
 func TestParseWindowAvgOver(t *testing.T) {
 	stmt := parse(t, "SELECT AVG(score) OVER (ORDER BY id) AS avg_score FROM t")
-	sel, ok := stmt.(*ast.SelectStmt)
-	if !ok {
-		t.Fatalf("expected SelectStmt, got %T", stmt)
-	}
-	if len(sel.Columns) != 1 {
-		t.Fatalf("expected 1 column, got %d", len(sel.Columns))
-	}
-	alias, ok := sel.Columns[0].(*ast.AliasExpr)
-	if !ok {
-		t.Fatalf("expected AliasExpr, got %T", sel.Columns[0])
-	}
-	if alias.Alias != "avg_score" {
-		t.Errorf("alias: expected avg_score, got %s", alias.Alias)
-	}
-	win, ok := alias.Expr.(*ast.WindowExpr)
-	if !ok {
-		t.Fatalf("expected WindowExpr, got %T", alias.Expr)
-	}
-	if win.Name != "AVG" {
-		t.Errorf("window name: expected AVG, got %s", win.Name)
-	}
-	if len(win.Args) != 1 {
-		t.Fatalf("expected 1 arg, got %d", len(win.Args))
-	}
-	if len(win.OrderBy) != 1 {
-		t.Fatalf("expected 1 ORDER BY, got %d", len(win.OrderBy))
-	}
+	require.IsType(t, &ast.SelectStmt{}, stmt)
+	sel := stmt.(*ast.SelectStmt)
+	require.Len(t, sel.Columns, 1, "expected 1 column")
+	require.IsType(t, &ast.AliasExpr{}, sel.Columns[0])
+	alias := sel.Columns[0].(*ast.AliasExpr)
+	assert.Equal(t, "avg_score", alias.Alias)
+	require.IsType(t, &ast.WindowExpr{}, alias.Expr)
+	win := alias.Expr.(*ast.WindowExpr)
+	assert.Equal(t, "AVG", win.Name)
+	require.Len(t, win.Args, 1, "expected 1 arg")
+	require.Len(t, win.OrderBy, 1, "expected 1 ORDER BY clauses")
 }
 
 func TestParseNamedWindow(t *testing.T) {
 	stmt := parse(t, "SELECT name, SUM(salary) OVER w FROM emp WINDOW w AS (PARTITION BY dept ORDER BY id)")
-	sel, ok := stmt.(*ast.SelectStmt)
-	if !ok {
-		t.Fatalf("expected SelectStmt, got %T", stmt)
-	}
-	if len(sel.Windows) != 1 {
-		t.Fatalf("expected 1 named window, got %d", len(sel.Windows))
-	}
+	require.IsType(t, &ast.SelectStmt{}, stmt)
+	sel := stmt.(*ast.SelectStmt)
+	require.Len(t, sel.Windows, 1, "expected 1 window definitions")
 	w := sel.Windows[0]
-	if w.Name != "w" {
-		t.Errorf("window name: expected %q, got %q", "w", w.Name)
-	}
-	if len(w.PartitionBy) != 1 {
-		t.Errorf("expected 1 PARTITION BY expr, got %d", len(w.PartitionBy))
-	}
-	if len(w.OrderBy) != 1 {
-		t.Errorf("expected 1 ORDER BY clause, got %d", len(w.OrderBy))
-	}
+	assert.Equal(t, "w", w.Name)
+	assert.Len(t, w.PartitionBy, 1)
+	assert.Len(t, w.OrderBy, 1)
 }
 
 func TestParseNamedWindowMultiple(t *testing.T) {
 	stmt := parse(t, "SELECT name, SUM(salary) OVER w1, RANK() OVER w2 FROM emp WINDOW w1 AS (PARTITION BY dept), w2 AS (PARTITION BY dept ORDER BY salary DESC)")
-	sel, ok := stmt.(*ast.SelectStmt)
-	if !ok {
-		t.Fatalf("expected SelectStmt, got %T", stmt)
-	}
-	if len(sel.Windows) != 2 {
-		t.Fatalf("expected 2 named windows, got %d", len(sel.Windows))
-	}
-	if sel.Windows[0].Name != "w1" {
-		t.Errorf("first window name: expected %q, got %q", "w1", sel.Windows[0].Name)
-	}
-	if len(sel.Windows[0].PartitionBy) != 1 {
-		t.Errorf("w1: expected 1 PARTITION BY, got %d", len(sel.Windows[0].PartitionBy))
-	}
-	if len(sel.Windows[0].OrderBy) != 0 {
-		t.Errorf("w1: expected 0 ORDER BY, got %d", len(sel.Windows[0].OrderBy))
-	}
-	if sel.Windows[1].Name != "w2" {
-		t.Errorf("second window name: expected %q, got %q", "w2", sel.Windows[1].Name)
-	}
-	if len(sel.Windows[1].OrderBy) != 1 {
-		t.Errorf("w2: expected 1 ORDER BY, got %d", len(sel.Windows[1].OrderBy))
-	}
-	if !sel.Windows[1].OrderBy[0].Desc {
-		t.Errorf("w2: expected DESC order, got ASC")
-	}
+	require.IsType(t, &ast.SelectStmt{}, stmt)
+	sel := stmt.(*ast.SelectStmt)
+	require.Len(t, sel.Windows, 2, "expected 2 window definitions")
+	assert.Equal(t, "w1", sel.Windows[0].Name)
+	assert.Len(t, sel.Windows[0].PartitionBy, 1)
+	assert.Len(t, sel.Windows[0].OrderBy, 0)
+	assert.Equal(t, "w2", sel.Windows[1].Name)
+	assert.Len(t, sel.Windows[1].OrderBy, 1)
+	assert.True(t, sel.Windows[1].OrderBy[0].Desc)
 }
 
 func TestParseOverWindowName(t *testing.T) {
 	stmt := parse(t, "SELECT ROW_NUMBER() OVER w, SUM(salary) OVER w FROM emp WINDOW w AS (ORDER BY id)")
-	sel, ok := stmt.(*ast.SelectStmt)
-	if !ok {
-		t.Fatalf("expected SelectStmt, got %T", stmt)
-	}
+	require.IsType(t, &ast.SelectStmt{}, stmt)
+	sel := stmt.(*ast.SelectStmt)
 	// Check that both columns reference window name "w"
 	for i, col := range sel.Columns {
 		var winExpr *ast.WindowExpr
@@ -2447,11 +1405,7 @@ func TestParseOverWindowName(t *testing.T) {
 		case *ast.AliasExpr:
 			winExpr, _ = e.Expr.(*ast.WindowExpr)
 		}
-		if winExpr == nil {
-			t.Fatalf("column %d: expected WindowExpr, got %T", i, col)
-		}
-		if winExpr.WindowName != "w" {
-			t.Errorf("column %d: expected WindowName %q, got %q", i, "w", winExpr.WindowName)
-		}
+		require.NotNil(t, winExpr, "column %d: expected WindowExpr", i)
+		assert.Equal(t, "w", winExpr.WindowName, "column %d", i)
 	}
 }

@@ -1,7 +1,11 @@
 package engine
 
 import (
+	"fmt"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestInnerJoinBasic(t *testing.T) {
@@ -14,15 +18,11 @@ func TestInnerJoinBasic(t *testing.T) {
 	run(t, exec, "INSERT INTO orders VALUES (20, 2, 'phone')")
 
 	result := run(t, exec, "SELECT users.name, orders.product FROM users INNER JOIN orders ON users.id = orders.user_id")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "alice" || result.Rows[0][1] != "laptop" {
-		t.Errorf("row 0: expected [alice laptop], got %v", result.Rows[0])
-	}
-	if result.Rows[1][0] != "bob" || result.Rows[1][1] != "phone" {
-		t.Errorf("row 1: expected [bob phone], got %v", result.Rows[1])
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
+	assert.Equal(t, "alice", result.Rows[0][0])
+	assert.Equal(t, "laptop", result.Rows[0][1])
+	assert.Equal(t, "bob", result.Rows[1][0])
+	assert.Equal(t, "phone", result.Rows[1][1])
 }
 
 func TestInnerJoinNoMatch(t *testing.T) {
@@ -33,9 +33,7 @@ func TestInnerJoinNoMatch(t *testing.T) {
 	run(t, exec, "INSERT INTO orders VALUES (10, 99, 'laptop')")
 
 	result := run(t, exec, "SELECT users.name, orders.product FROM users JOIN orders ON users.id = orders.user_id")
-	if len(result.Rows) != 0 {
-		t.Fatalf("expected 0 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 0, "expected 0 rows")
 }
 
 func TestInnerJoinWithWhere(t *testing.T) {
@@ -48,12 +46,9 @@ func TestInnerJoinWithWhere(t *testing.T) {
 	run(t, exec, "INSERT INTO orders VALUES (20, 2, 'phone')")
 
 	result := run(t, exec, "SELECT users.name, orders.product FROM users JOIN orders ON users.id = orders.user_id WHERE orders.product = 'laptop'")
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "alice" || result.Rows[0][1] != "laptop" {
-		t.Errorf("expected [alice laptop], got %v", result.Rows[0])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row")
+	assert.Equal(t, "alice", result.Rows[0][0])
+	assert.Equal(t, "laptop", result.Rows[0][1])
 }
 
 func TestInnerJoinWithAlias(t *testing.T) {
@@ -64,12 +59,9 @@ func TestInnerJoinWithAlias(t *testing.T) {
 	run(t, exec, "INSERT INTO orders VALUES (10, 1, 'laptop')")
 
 	result := run(t, exec, "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id")
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "alice" || result.Rows[0][1] != "laptop" {
-		t.Errorf("expected [alice laptop], got %v", result.Rows[0])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row")
+	assert.Equal(t, "alice", result.Rows[0][0])
+	assert.Equal(t, "laptop", result.Rows[0][1])
 }
 
 func TestInnerJoinQualifiedColumns(t *testing.T) {
@@ -80,15 +72,10 @@ func TestInnerJoinQualifiedColumns(t *testing.T) {
 	run(t, exec, "INSERT INTO t2 VALUES (10, 1, 'x')")
 
 	result := run(t, exec, "SELECT t1.val, t2.val FROM t1 JOIN t2 ON t1.id = t2.t1_id")
-	if len(result.Columns) != 2 {
-		t.Fatalf("expected 2 columns, got %d", len(result.Columns))
-	}
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "a" || result.Rows[0][1] != "x" {
-		t.Errorf("expected [a x], got %v", result.Rows[0])
-	}
+	require.Len(t, result.Columns, 2, "expected 2 columns")
+	require.Len(t, result.Rows, 1, "expected 1 row")
+	assert.Equal(t, "a", result.Rows[0][0])
+	assert.Equal(t, "x", result.Rows[0][1])
 }
 
 func TestInnerJoinStar(t *testing.T) {
@@ -99,25 +86,13 @@ func TestInnerJoinStar(t *testing.T) {
 	run(t, exec, "INSERT INTO orders VALUES (10, 1, 'laptop')")
 
 	result := run(t, exec, "SELECT * FROM users JOIN orders ON users.id = orders.user_id")
-	if len(result.Columns) != 5 {
-		t.Fatalf("expected 5 columns, got %d", len(result.Columns))
-	}
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Columns, 5, "expected 5 columns")
+	require.Len(t, result.Rows, 1, "expected 1 row")
 	// users.id, users.name, orders.id, orders.user_id, orders.product
-	if result.Rows[0][0] != int64(1) {
-		t.Errorf("expected users.id=1, got %v", result.Rows[0][0])
-	}
-	if result.Rows[0][1] != "alice" {
-		t.Errorf("expected users.name=alice, got %v", result.Rows[0][1])
-	}
-	if result.Rows[0][2] != int64(10) {
-		t.Errorf("expected orders.id=10, got %v", result.Rows[0][2])
-	}
-	if result.Rows[0][4] != "laptop" {
-		t.Errorf("expected orders.product=laptop, got %v", result.Rows[0][4])
-	}
+	assert.Equal(t, int64(1), result.Rows[0][0])
+	assert.Equal(t, "alice", result.Rows[0][1])
+	assert.Equal(t, int64(10), result.Rows[0][2])
+	assert.Equal(t, "laptop", result.Rows[0][4])
 }
 
 func TestInnerJoinMultiple(t *testing.T) {
@@ -130,12 +105,10 @@ func TestInnerJoinMultiple(t *testing.T) {
 	run(t, exec, "INSERT INTO t3 VALUES (100, 10, 'c')")
 
 	result := run(t, exec, "SELECT t1.val, t2.val, t3.val FROM t1 JOIN t2 ON t1.id = t2.t1_id JOIN t3 ON t2.id = t3.t2_id")
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "a" || result.Rows[0][1] != "b" || result.Rows[0][2] != "c" {
-		t.Errorf("expected [a b c], got %v", result.Rows[0])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row")
+	assert.Equal(t, "a", result.Rows[0][0])
+	assert.Equal(t, "b", result.Rows[0][1])
+	assert.Equal(t, "c", result.Rows[0][2])
 }
 
 func TestInnerJoinOrderBy(t *testing.T) {
@@ -148,15 +121,9 @@ func TestInnerJoinOrderBy(t *testing.T) {
 	run(t, exec, "INSERT INTO orders VALUES (20, 2, 'phone')")
 
 	result := run(t, exec, "SELECT users.name, orders.product FROM users JOIN orders ON users.id = orders.user_id ORDER BY users.name DESC")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "bob" {
-		t.Errorf("expected first row name=bob, got %v", result.Rows[0][0])
-	}
-	if result.Rows[1][0] != "alice" {
-		t.Errorf("expected second row name=alice, got %v", result.Rows[1][0])
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
+	assert.Equal(t, "bob", result.Rows[0][0])
+	assert.Equal(t, "alice", result.Rows[1][0])
 }
 
 func TestInnerJoinAmbiguousColumn(t *testing.T) {
@@ -180,18 +147,13 @@ func TestLeftJoinBasic(t *testing.T) {
 	run(t, exec, "INSERT INTO orders VALUES (20, 2, 'phone')")
 
 	result := run(t, exec, "SELECT users.name, orders.product FROM users LEFT JOIN orders ON users.id = orders.user_id ORDER BY users.id")
-	if len(result.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "alice" || result.Rows[0][1] != "laptop" {
-		t.Errorf("row 0: expected [alice laptop], got %v", result.Rows[0])
-	}
-	if result.Rows[1][0] != "bob" || result.Rows[1][1] != "phone" {
-		t.Errorf("row 1: expected [bob phone], got %v", result.Rows[1])
-	}
-	if result.Rows[2][0] != "charlie" || result.Rows[2][1] != nil {
-		t.Errorf("row 2: expected [charlie <nil>], got %v", result.Rows[2])
-	}
+	require.Len(t, result.Rows, 3, "expected 3 rows")
+	assert.Equal(t, "alice", result.Rows[0][0])
+	assert.Equal(t, "laptop", result.Rows[0][1])
+	assert.Equal(t, "bob", result.Rows[1][0])
+	assert.Equal(t, "phone", result.Rows[1][1])
+	assert.Equal(t, "charlie", result.Rows[2][0])
+	assert.Nil(t, result.Rows[2][1])
 }
 
 func TestLeftJoinNoMatch(t *testing.T) {
@@ -202,15 +164,11 @@ func TestLeftJoinNoMatch(t *testing.T) {
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
 
 	result := run(t, exec, "SELECT users.name, orders.product FROM users LEFT JOIN orders ON users.id = orders.user_id ORDER BY users.id")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "alice" || result.Rows[0][1] != nil {
-		t.Errorf("row 0: expected [alice <nil>], got %v", result.Rows[0])
-	}
-	if result.Rows[1][0] != "bob" || result.Rows[1][1] != nil {
-		t.Errorf("row 1: expected [bob <nil>], got %v", result.Rows[1])
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
+	assert.Equal(t, "alice", result.Rows[0][0])
+	assert.Nil(t, result.Rows[0][1])
+	assert.Equal(t, "bob", result.Rows[1][0])
+	assert.Nil(t, result.Rows[1][1])
 }
 
 func TestLeftJoinAllMatch(t *testing.T) {
@@ -223,15 +181,11 @@ func TestLeftJoinAllMatch(t *testing.T) {
 	run(t, exec, "INSERT INTO orders VALUES (20, 2, 'phone')")
 
 	result := run(t, exec, "SELECT users.name, orders.product FROM users LEFT JOIN orders ON users.id = orders.user_id ORDER BY users.id")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "alice" || result.Rows[0][1] != "laptop" {
-		t.Errorf("row 0: expected [alice laptop], got %v", result.Rows[0])
-	}
-	if result.Rows[1][0] != "bob" || result.Rows[1][1] != "phone" {
-		t.Errorf("row 1: expected [bob phone], got %v", result.Rows[1])
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
+	assert.Equal(t, "alice", result.Rows[0][0])
+	assert.Equal(t, "laptop", result.Rows[0][1])
+	assert.Equal(t, "bob", result.Rows[1][0])
+	assert.Equal(t, "phone", result.Rows[1][1])
 }
 
 func TestLeftJoinWithWhereIsNull(t *testing.T) {
@@ -244,15 +198,9 @@ func TestLeftJoinWithWhereIsNull(t *testing.T) {
 	run(t, exec, "INSERT INTO orders VALUES (10, 1, 'laptop')")
 
 	result := run(t, exec, "SELECT users.name FROM users LEFT JOIN orders ON users.id = orders.user_id WHERE orders.id IS NULL ORDER BY users.id")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "bob" {
-		t.Errorf("row 0: expected bob, got %v", result.Rows[0][0])
-	}
-	if result.Rows[1][0] != "charlie" {
-		t.Errorf("row 1: expected charlie, got %v", result.Rows[1][0])
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
+	assert.Equal(t, "bob", result.Rows[0][0])
+	assert.Equal(t, "charlie", result.Rows[1][0])
 }
 
 func TestLeftJoinMultiple(t *testing.T) {
@@ -266,15 +214,13 @@ func TestLeftJoinMultiple(t *testing.T) {
 	// No t3 rows match
 
 	result := run(t, exec, "SELECT t1.val, t2.val, t3.val FROM t1 LEFT JOIN t2 ON t1.id = t2.t1_id LEFT JOIN t3 ON t2.id = t3.t2_id ORDER BY t1.id")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "a" || result.Rows[0][1] != "x" || result.Rows[0][2] != nil {
-		t.Errorf("row 0: expected [a x <nil>], got %v", result.Rows[0])
-	}
-	if result.Rows[1][0] != "b" || result.Rows[1][1] != nil || result.Rows[1][2] != nil {
-		t.Errorf("row 1: expected [b <nil> <nil>], got %v", result.Rows[1])
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
+	assert.Equal(t, "a", result.Rows[0][0])
+	assert.Equal(t, "x", result.Rows[0][1])
+	assert.Nil(t, result.Rows[0][2])
+	assert.Equal(t, "b", result.Rows[1][0])
+	assert.Nil(t, result.Rows[1][1])
+	assert.Nil(t, result.Rows[1][2])
 }
 
 func TestMixedInnerAndLeftJoin(t *testing.T) {
@@ -290,15 +236,13 @@ func TestMixedInnerAndLeftJoin(t *testing.T) {
 	// order 20 has no review
 
 	result := run(t, exec, "SELECT users.name, orders.product, reviews.rating FROM users INNER JOIN orders ON users.id = orders.user_id LEFT JOIN reviews ON orders.id = reviews.order_id ORDER BY users.id")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "alice" || result.Rows[0][1] != "laptop" || result.Rows[0][2] != int64(5) {
-		t.Errorf("row 0: expected [alice laptop 5], got %v", result.Rows[0])
-	}
-	if result.Rows[1][0] != "bob" || result.Rows[1][1] != "phone" || result.Rows[1][2] != nil {
-		t.Errorf("row 1: expected [bob phone <nil>], got %v", result.Rows[1])
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
+	assert.Equal(t, "alice", result.Rows[0][0])
+	assert.Equal(t, "laptop", result.Rows[0][1])
+	assert.Equal(t, int64(5), result.Rows[0][2])
+	assert.Equal(t, "bob", result.Rows[1][0])
+	assert.Equal(t, "phone", result.Rows[1][1])
+	assert.Nil(t, result.Rows[1][2])
 }
 
 func TestLeftJoinWithIndex(t *testing.T) {
@@ -311,15 +255,11 @@ func TestLeftJoinWithIndex(t *testing.T) {
 	run(t, exec, "INSERT INTO orders VALUES (10, 1, 'laptop')")
 
 	result := run(t, exec, "SELECT users.name, orders.product FROM users LEFT JOIN orders ON users.id = orders.user_id ORDER BY users.id")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "alice" || result.Rows[0][1] != "laptop" {
-		t.Errorf("row 0: expected [alice laptop], got %v", result.Rows[0])
-	}
-	if result.Rows[1][0] != "bob" || result.Rows[1][1] != nil {
-		t.Errorf("row 1: expected [bob <nil>], got %v", result.Rows[1])
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
+	assert.Equal(t, "alice", result.Rows[0][0])
+	assert.Equal(t, "laptop", result.Rows[0][1])
+	assert.Equal(t, "bob", result.Rows[1][0])
+	assert.Nil(t, result.Rows[1][1])
 }
 
 func TestLeftJoinWithAlias(t *testing.T) {
@@ -331,15 +271,11 @@ func TestLeftJoinWithAlias(t *testing.T) {
 	run(t, exec, "INSERT INTO orders VALUES (10, 1, 'laptop')")
 
 	result := run(t, exec, "SELECT u.name, o.product FROM users u LEFT JOIN orders o ON u.id = o.user_id ORDER BY u.id")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "alice" || result.Rows[0][1] != "laptop" {
-		t.Errorf("row 0: expected [alice laptop], got %v", result.Rows[0])
-	}
-	if result.Rows[1][0] != "bob" || result.Rows[1][1] != nil {
-		t.Errorf("row 1: expected [bob <nil>], got %v", result.Rows[1])
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
+	assert.Equal(t, "alice", result.Rows[0][0])
+	assert.Equal(t, "laptop", result.Rows[0][1])
+	assert.Equal(t, "bob", result.Rows[1][0])
+	assert.Nil(t, result.Rows[1][1])
 }
 
 func TestRightJoinBasic(t *testing.T) {
@@ -352,18 +288,13 @@ func TestRightJoinBasic(t *testing.T) {
 	run(t, exec, "INSERT INTO orders VALUES (30, 3, 'tablet')")
 
 	result := run(t, exec, "SELECT users.name, orders.product FROM users RIGHT JOIN orders ON users.id = orders.user_id ORDER BY orders.id")
-	if len(result.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "alice" || result.Rows[0][1] != "laptop" {
-		t.Errorf("row 0: expected [alice laptop], got %v", result.Rows[0])
-	}
-	if result.Rows[1][0] != nil || result.Rows[1][1] != "phone" {
-		t.Errorf("row 1: expected [<nil> phone], got %v", result.Rows[1])
-	}
-	if result.Rows[2][0] != nil || result.Rows[2][1] != "tablet" {
-		t.Errorf("row 2: expected [<nil> tablet], got %v", result.Rows[2])
-	}
+	require.Len(t, result.Rows, 3, "expected 3 rows")
+	assert.Equal(t, "alice", result.Rows[0][0])
+	assert.Equal(t, "laptop", result.Rows[0][1])
+	assert.Nil(t, result.Rows[1][0])
+	assert.Equal(t, "phone", result.Rows[1][1])
+	assert.Nil(t, result.Rows[2][0])
+	assert.Equal(t, "tablet", result.Rows[2][1])
 }
 
 func TestRightJoinNoMatch(t *testing.T) {
@@ -374,15 +305,11 @@ func TestRightJoinNoMatch(t *testing.T) {
 	run(t, exec, "INSERT INTO orders VALUES (20, 2, 'phone')")
 
 	result := run(t, exec, "SELECT users.name, orders.product FROM users RIGHT JOIN orders ON users.id = orders.user_id ORDER BY orders.id")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != nil || result.Rows[0][1] != "laptop" {
-		t.Errorf("row 0: expected [<nil> laptop], got %v", result.Rows[0])
-	}
-	if result.Rows[1][0] != nil || result.Rows[1][1] != "phone" {
-		t.Errorf("row 1: expected [<nil> phone], got %v", result.Rows[1])
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
+	assert.Nil(t, result.Rows[0][0])
+	assert.Equal(t, "laptop", result.Rows[0][1])
+	assert.Nil(t, result.Rows[1][0])
+	assert.Equal(t, "phone", result.Rows[1][1])
 }
 
 func TestRightJoinAllMatch(t *testing.T) {
@@ -395,15 +322,11 @@ func TestRightJoinAllMatch(t *testing.T) {
 	run(t, exec, "INSERT INTO orders VALUES (20, 2, 'phone')")
 
 	result := run(t, exec, "SELECT users.name, orders.product FROM users RIGHT JOIN orders ON users.id = orders.user_id ORDER BY orders.id")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "alice" || result.Rows[0][1] != "laptop" {
-		t.Errorf("row 0: expected [alice laptop], got %v", result.Rows[0])
-	}
-	if result.Rows[1][0] != "bob" || result.Rows[1][1] != "phone" {
-		t.Errorf("row 1: expected [bob phone], got %v", result.Rows[1])
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
+	assert.Equal(t, "alice", result.Rows[0][0])
+	assert.Equal(t, "laptop", result.Rows[0][1])
+	assert.Equal(t, "bob", result.Rows[1][0])
+	assert.Equal(t, "phone", result.Rows[1][1])
 }
 
 func TestRightJoinWithWhereIsNull(t *testing.T) {
@@ -416,15 +339,9 @@ func TestRightJoinWithWhereIsNull(t *testing.T) {
 	run(t, exec, "INSERT INTO orders VALUES (30, 3, 'tablet')")
 
 	result := run(t, exec, "SELECT orders.product FROM users RIGHT JOIN orders ON users.id = orders.user_id WHERE users.id IS NULL ORDER BY orders.id")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "phone" {
-		t.Errorf("row 0: expected phone, got %v", result.Rows[0][0])
-	}
-	if result.Rows[1][0] != "tablet" {
-		t.Errorf("row 1: expected tablet, got %v", result.Rows[1][0])
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
+	assert.Equal(t, "phone", result.Rows[0][0])
+	assert.Equal(t, "tablet", result.Rows[1][0])
 }
 
 func TestCrossJoinBasic(t *testing.T) {
@@ -438,17 +355,14 @@ func TestCrossJoinBasic(t *testing.T) {
 	run(t, exec, "INSERT INTO sizes VALUES ('L')")
 
 	result := run(t, exec, "SELECT colors.name, sizes.name FROM colors CROSS JOIN sizes ORDER BY colors.name, sizes.name")
-	if len(result.Rows) != 6 {
-		t.Fatalf("expected 6 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 6, "expected 6 rows")
 	expected := [][2]string{
 		{"blue", "L"}, {"blue", "M"}, {"blue", "S"},
 		{"red", "L"}, {"red", "M"}, {"red", "S"},
 	}
 	for i, exp := range expected {
-		if result.Rows[i][0] != exp[0] || result.Rows[i][1] != exp[1] {
-			t.Errorf("row %d: expected [%s %s], got %v", i, exp[0], exp[1], result.Rows[i])
-		}
+		assert.Equal(t, exp[0], result.Rows[i][0], fmt.Sprintf("row %d", i))
+		assert.Equal(t, exp[1], result.Rows[i][1], fmt.Sprintf("row %d", i))
 	}
 }
 
@@ -462,15 +376,11 @@ func TestCrossJoinWithWhere(t *testing.T) {
 	run(t, exec, "INSERT INTO t2 VALUES (20, 2, 'y')")
 
 	result := run(t, exec, "SELECT t1.val, t2.val FROM t1 CROSS JOIN t2 WHERE t1.id = t2.t1_id ORDER BY t1.id, t2.id")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "a" || result.Rows[0][1] != "x" {
-		t.Errorf("row 0: expected [a x], got %v", result.Rows[0])
-	}
-	if result.Rows[1][0] != "b" || result.Rows[1][1] != "y" {
-		t.Errorf("row 1: expected [b y], got %v", result.Rows[1])
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
+	assert.Equal(t, "a", result.Rows[0][0])
+	assert.Equal(t, "x", result.Rows[0][1])
+	assert.Equal(t, "b", result.Rows[1][0])
+	assert.Equal(t, "y", result.Rows[1][1])
 }
 
 func TestCrossJoinEmpty(t *testing.T) {
@@ -480,9 +390,7 @@ func TestCrossJoinEmpty(t *testing.T) {
 	run(t, exec, "INSERT INTO t1 VALUES (1)")
 
 	result := run(t, exec, "SELECT * FROM t1 CROSS JOIN t2")
-	if len(result.Rows) != 0 {
-		t.Fatalf("expected 0 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 0, "expected 0 rows")
 }
 
 func TestTableAlias(t *testing.T) {
@@ -491,10 +399,6 @@ func TestTableAlias(t *testing.T) {
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 
 	result := run(t, exec, "SELECT u.name FROM users AS u")
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "alice" {
-		t.Errorf("expected alice, got %v", result.Rows[0][0])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row")
+	assert.Equal(t, "alice", result.Rows[0][0])
 }

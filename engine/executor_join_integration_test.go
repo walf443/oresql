@@ -342,6 +342,91 @@ func TestLeftJoinWithAlias(t *testing.T) {
 	}
 }
 
+func TestRightJoinBasic(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "CREATE TABLE orders (id INT, user_id INT, product TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO orders VALUES (10, 1, 'laptop')")
+	run(t, exec, "INSERT INTO orders VALUES (20, 2, 'phone')")
+	run(t, exec, "INSERT INTO orders VALUES (30, 3, 'tablet')")
+
+	result := run(t, exec, "SELECT users.name, orders.product FROM users RIGHT JOIN orders ON users.id = orders.user_id ORDER BY orders.id")
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != "alice" || result.Rows[0][1] != "laptop" {
+		t.Errorf("row 0: expected [alice laptop], got %v", result.Rows[0])
+	}
+	if result.Rows[1][0] != nil || result.Rows[1][1] != "phone" {
+		t.Errorf("row 1: expected [<nil> phone], got %v", result.Rows[1])
+	}
+	if result.Rows[2][0] != nil || result.Rows[2][1] != "tablet" {
+		t.Errorf("row 2: expected [<nil> tablet], got %v", result.Rows[2])
+	}
+}
+
+func TestRightJoinNoMatch(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "CREATE TABLE orders (id INT, user_id INT, product TEXT)")
+	run(t, exec, "INSERT INTO orders VALUES (10, 1, 'laptop')")
+	run(t, exec, "INSERT INTO orders VALUES (20, 2, 'phone')")
+
+	result := run(t, exec, "SELECT users.name, orders.product FROM users RIGHT JOIN orders ON users.id = orders.user_id ORDER BY orders.id")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != nil || result.Rows[0][1] != "laptop" {
+		t.Errorf("row 0: expected [<nil> laptop], got %v", result.Rows[0])
+	}
+	if result.Rows[1][0] != nil || result.Rows[1][1] != "phone" {
+		t.Errorf("row 1: expected [<nil> phone], got %v", result.Rows[1])
+	}
+}
+
+func TestRightJoinAllMatch(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "CREATE TABLE orders (id INT, user_id INT, product TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO orders VALUES (10, 1, 'laptop')")
+	run(t, exec, "INSERT INTO orders VALUES (20, 2, 'phone')")
+
+	result := run(t, exec, "SELECT users.name, orders.product FROM users RIGHT JOIN orders ON users.id = orders.user_id ORDER BY orders.id")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != "alice" || result.Rows[0][1] != "laptop" {
+		t.Errorf("row 0: expected [alice laptop], got %v", result.Rows[0])
+	}
+	if result.Rows[1][0] != "bob" || result.Rows[1][1] != "phone" {
+		t.Errorf("row 1: expected [bob phone], got %v", result.Rows[1])
+	}
+}
+
+func TestRightJoinWithWhereIsNull(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "CREATE TABLE orders (id INT, user_id INT, product TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO orders VALUES (10, 1, 'laptop')")
+	run(t, exec, "INSERT INTO orders VALUES (20, 2, 'phone')")
+	run(t, exec, "INSERT INTO orders VALUES (30, 3, 'tablet')")
+
+	result := run(t, exec, "SELECT orders.product FROM users RIGHT JOIN orders ON users.id = orders.user_id WHERE users.id IS NULL ORDER BY orders.id")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != "phone" {
+		t.Errorf("row 0: expected phone, got %v", result.Rows[0][0])
+	}
+	if result.Rows[1][0] != "tablet" {
+		t.Errorf("row 1: expected tablet, got %v", result.Rows[1][0])
+	}
+}
+
 func TestTableAlias(t *testing.T) {
 	exec := NewExecutor()
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")

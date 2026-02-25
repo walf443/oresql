@@ -252,6 +252,15 @@ func (e *Executor) buildJoinGraph(stmt *ast.SelectStmt) (*JoinGraph, error) {
 			continue
 		}
 
+		// Convert RIGHT JOIN to LEFT JOIN by swapping the two tables.
+		// RIGHT JOIN preserves all rows from the right (join) table,
+		// which is equivalent to LEFT JOIN with tables swapped.
+		joinType := join.JoinType
+		if joinType == ast.JoinRight {
+			tableAName, tableBName = tableBName, tableAName
+			joinType = ast.JoinLeft
+		}
+
 		nodeA := graph.Nodes[tableAName]
 		nodeB := graph.Nodes[tableBName]
 		_ = joinNode // the join node is either A or B
@@ -272,7 +281,7 @@ func (e *Executor) buildJoinGraph(stmt *ast.SelectStmt) (*JoinGraph, error) {
 		edge := &JoinGraphEdge{
 			TableA:        tableAName,
 			TableB:        tableBName,
-			JoinType:      join.JoinType,
+			JoinType:      joinType,
 			OnExpr:        join.On,
 			EquiJoinPairs: pairs,
 			ResidualOn:    residual,

@@ -85,6 +85,7 @@ const (
 	JOIN      // JOIN keyword
 	INNER     // INNER keyword
 	LEFT      // LEFT keyword
+	RIGHT     // RIGHT keyword
 	OUTER     // OUTER keyword
 	CASE      // CASE keyword
 	WHEN      // WHEN keyword
@@ -194,6 +195,7 @@ var tokenNames = map[TokenType]string{
 	JOIN:         "JOIN",
 	INNER:        "INNER",
 	LEFT:         "LEFT",
+	RIGHT:        "RIGHT",
 	OUTER:        "OUTER",
 	CASE:         "CASE",
 	WHEN:         "WHEN",
@@ -291,6 +293,7 @@ var keywords = map[string]TokenType{
 	"JOIN":       JOIN,
 	"INNER":      INNER,
 	"LEFT":       LEFT,
+	"RIGHT":      RIGHT,
 	"OUTER":      OUTER,
 	"CASE":       CASE,
 	"WHEN":       WHEN,

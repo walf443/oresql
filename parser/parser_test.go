@@ -1514,6 +1514,37 @@ func TestParseInnerJoinType(t *testing.T) {
 	}
 }
 
+func TestParseRightJoin(t *testing.T) {
+	stmt := parse(t, "SELECT * FROM users RIGHT JOIN orders ON users.id = orders.user_id")
+	sel, ok := stmt.(*ast.SelectStmt)
+	if !ok {
+		t.Fatalf("expected SelectStmt, got %T", stmt)
+	}
+	if len(sel.Joins) != 1 {
+		t.Fatalf("expected 1 join, got %d", len(sel.Joins))
+	}
+	if sel.Joins[0].JoinType != ast.JoinRight {
+		t.Errorf("expected JoinType=%q, got %q", ast.JoinRight, sel.Joins[0].JoinType)
+	}
+	if sel.Joins[0].TableName != "orders" {
+		t.Errorf("expected table name %q, got %q", "orders", sel.Joins[0].TableName)
+	}
+}
+
+func TestParseRightOuterJoin(t *testing.T) {
+	stmt := parse(t, "SELECT * FROM users RIGHT OUTER JOIN orders ON users.id = orders.user_id")
+	sel, ok := stmt.(*ast.SelectStmt)
+	if !ok {
+		t.Fatalf("expected SelectStmt, got %T", stmt)
+	}
+	if len(sel.Joins) != 1 {
+		t.Fatalf("expected 1 join, got %d", len(sel.Joins))
+	}
+	if sel.Joins[0].JoinType != ast.JoinRight {
+		t.Errorf("expected JoinType=%q, got %q", ast.JoinRight, sel.Joins[0].JoinType)
+	}
+}
+
 func TestParseCaseSearched(t *testing.T) {
 	stmt := parse(t, "SELECT CASE WHEN id > 0 THEN 'positive' ELSE 'non-positive' END FROM t")
 	sel := stmt.(*ast.SelectStmt)

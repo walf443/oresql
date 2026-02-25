@@ -766,11 +766,17 @@ func (p *Parser) parseSelectCore() (*ast.SelectStmt, error) {
 		}
 
 		// Parse JOIN clauses
-		for p.curToken.Type == token.JOIN || p.curToken.Type == token.INNER || p.curToken.Type == token.LEFT {
+		for p.curToken.Type == token.JOIN || p.curToken.Type == token.INNER || p.curToken.Type == token.LEFT || p.curToken.Type == token.RIGHT {
 			joinType := ast.JoinInner
 			if p.curToken.Type == token.LEFT {
 				joinType = ast.JoinLeft
 				p.nextToken() // skip LEFT
+				if p.curToken.Type == token.OUTER {
+					p.nextToken() // skip OUTER
+				}
+			} else if p.curToken.Type == token.RIGHT {
+				joinType = ast.JoinRight
+				p.nextToken() // skip RIGHT
 				if p.curToken.Type == token.OUTER {
 					p.nextToken() // skip OUTER
 				}

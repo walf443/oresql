@@ -1541,3 +1541,67 @@ func TestNotOperator(t *testing.T) {
 		t.Errorf("expected id=1, got %v", result.Rows[0][0])
 	}
 }
+
+func TestCast(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (i INT, f FLOAT, s TEXT)")
+	run(t, exec, "INSERT INTO t VALUES (42, 3.14, 'hello')")
+	run(t, exec, "INSERT INTO t VALUES (7, 2.0, '123')")
+
+	// INT to TEXT
+	result := run(t, exec, "SELECT CAST(i AS TEXT) FROM t WHERE i = 42")
+	if result.Rows[0][0] != "42" {
+		t.Errorf("CAST(42 AS TEXT): expected '42', got %v", result.Rows[0][0])
+	}
+
+	// INT to FLOAT
+	result = run(t, exec, "SELECT CAST(i AS FLOAT) FROM t WHERE i = 42")
+	if result.Rows[0][0] != float64(42) {
+		t.Errorf("CAST(42 AS FLOAT): expected 42.0, got %v", result.Rows[0][0])
+	}
+
+	// FLOAT to INT (truncate)
+	result = run(t, exec, "SELECT CAST(f AS INT) FROM t WHERE i = 42")
+	if result.Rows[0][0] != int64(3) {
+		t.Errorf("CAST(3.14 AS INT): expected 3, got %v", result.Rows[0][0])
+	}
+
+	// FLOAT to TEXT
+	result = run(t, exec, "SELECT CAST(f AS TEXT) FROM t WHERE i = 42")
+	got, ok := result.Rows[0][0].(string)
+	if !ok {
+		t.Fatalf("CAST(3.14 AS TEXT): expected string, got %T", result.Rows[0][0])
+	}
+	if got != "3.14" {
+		t.Errorf("CAST(3.14 AS TEXT): expected '3.14', got %q", got)
+	}
+
+	// TEXT to INT
+	result = run(t, exec, "SELECT CAST(s AS INT) FROM t WHERE i = 7")
+	if result.Rows[0][0] != int64(123) {
+		t.Errorf("CAST('123' AS INT): expected 123, got %v", result.Rows[0][0])
+	}
+
+	// TEXT to FLOAT
+	result = run(t, exec, "SELECT CAST(s AS FLOAT) FROM t WHERE i = 7")
+	if result.Rows[0][0] != float64(123) {
+		t.Errorf("CAST('123' AS FLOAT): expected 123.0, got %v", result.Rows[0][0])
+	}
+
+	// NULL stays NULL
+	exec2 := NewExecutor()
+	run(t, exec2, "CREATE TABLE t2 (val TEXT)")
+	run(t, exec2, "INSERT INTO t2 VALUES (NULL)")
+	result = run(t, exec2, "SELECT CAST(val AS INT) FROM t2")
+	if result.Rows[0][0] != nil {
+		t.Errorf("CAST(NULL AS INT): expected nil, got %v", result.Rows[0][0])
+	}
+}
+
+func TestCastError(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t (s TEXT)")
+	run(t, exec, "INSERT INTO t VALUES ('abc')")
+
+	runExpectError(t, exec, "SELECT CAST(s AS INT) FROM t")
+}

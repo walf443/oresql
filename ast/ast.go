@@ -167,6 +167,15 @@ type CallExpr struct {
 func (e *CallExpr) NodeType() string { return "Call" }
 func (e *CallExpr) exprNode()        {}
 
+// CastExpr represents CAST(expr AS type).
+type CastExpr struct {
+	Expr       Expr   // expression to cast
+	TargetType string // "INT", "FLOAT", or "TEXT"
+}
+
+func (e *CastExpr) NodeType() string { return "Cast" }
+func (e *CastExpr) exprNode()        {}
+
 // NullLitExpr represents the NULL literal.
 type NullLitExpr struct{}
 

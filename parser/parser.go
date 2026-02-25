@@ -1125,8 +1125,37 @@ func (p *Parser) parseCallExpr() (ast.Expr, error) {
 }
 
 // parseCaseExpr parses a CASE expression:
-//
-//	CASE [operand] WHEN expr THEN expr [WHEN expr THEN expr ...] [ELSE expr] END
+// parseCastExpr parses CAST(expr AS type).
+func (p *Parser) parseCastExpr() (ast.Expr, error) {
+	if err := p.expectToken(token.CAST); err != nil {
+		return nil, err
+	}
+	if err := p.expectToken(token.LPAREN); err != nil {
+		return nil, err
+	}
+	expr, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	if err := p.expectToken(token.AS); err != nil {
+		return nil, err
+	}
+	// Parse target type: INT, FLOAT, or TEXT
+	var targetType string
+	switch p.curToken.Type {
+	case token.INT, token.FLOAT, token.TEXT:
+		targetType = p.curToken.Type.String()
+		p.nextToken()
+	default:
+		return nil, fmt.Errorf("expected type name (INT, FLOAT, TEXT) after AS, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+	}
+	if err := p.expectToken(token.RPAREN); err != nil {
+		return nil, err
+	}
+	return &ast.CastExpr{Expr: expr, TargetType: targetType}, nil
+}
+
+// CASE [operand] WHEN expr THEN expr [WHEN expr THEN expr ...] [ELSE expr] END
 func (p *Parser) parseCaseExpr() (ast.Expr, error) {
 	if err := p.expectToken(token.CASE); err != nil {
 		return nil, err
@@ -1519,6 +1548,8 @@ func (p *Parser) parsePrimary() (ast.Expr, error) {
 			}
 		}
 		return expr, nil
+	case token.CAST:
+		return p.parseCastExpr()
 	case token.CASE:
 		return p.parseCaseExpr()
 	case token.EXISTS:

@@ -88,6 +88,7 @@ const (
 	RIGHT     // RIGHT keyword
 	CROSS     // CROSS keyword
 	OUTER     // OUTER keyword
+	CAST      // CAST keyword
 	CASE      // CASE keyword
 	WHEN      // WHEN keyword
 	THEN      // THEN keyword
@@ -199,6 +200,7 @@ var tokenNames = map[TokenType]string{
 	RIGHT:        "RIGHT",
 	CROSS:        "CROSS",
 	OUTER:        "OUTER",
+	CAST:         "CAST",
 	CASE:         "CASE",
 	WHEN:         "WHEN",
 	THEN:         "THEN",
@@ -298,6 +300,7 @@ var keywords = map[string]TokenType{
 	"RIGHT":      RIGHT,
 	"CROSS":      CROSS,
 	"OUTER":      OUTER,
+	"CAST":       CAST,
 	"CASE":       CASE,
 	"WHEN":       WHEN,
 	"THEN":       THEN,

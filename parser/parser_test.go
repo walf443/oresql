@@ -1684,6 +1684,34 @@ func TestParseCaseNoElse(t *testing.T) {
 	}
 }
 
+func TestParseCast(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		targetType string
+	}{
+		{"CAST AS INT", "SELECT CAST(val AS INT) FROM t", "INT"},
+		{"CAST AS TEXT", "SELECT CAST(val AS TEXT) FROM t", "TEXT"},
+		{"CAST AS FLOAT", "SELECT CAST(val AS FLOAT) FROM t", "FLOAT"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stmt := parse(t, tt.input)
+			sel := stmt.(*ast.SelectStmt)
+			if len(sel.Columns) != 1 {
+				t.Fatalf("expected 1 column, got %d", len(sel.Columns))
+			}
+			cast, ok := sel.Columns[0].(*ast.CastExpr)
+			if !ok {
+				t.Fatalf("expected CastExpr, got %T", sel.Columns[0])
+			}
+			if cast.TargetType != tt.targetType {
+				t.Errorf("expected TargetType=%q, got %q", tt.targetType, cast.TargetType)
+			}
+		})
+	}
+}
+
 func TestParseCoalesce(t *testing.T) {
 	stmt := parse(t, "SELECT COALESCE(a, b, c) FROM t")
 	sel := stmt.(*ast.SelectStmt)

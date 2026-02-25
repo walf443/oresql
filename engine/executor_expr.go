@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/walf443/oresql/ast"
@@ -1037,4 +1038,60 @@ func matchLike(str, pattern string) bool {
 		}
 	}
 	return pi == len(pattern)
+}
+
+// evalCast evaluates a CAST(expr AS type) expression.
+func evalCast(cast *ast.CastExpr, row Row, eval ExprEvaluator) (Value, error) {
+	val, err := eval.Eval(cast.Expr, row)
+	if err != nil {
+		return nil, err
+	}
+	if val == nil {
+		return nil, nil
+	}
+	switch cast.TargetType {
+	case "INT":
+		switch v := val.(type) {
+		case int64:
+			return v, nil
+		case float64:
+			return int64(v), nil
+		case string:
+			n, err := strconv.ParseInt(v, 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("cannot cast %q to INT", v)
+			}
+			return n, nil
+		default:
+			return nil, fmt.Errorf("cannot cast %T to INT", val)
+		}
+	case "FLOAT":
+		switch v := val.(type) {
+		case float64:
+			return v, nil
+		case int64:
+			return float64(v), nil
+		case string:
+			f, err := strconv.ParseFloat(v, 64)
+			if err != nil {
+				return nil, fmt.Errorf("cannot cast %q to FLOAT", v)
+			}
+			return f, nil
+		default:
+			return nil, fmt.Errorf("cannot cast %T to FLOAT", val)
+		}
+	case "TEXT":
+		switch v := val.(type) {
+		case string:
+			return v, nil
+		case int64:
+			return strconv.FormatInt(v, 10), nil
+		case float64:
+			return strconv.FormatFloat(v, 'f', -1, 64), nil
+		default:
+			return nil, fmt.Errorf("cannot cast %T to TEXT", val)
+		}
+	default:
+		return nil, fmt.Errorf("unsupported CAST target type: %s", cast.TargetType)
+	}
 }

@@ -505,6 +505,8 @@ func evalExprGeneric(expr ast.Expr, row Row, eval ExprEvaluator) (Value, error) 
 		return hasRows, nil
 	case *ast.WindowExpr:
 		return nil, fmt.Errorf("window function %s not allowed in this context", e.Name)
+	case *ast.CastExpr:
+		return evalCast(e, row, eval)
 	case *ast.CallExpr:
 		return evalScalarFuncGeneric(e, row, eval)
 	default:

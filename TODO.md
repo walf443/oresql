@@ -35,7 +35,7 @@
 - [x] INNER JOIN ... ON
 - [x] LEFT JOIN
 - [x] RIGHT JOIN
-- [ ] CROSS JOIN
+- [x] CROSS JOIN
 - [x] テーブル別名 (`FROM users u`)
 
 ## 集合演算

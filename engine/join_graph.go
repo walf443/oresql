@@ -245,7 +245,14 @@ func (e *Executor) buildJoinGraph(stmt *ast.SelectStmt) (*JoinGraph, error) {
 		joinNode := graph.Nodes[effectiveNameForJoin(join)]
 
 		// Determine which tables the ON clause references
-		tableAName, tableBName := findOnTables(join.On, graph, effectiveNameForJoin(join))
+		var tableAName, tableBName string
+		if join.On != nil {
+			tableAName, tableBName = findOnTables(join.On, graph, effectiveNameForJoin(join))
+		} else {
+			// CROSS JOIN: no ON clause, connect to FROM table
+			tableAName = graph.FromTable
+			tableBName = effectiveNameForJoin(join)
+		}
 
 		if tableAName == "" || tableBName == "" {
 			// Fallback: if we can't determine the pair, skip optimization for this edge
@@ -1040,8 +1047,8 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 				copy(mergedRow, outerRow)
 				copy(mergedRow[nextOffset:], innerRow)
 
-				// Evaluate ON condition
-				if edge != nil {
+				// Evaluate ON condition (skipped for CROSS JOIN where OnExpr is nil)
+				if edge != nil && edge.OnExpr != nil {
 					if nextIdx != nil || hashTable != nil {
 						// Index or hash join: equi-join already satisfied, evaluate residual only
 						if edge.ResidualOn != nil {

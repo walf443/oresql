@@ -86,6 +86,7 @@ const (
 	INNER     // INNER keyword
 	LEFT      // LEFT keyword
 	RIGHT     // RIGHT keyword
+	CROSS     // CROSS keyword
 	OUTER     // OUTER keyword
 	CASE      // CASE keyword
 	WHEN      // WHEN keyword
@@ -196,6 +197,7 @@ var tokenNames = map[TokenType]string{
 	INNER:        "INNER",
 	LEFT:         "LEFT",
 	RIGHT:        "RIGHT",
+	CROSS:        "CROSS",
 	OUTER:        "OUTER",
 	CASE:         "CASE",
 	WHEN:         "WHEN",
@@ -294,6 +296,7 @@ var keywords = map[string]TokenType{
 	"INNER":      INNER,
 	"LEFT":       LEFT,
 	"RIGHT":      RIGHT,
+	"CROSS":      CROSS,
 	"OUTER":      OUTER,
 	"CASE":       CASE,
 	"WHEN":       WHEN,

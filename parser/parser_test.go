@@ -1545,6 +1545,35 @@ func TestParseRightOuterJoin(t *testing.T) {
 	}
 }
 
+func TestParseCrossJoin(t *testing.T) {
+	stmt := parse(t, "SELECT * FROM t1 CROSS JOIN t2")
+	sel, ok := stmt.(*ast.SelectStmt)
+	if !ok {
+		t.Fatalf("expected SelectStmt, got %T", stmt)
+	}
+	if len(sel.Joins) != 1 {
+		t.Fatalf("expected 1 join, got %d", len(sel.Joins))
+	}
+	if sel.Joins[0].JoinType != ast.JoinCross {
+		t.Errorf("expected JoinType=%q, got %q", ast.JoinCross, sel.Joins[0].JoinType)
+	}
+	if sel.Joins[0].TableName != "t2" {
+		t.Errorf("expected table name %q, got %q", "t2", sel.Joins[0].TableName)
+	}
+	if sel.Joins[0].On != nil {
+		t.Errorf("expected no ON clause for CROSS JOIN, got %v", sel.Joins[0].On)
+	}
+}
+
+func TestParseCrossJoinWithOnError(t *testing.T) {
+	l := lexer.New("SELECT * FROM t1 CROSS JOIN t2 ON t1.id = t2.id")
+	p := New(l)
+	_, err := p.Parse()
+	if err == nil {
+		t.Fatal("expected error for CROSS JOIN with ON clause, got nil")
+	}
+}
+
 func TestParseCaseSearched(t *testing.T) {
 	stmt := parse(t, "SELECT CASE WHEN id > 0 THEN 'positive' ELSE 'non-positive' END FROM t")
 	sel := stmt.(*ast.SelectStmt)

@@ -766,7 +766,7 @@ func (p *Parser) parseSelectCore() (*ast.SelectStmt, error) {
 		}
 
 		// Parse JOIN clauses
-		for p.curToken.Type == token.JOIN || p.curToken.Type == token.INNER || p.curToken.Type == token.LEFT || p.curToken.Type == token.RIGHT {
+		for p.curToken.Type == token.JOIN || p.curToken.Type == token.INNER || p.curToken.Type == token.LEFT || p.curToken.Type == token.RIGHT || p.curToken.Type == token.CROSS {
 			joinType := ast.JoinInner
 			if p.curToken.Type == token.LEFT {
 				joinType = ast.JoinLeft
@@ -780,6 +780,9 @@ func (p *Parser) parseSelectCore() (*ast.SelectStmt, error) {
 				if p.curToken.Type == token.OUTER {
 					p.nextToken() // skip OUTER
 				}
+			} else if p.curToken.Type == token.CROSS {
+				joinType = ast.JoinCross
+				p.nextToken() // skip CROSS
 			} else if p.curToken.Type == token.INNER {
 				p.nextToken() // skip INNER
 			}
@@ -794,12 +797,20 @@ func (p *Parser) parseSelectCore() (*ast.SelectStmt, error) {
 
 			joinAlias := p.parseTableAlias()
 
-			if err := p.expectToken(token.ON); err != nil {
-				return nil, err
-			}
-			onExpr, err := p.parseExpr()
-			if err != nil {
-				return nil, err
+			var onExpr ast.Expr
+			if joinType == ast.JoinCross {
+				if p.curToken.Type == token.ON {
+					return nil, fmt.Errorf("CROSS JOIN does not support ON clause")
+				}
+			} else {
+				if err := p.expectToken(token.ON); err != nil {
+					return nil, err
+				}
+				var err error
+				onExpr, err = p.parseExpr()
+				if err != nil {
+					return nil, err
+				}
 			}
 			joins = append(joins, ast.JoinClause{
 				JoinType:   joinType,

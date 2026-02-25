@@ -427,6 +427,64 @@ func TestRightJoinWithWhereIsNull(t *testing.T) {
 	}
 }
 
+func TestCrossJoinBasic(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE colors (name TEXT)")
+	run(t, exec, "CREATE TABLE sizes (name TEXT)")
+	run(t, exec, "INSERT INTO colors VALUES ('red')")
+	run(t, exec, "INSERT INTO colors VALUES ('blue')")
+	run(t, exec, "INSERT INTO sizes VALUES ('S')")
+	run(t, exec, "INSERT INTO sizes VALUES ('M')")
+	run(t, exec, "INSERT INTO sizes VALUES ('L')")
+
+	result := run(t, exec, "SELECT colors.name, sizes.name FROM colors CROSS JOIN sizes ORDER BY colors.name, sizes.name")
+	if len(result.Rows) != 6 {
+		t.Fatalf("expected 6 rows, got %d", len(result.Rows))
+	}
+	expected := [][2]string{
+		{"blue", "L"}, {"blue", "M"}, {"blue", "S"},
+		{"red", "L"}, {"red", "M"}, {"red", "S"},
+	}
+	for i, exp := range expected {
+		if result.Rows[i][0] != exp[0] || result.Rows[i][1] != exp[1] {
+			t.Errorf("row %d: expected [%s %s], got %v", i, exp[0], exp[1], result.Rows[i])
+		}
+	}
+}
+
+func TestCrossJoinWithWhere(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t1 (id INT, val TEXT)")
+	run(t, exec, "CREATE TABLE t2 (id INT, t1_id INT, val TEXT)")
+	run(t, exec, "INSERT INTO t1 VALUES (1, 'a')")
+	run(t, exec, "INSERT INTO t1 VALUES (2, 'b')")
+	run(t, exec, "INSERT INTO t2 VALUES (10, 1, 'x')")
+	run(t, exec, "INSERT INTO t2 VALUES (20, 2, 'y')")
+
+	result := run(t, exec, "SELECT t1.val, t2.val FROM t1 CROSS JOIN t2 WHERE t1.id = t2.t1_id ORDER BY t1.id, t2.id")
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0] != "a" || result.Rows[0][1] != "x" {
+		t.Errorf("row 0: expected [a x], got %v", result.Rows[0])
+	}
+	if result.Rows[1][0] != "b" || result.Rows[1][1] != "y" {
+		t.Errorf("row 1: expected [b y], got %v", result.Rows[1])
+	}
+}
+
+func TestCrossJoinEmpty(t *testing.T) {
+	exec := NewExecutor()
+	run(t, exec, "CREATE TABLE t1 (id INT)")
+	run(t, exec, "CREATE TABLE t2 (id INT)")
+	run(t, exec, "INSERT INTO t1 VALUES (1)")
+
+	result := run(t, exec, "SELECT * FROM t1 CROSS JOIN t2")
+	if len(result.Rows) != 0 {
+		t.Fatalf("expected 0 rows, got %d", len(result.Rows))
+	}
+}
+
 func TestTableAlias(t *testing.T) {
 	exec := NewExecutor()
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")

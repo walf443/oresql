@@ -60,6 +60,7 @@ const (
 	JoinInner = "INNER"
 	JoinLeft  = "LEFT"
 	JoinRight = "RIGHT"
+	JoinCross = "CROSS"
 )
 
 // JoinClause represents a single JOIN in a SELECT statement.

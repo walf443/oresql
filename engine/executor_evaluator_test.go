@@ -3,6 +3,8 @@ package engine
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/walf443/oresql/ast"
 )
 
@@ -18,33 +20,21 @@ func TestTableEvaluator_ResolveColumn(t *testing.T) {
 
 	// Resolve unqualified column
 	col, err := eval.ResolveColumn("", "id")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if col.Index != 0 {
-		t.Errorf("expected index 0, got %d", col.Index)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, 0, col.Index)
 
 	// Resolve qualified column
 	col, err = eval.ResolveColumn("users", "name")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if col.Index != 1 {
-		t.Errorf("expected index 1, got %d", col.Index)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, 1, col.Index)
 
 	// Error on wrong table
 	_, err = eval.ResolveColumn("orders", "id")
-	if err == nil {
-		t.Error("expected error for wrong table")
-	}
+	assert.Error(t, err, "expected error for wrong table")
 
 	// Error on unknown column
 	_, err = eval.ResolveColumn("", "missing")
-	if err == nil {
-		t.Error("expected error for unknown column")
-	}
+	assert.Error(t, err, "expected error for unknown column")
 }
 
 func TestTableEvaluator_Eval(t *testing.T) {
@@ -88,12 +78,8 @@ func TestTableEvaluator_Eval(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := eval.Eval(tt.expr, row)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if got != tt.want {
-				t.Errorf("got %v (%T), want %v (%T)", got, got, tt.want, tt.want)
-			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -127,36 +113,22 @@ func TestJoinEvaluator_Eval(t *testing.T) {
 
 	// Qualified access
 	val, err := eval.Eval(&ast.IdentExpr{Table: "users", Name: "name"}, row)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if val != "Alice" {
-		t.Errorf("expected Alice, got %v", val)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "Alice", val)
 
 	// Qualified access to second table
 	val, err = eval.Eval(&ast.IdentExpr{Table: "orders", Name: "id"}, row)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if val != int64(10) {
-		t.Errorf("expected 10, got %v", val)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, int64(10), val)
 
 	// Unqualified unambiguous access
 	val, err = eval.Eval(&ast.IdentExpr{Name: "user_id"}, row)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if val != int64(1) {
-		t.Errorf("expected 1, got %v", val)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), val)
 
 	// Ambiguous column
 	_, err = eval.Eval(&ast.IdentExpr{Name: "id"}, row)
-	if err == nil {
-		t.Error("expected error for ambiguous column")
-	}
+	assert.Error(t, err, "expected error for ambiguous column")
 }
 
 func TestGroupEvaluator_Eval(t *testing.T) {
@@ -177,30 +149,18 @@ func TestGroupEvaluator_Eval(t *testing.T) {
 
 	// Regular column access
 	val, err := eval.Eval(&ast.IdentExpr{Name: "name"}, row)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if val != "Alice" {
-		t.Errorf("expected Alice, got %v", val)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "Alice", val)
 
 	// COUNT(*)
 	val, err = eval.Eval(&ast.CallExpr{Name: "COUNT", Args: []ast.Expr{&ast.StarExpr{}}}, row)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if val != int64(3) {
-		t.Errorf("expected 3, got %v", val)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), val)
 
 	// SUM(id)
 	val, err = eval.Eval(&ast.CallExpr{Name: "SUM", Args: []ast.Expr{&ast.IdentExpr{Name: "id"}}}, row)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if val != int64(6) {
-		t.Errorf("expected 6, got %v", val)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, int64(6), val)
 }
 
 func TestResultEvaluator_Eval(t *testing.T) {
@@ -214,28 +174,16 @@ func TestResultEvaluator_Eval(t *testing.T) {
 
 	// Match by alias
 	val, err := eval.Eval(&ast.IdentExpr{Name: "user_name"}, row)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if val != "Alice" {
-		t.Errorf("expected Alice, got %v", val)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "Alice", val)
 
 	// Match by original column name
 	val, err = eval.Eval(&ast.IdentExpr{Name: "name"}, row)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if val != "Alice" {
-		t.Errorf("expected Alice, got %v", val)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "Alice", val)
 
 	// Match aggregate by function name
 	val, err = eval.Eval(&ast.CallExpr{Name: "COUNT", Args: []ast.Expr{&ast.StarExpr{}}}, row)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if val != int64(3) {
-		t.Errorf("expected 3, got %v", val)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), val)
 }

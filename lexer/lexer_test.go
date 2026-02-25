@@ -3,6 +3,8 @@ package lexer
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/walf443/oresql/token"
 )
 
@@ -86,9 +88,7 @@ func TestCaseInsensitiveKeywords(t *testing.T) {
 	for _, input := range inputs {
 		l := New(input)
 		tok := l.NextToken()
-		if tok.Type != token.SELECT {
-			t.Errorf("input %q: expected SELECT, got %s", input, tok.Type)
-		}
+		assert.Equal(t, token.SELECT, tok.Type, "input %q", input)
 	}
 }
 
@@ -108,12 +108,8 @@ func TestEscapedQuote(t *testing.T) {
 	input := `'it''s'`
 	l := New(input)
 	tok := l.NextToken()
-	if tok.Type != token.STRING_LIT {
-		t.Fatalf("expected STRING_LIT, got %s", tok.Type)
-	}
-	if tok.Literal != "it's" {
-		t.Fatalf("expected literal %q, got %q", "it's", tok.Literal)
-	}
+	require.Equal(t, token.STRING_LIT, tok.Type)
+	require.Equal(t, "it's", tok.Literal)
 }
 
 func TestCountToken(t *testing.T) {
@@ -143,60 +139,40 @@ func TestQuotedIdent(t *testing.T) {
 	input := "`count`"
 	l := New(input)
 	tok := l.NextToken()
-	if tok.Type != token.QUOTED_IDENT {
-		t.Fatalf("expected QUOTED_IDENT, got %s", tok.Type)
-	}
-	if tok.Literal != "count" {
-		t.Fatalf("expected literal %q, got %q", "count", tok.Literal)
-	}
+	require.Equal(t, token.QUOTED_IDENT, tok.Type)
+	require.Equal(t, "count", tok.Literal)
 }
 
 func TestQuotedIdentEscaped(t *testing.T) {
 	input := "`back``tick`"
 	l := New(input)
 	tok := l.NextToken()
-	if tok.Type != token.QUOTED_IDENT {
-		t.Fatalf("expected QUOTED_IDENT, got %s", tok.Type)
-	}
-	if tok.Literal != "back`tick" {
-		t.Fatalf("expected literal %q, got %q", "back`tick", tok.Literal)
-	}
+	require.Equal(t, token.QUOTED_IDENT, tok.Type)
+	require.Equal(t, "back`tick", tok.Literal)
 }
 
 func TestDoubleQuoteString(t *testing.T) {
 	input := `"hello"`
 	l := New(input)
 	tok := l.NextToken()
-	if tok.Type != token.STRING_LIT {
-		t.Fatalf("expected STRING_LIT, got %s", tok.Type)
-	}
-	if tok.Literal != "hello" {
-		t.Fatalf("expected literal %q, got %q", "hello", tok.Literal)
-	}
+	require.Equal(t, token.STRING_LIT, tok.Type)
+	require.Equal(t, "hello", tok.Literal)
 }
 
 func TestDoubleQuoteEscaped(t *testing.T) {
 	input := `"it""s"`
 	l := New(input)
 	tok := l.NextToken()
-	if tok.Type != token.STRING_LIT {
-		t.Fatalf("expected STRING_LIT, got %s", tok.Type)
-	}
-	if tok.Literal != `it"s` {
-		t.Fatalf("expected literal %q, got %q", `it"s`, tok.Literal)
-	}
+	require.Equal(t, token.STRING_LIT, tok.Type)
+	require.Equal(t, `it"s`, tok.Literal)
 }
 
 func TestDoubleQuoteEmpty(t *testing.T) {
 	input := `""`
 	l := New(input)
 	tok := l.NextToken()
-	if tok.Type != token.STRING_LIT {
-		t.Fatalf("expected STRING_LIT, got %s", tok.Type)
-	}
-	if tok.Literal != "" {
-		t.Fatalf("expected empty literal, got %q", tok.Literal)
-	}
+	require.Equal(t, token.STRING_LIT, tok.Type)
+	require.Equal(t, "", tok.Literal)
 }
 
 func TestArithmeticOperators(t *testing.T) {
@@ -242,11 +218,7 @@ func testTokens(t *testing.T, input string, expected []token.Token) {
 	l := New(input)
 	for i, exp := range expected {
 		tok := l.NextToken()
-		if tok.Type != exp.Type {
-			t.Fatalf("token[%d]: expected type %s, got %s (literal=%q)", i, exp.Type, tok.Type, tok.Literal)
-		}
-		if tok.Literal != exp.Literal {
-			t.Fatalf("token[%d]: expected literal %q, got %q", i, exp.Literal, tok.Literal)
-		}
+		require.Equal(t, exp.Type, tok.Type, "token[%d]: type mismatch (literal=%q)", i, tok.Literal)
+		require.Equal(t, exp.Literal, tok.Literal, "token[%d]: literal mismatch", i)
 	}
 }

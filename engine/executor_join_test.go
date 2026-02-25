@@ -2,6 +2,9 @@ package engine
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewJoinContext(t *testing.T) {
@@ -30,30 +33,21 @@ func TestNewJoinContext(t *testing.T) {
 	})
 
 	// Check merged columns count
-	if len(jc.MergedInfo.Columns) != 5 {
-		t.Errorf("MergedInfo.Columns count = %d, want 5", len(jc.MergedInfo.Columns))
-	}
+	assert.Len(t, jc.MergedInfo.Columns, 5, "MergedInfo.Columns count")
 
 	// Check column offsets
 	// users columns: 0, 1
 	// orders columns: 2, 3, 4
-	if jc.MergedInfo.Columns[0].Name != "id" || jc.MergedInfo.Columns[0].Index != 0 {
-		t.Errorf("merged col[0] = {%q, %d}, want {id, 0}", jc.MergedInfo.Columns[0].Name, jc.MergedInfo.Columns[0].Index)
-	}
-	if jc.MergedInfo.Columns[2].Name != "id" || jc.MergedInfo.Columns[2].Index != 2 {
-		t.Errorf("merged col[2] = {%q, %d}, want {id, 2}", jc.MergedInfo.Columns[2].Name, jc.MergedInfo.Columns[2].Index)
-	}
-	if jc.MergedInfo.Columns[4].Name != "amount" || jc.MergedInfo.Columns[4].Index != 4 {
-		t.Errorf("merged col[4] = {%q, %d}, want {amount, 4}", jc.MergedInfo.Columns[4].Name, jc.MergedInfo.Columns[4].Index)
-	}
+	assert.Equal(t, "id", jc.MergedInfo.Columns[0].Name)
+	assert.Equal(t, 0, jc.MergedInfo.Columns[0].Index)
+	assert.Equal(t, "id", jc.MergedInfo.Columns[2].Name)
+	assert.Equal(t, 2, jc.MergedInfo.Columns[2].Index)
+	assert.Equal(t, "amount", jc.MergedInfo.Columns[4].Name)
+	assert.Equal(t, 4, jc.MergedInfo.Columns[4].Index)
 
 	// Check alias registration
-	if _, ok := jc.tableMap["o"]; !ok {
-		t.Errorf("alias 'o' not registered in tableMap")
-	}
-	if _, ok := jc.tableMap["orders"]; !ok {
-		t.Errorf("table name 'orders' not registered in tableMap")
-	}
+	assert.Contains(t, jc.tableMap, "o", "alias 'o' should be registered in tableMap")
+	assert.Contains(t, jc.tableMap, "orders", "table name 'orders' should be registered in tableMap")
 }
 
 func TestJoinContextFindColumn(t *testing.T) {
@@ -98,18 +92,11 @@ func TestJoinContextFindColumn(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			col, err := jc.FindColumn(tt.tableName, tt.colName)
 			if tt.wantErr {
-				if err == nil {
-					t.Errorf("expected error, got nil")
-				}
+				assert.Error(t, err)
 				return
 			}
-			if err != nil {
-				t.Errorf("unexpected error: %v", err)
-				return
-			}
-			if col.Index != tt.wantIdx {
-				t.Errorf("FindColumn(%q, %q).Index = %d, want %d", tt.tableName, tt.colName, col.Index, tt.wantIdx)
-			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantIdx, col.Index)
 		})
 	}
 }
@@ -134,14 +121,10 @@ func TestValidateTableRefWithAlias(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			err := validateTableRefWithAlias(tt.tableRef, tt.targetTable, tt.alias)
 			if tt.wantErr {
-				if err == nil {
-					t.Errorf("expected error, got nil")
-				}
+				assert.Error(t, err)
 				return
 			}
-			if err != nil {
-				t.Errorf("unexpected error: %v", err)
-			}
+			assert.NoError(t, err)
 		})
 	}
 }

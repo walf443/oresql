@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/walf443/oresql/ast"
 )
 
@@ -103,18 +105,12 @@ func TestExtractEqualityConditions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := extractEqualityConditions(tt.expr)
-			if len(got) != len(tt.want) {
-				t.Errorf("extractEqualityConditions() returned %d entries, want %d", len(got), len(tt.want))
-				return
-			}
+			require.Len(t, got, len(tt.want), "extractEqualityConditions() returned unexpected number of entries")
 			for k, wantVal := range tt.want {
 				gotVal, ok := got[k]
-				if !ok {
-					t.Errorf("missing key %q", k)
-					continue
-				}
-				if gotVal != wantVal {
-					t.Errorf("key %q = %v, want %v", k, gotVal, wantVal)
+				assert.True(t, ok, "missing key %q", k)
+				if ok {
+					assert.Equal(t, wantVal, gotVal, "key %q", k)
 				}
 			}
 		})
@@ -192,24 +188,15 @@ func TestExtractInConditions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := extractInConditions(tt.expr)
-			if len(got) != len(tt.want) {
-				t.Errorf("extractInConditions() returned %d entries, want %d", len(got), len(tt.want))
-				return
-			}
+			require.Len(t, got, len(tt.want), "extractInConditions() returned unexpected number of entries")
 			for k, wantVals := range tt.want {
 				gotVals, ok := got[k]
-				if !ok {
-					t.Errorf("missing key %q", k)
+				if !assert.True(t, ok, "missing key %q", k) {
 					continue
 				}
-				if len(gotVals) != len(wantVals) {
-					t.Errorf("key %q: got %d values, want %d", k, len(gotVals), len(wantVals))
-					continue
-				}
+				require.Len(t, gotVals, len(wantVals), "key %q: unexpected number of values", k)
 				for i, wv := range wantVals {
-					if gotVals[i] != wv {
-						t.Errorf("key %q[%d] = %v, want %v", k, i, gotVals[i], wv)
-					}
+					assert.Equal(t, wv, gotVals[i], "key %q[%d]", k, i)
 				}
 			}
 		})
@@ -241,14 +228,9 @@ func TestDedupKeys(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := dedupKeys(tt.keys)
-			if len(got) != len(tt.want) {
-				t.Errorf("dedupKeys() returned %d keys, want %d", len(got), len(tt.want))
-				return
-			}
+			require.Len(t, got, len(tt.want), "dedupKeys() returned unexpected number of keys")
 			for i, w := range tt.want {
-				if got[i] != w {
-					t.Errorf("dedupKeys()[%d] = %d, want %d", i, got[i], w)
-				}
+				assert.Equal(t, w, got[i], "dedupKeys()[%d]", i)
 			}
 		})
 	}
@@ -382,39 +364,25 @@ func TestExtractRangeConditions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := extractRangeConditions(tt.expr)
-			if len(got) != len(tt.wantCols) {
-				t.Errorf("extractRangeConditions() returned %d entries, want %d", len(got), len(tt.wantCols))
-				return
-			}
+			require.Len(t, got, len(tt.wantCols), "extractRangeConditions() returned unexpected number of entries")
 			for _, col := range tt.wantCols {
 				rc, ok := got[col]
-				if !ok {
-					t.Errorf("missing column %q", col)
+				if !assert.True(t, ok, "missing column %q", col) {
 					continue
 				}
 				if wantFrom, ok := tt.checkFromVal[col]; ok {
-					if rc.fromVal == nil {
-						t.Errorf("col %q: fromVal is nil, want %v", col, wantFrom)
-					} else if *rc.fromVal != wantFrom {
-						t.Errorf("col %q: fromVal = %v, want %v", col, *rc.fromVal, wantFrom)
-					}
+					require.NotNil(t, rc.fromVal, "col %q: fromVal is nil, want %v", col, wantFrom)
+					assert.Equal(t, wantFrom, *rc.fromVal, "col %q: fromVal", col)
 				}
 				if wantIncl, ok := tt.checkFromIncl[col]; ok {
-					if rc.fromInclusive != wantIncl {
-						t.Errorf("col %q: fromInclusive = %v, want %v", col, rc.fromInclusive, wantIncl)
-					}
+					assert.Equal(t, wantIncl, rc.fromInclusive, "col %q: fromInclusive", col)
 				}
 				if wantTo, ok := tt.checkToVal[col]; ok {
-					if rc.toVal == nil {
-						t.Errorf("col %q: toVal is nil, want %v", col, wantTo)
-					} else if *rc.toVal != wantTo {
-						t.Errorf("col %q: toVal = %v, want %v", col, *rc.toVal, wantTo)
-					}
+					require.NotNil(t, rc.toVal, "col %q: toVal is nil, want %v", col, wantTo)
+					assert.Equal(t, wantTo, *rc.toVal, "col %q: toVal", col)
 				}
 				if wantIncl, ok := tt.checkToIncl[col]; ok {
-					if rc.toInclusive != wantIncl {
-						t.Errorf("col %q: toInclusive = %v, want %v", col, rc.toInclusive, wantIncl)
-					}
+					assert.Equal(t, wantIncl, rc.toInclusive, "col %q: toInclusive", col)
 				}
 			}
 		})
@@ -430,15 +398,9 @@ func TestPrimaryKeyLookup(t *testing.T) {
 
 	// WHERE id = 5 should return exactly 1 row via PK lookup
 	result := run(t, exec, "SELECT * FROM items WHERE id = 5")
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != int64(5) {
-		t.Errorf("expected id=5, got %v", result.Rows[0][0])
-	}
-	if result.Rows[0][1] != "item5" {
-		t.Errorf("expected name='item5', got %v", result.Rows[0][1])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row for PK lookup")
+	assert.Equal(t, int64(5), result.Rows[0][0], "expected id=5")
+	assert.Equal(t, "item5", result.Rows[0][1], "expected name='item5'")
 }
 
 func TestPrimaryKeyLookupNotFound(t *testing.T) {
@@ -450,7 +412,5 @@ func TestPrimaryKeyLookupNotFound(t *testing.T) {
 
 	// WHERE id = 999 should return 0 rows
 	result := run(t, exec, "SELECT * FROM items WHERE id = 999")
-	if len(result.Rows) != 0 {
-		t.Fatalf("expected 0 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 0, "expected 0 rows for non-existent PK")
 }

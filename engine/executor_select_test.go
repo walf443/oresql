@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/walf443/oresql/ast"
 )
 
@@ -42,9 +44,7 @@ func TestHasAggregate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := hasAggregate(tt.columns)
-			if got != tt.want {
-				t.Errorf("hasAggregate() = %v, want %v", got, tt.want)
-			}
+			assert.Equal(t, tt.want, got, "hasAggregate() = %v, want %v", got, tt.want)
 		})
 	}
 }
@@ -79,9 +79,7 @@ func TestFormatCallExpr(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := formatCallExpr(tt.call)
-			if got != tt.want {
-				t.Errorf("formatCallExpr() = %q, want %q", got, tt.want)
-			}
+			assert.Equal(t, tt.want, got, "formatCallExpr() = %q, want %q", got, tt.want)
 		})
 	}
 }
@@ -127,9 +125,7 @@ func TestDedup(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := dedup(tt.rows)
-			if len(got) != tt.want {
-				t.Errorf("dedup() returned %d rows, want %d", len(got), tt.want)
-			}
+			assert.Len(t, got, tt.want, "dedup() returned unexpected number of rows")
 		})
 	}
 }
@@ -144,9 +140,7 @@ func TestSelectLimitNoOrder(t *testing.T) {
 	}
 
 	result := run(t, exec, "SELECT * FROM t LIMIT 3")
-	if len(result.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 3, "expected 3 rows")
 }
 
 func TestSelectWhereLimitNoOrder(t *testing.T) {
@@ -158,9 +152,7 @@ func TestSelectWhereLimitNoOrder(t *testing.T) {
 
 	// WHERE val > 50 matches ids 6,7,8,9,10 → LIMIT 2 returns first 2
 	result := run(t, exec, "SELECT * FROM t WHERE val > 50 LIMIT 2")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
 }
 
 func TestSelectLimitOffsetNoOrder(t *testing.T) {
@@ -171,9 +163,7 @@ func TestSelectLimitOffsetNoOrder(t *testing.T) {
 	}
 
 	result := run(t, exec, "SELECT * FROM t LIMIT 2 OFFSET 3")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
 }
 
 func TestJoinLimitNoOrder(t *testing.T) {
@@ -188,9 +178,7 @@ func TestJoinLimitNoOrder(t *testing.T) {
 	}
 
 	result := run(t, exec, "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id LIMIT 5")
-	if len(result.Rows) != 5 {
-		t.Fatalf("expected 5 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 5, "expected 5 rows")
 }
 
 func TestLeftJoinLimitNoOrder(t *testing.T) {
@@ -205,9 +193,7 @@ func TestLeftJoinLimitNoOrder(t *testing.T) {
 
 	// user 1 has 2 orders, users 2,3 have 0 → LEFT JOIN gives 4 rows total
 	result := run(t, exec, "SELECT u.name, o.product FROM users u LEFT JOIN orders o ON u.id = o.user_id LIMIT 3")
-	if len(result.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 3, "expected 3 rows")
 }
 
 func TestGroupByLimitNoEarlyTermination(t *testing.T) {
@@ -219,9 +205,7 @@ func TestGroupByLimitNoEarlyTermination(t *testing.T) {
 
 	// GROUP BY val produces 3 groups (0,1,2), LIMIT 2 should return 2 groups
 	result := run(t, exec, "SELECT val, COUNT(*) FROM t GROUP BY val LIMIT 2")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
 }
 
 func TestDistinctLimitNoOrder(t *testing.T) {
@@ -234,15 +218,11 @@ func TestDistinctLimitNoOrder(t *testing.T) {
 
 	// DISTINCT val produces 3 unique values, LIMIT 2 should return 2
 	result := run(t, exec, "SELECT DISTINCT val FROM t LIMIT 2")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
 	// Verify all rows are distinct
 	seen := make(map[interface{}]bool)
 	for _, row := range result.Rows {
-		if seen[row[0]] {
-			t.Errorf("duplicate value found: %v", row[0])
-		}
+		assert.False(t, seen[row[0]], "duplicate value found: %v", row[0])
 		seen[row[0]] = true
 	}
 }
@@ -257,15 +237,11 @@ func TestDistinctLimitOffsetNoOrder(t *testing.T) {
 
 	// DISTINCT val produces 5 unique values, OFFSET 2 LIMIT 2 should return 2
 	result := run(t, exec, "SELECT DISTINCT val FROM t LIMIT 2 OFFSET 2")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
 	// Verify all rows are distinct
 	seen := make(map[interface{}]bool)
 	for _, row := range result.Rows {
-		if seen[row[0]] {
-			t.Errorf("duplicate value found: %v", row[0])
-		}
+		assert.False(t, seen[row[0]], "duplicate value found: %v", row[0])
 		seen[row[0]] = true
 	}
 }
@@ -279,14 +255,10 @@ func TestDistinctWhereLimitNoOrder(t *testing.T) {
 
 	// WHERE val > 1 keeps values 2,3,4 → DISTINCT produces 3, LIMIT 2 returns 2
 	result := run(t, exec, "SELECT DISTINCT val FROM t WHERE val > 1 LIMIT 2")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
 	seen := make(map[interface{}]bool)
 	for _, row := range result.Rows {
-		if seen[row[0]] {
-			t.Errorf("duplicate value found: %v", row[0])
-		}
+		assert.False(t, seen[row[0]], "duplicate value found: %v", row[0])
 		seen[row[0]] = true
 	}
 }
@@ -303,9 +275,7 @@ func TestDistinctStarLimitNoOrder(t *testing.T) {
 
 	// DISTINCT * produces 3 unique rows, LIMIT 2 should return 2
 	result := run(t, exec, "SELECT DISTINCT * FROM t LIMIT 2")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
 }
 
 func TestCaseSearched(t *testing.T) {
@@ -315,15 +285,9 @@ func TestCaseSearched(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (2, -5)")
 
 	result := run(t, exec, "SELECT id, CASE WHEN val > 0 THEN 'positive' ELSE 'non-positive' END FROM t ORDER BY id")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][1] != "positive" {
-		t.Errorf("row 0: expected 'positive', got %v", result.Rows[0][1])
-	}
-	if result.Rows[1][1] != "non-positive" {
-		t.Errorf("row 1: expected 'non-positive', got %v", result.Rows[1][1])
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
+	assert.Equal(t, "positive", result.Rows[0][1], "row 0: expected 'positive'")
+	assert.Equal(t, "non-positive", result.Rows[1][1], "row 1: expected 'non-positive'")
 }
 
 func TestCaseSimple(t *testing.T) {
@@ -333,15 +297,9 @@ func TestCaseSimple(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (2, 0)")
 
 	result := run(t, exec, "SELECT id, CASE status WHEN 1 THEN 'active' WHEN 0 THEN 'inactive' END FROM t ORDER BY id")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][1] != "active" {
-		t.Errorf("row 0: expected 'active', got %v", result.Rows[0][1])
-	}
-	if result.Rows[1][1] != "inactive" {
-		t.Errorf("row 1: expected 'inactive', got %v", result.Rows[1][1])
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
+	assert.Equal(t, "active", result.Rows[0][1], "row 0: expected 'active'")
+	assert.Equal(t, "inactive", result.Rows[1][1], "row 1: expected 'inactive'")
 }
 
 func TestCaseNoElse(t *testing.T) {
@@ -351,15 +309,9 @@ func TestCaseNoElse(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (2, -5)")
 
 	result := run(t, exec, "SELECT id, CASE WHEN val > 0 THEN 'positive' END FROM t ORDER BY id")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][1] != "positive" {
-		t.Errorf("row 0: expected 'positive', got %v", result.Rows[0][1])
-	}
-	if result.Rows[1][1] != nil {
-		t.Errorf("row 1: expected nil (NULL), got %v", result.Rows[1][1])
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
+	assert.Equal(t, "positive", result.Rows[0][1], "row 0: expected 'positive'")
+	assert.Nil(t, result.Rows[1][1], "row 1: expected nil (NULL)")
 }
 
 func TestCaseMultipleWhens(t *testing.T) {
@@ -370,18 +322,10 @@ func TestCaseMultipleWhens(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (3, 3)")
 
 	result := run(t, exec, "SELECT id, CASE WHEN val = 1 THEN 'one' WHEN val = 2 THEN 'two' ELSE 'other' END FROM t ORDER BY id")
-	if len(result.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][1] != "one" {
-		t.Errorf("row 0: expected 'one', got %v", result.Rows[0][1])
-	}
-	if result.Rows[1][1] != "two" {
-		t.Errorf("row 1: expected 'two', got %v", result.Rows[1][1])
-	}
-	if result.Rows[2][1] != "other" {
-		t.Errorf("row 2: expected 'other', got %v", result.Rows[2][1])
-	}
+	require.Len(t, result.Rows, 3, "expected 3 rows")
+	assert.Equal(t, "one", result.Rows[0][1], "row 0: expected 'one'")
+	assert.Equal(t, "two", result.Rows[1][1], "row 1: expected 'two'")
+	assert.Equal(t, "other", result.Rows[2][1], "row 2: expected 'other'")
 }
 
 func TestCaseInWhere(t *testing.T) {
@@ -392,15 +336,9 @@ func TestCaseInWhere(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (3, 20)")
 
 	result := run(t, exec, "SELECT id FROM t WHERE CASE WHEN val > 0 THEN 1 ELSE 0 END = 1 ORDER BY id")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != int64(1) {
-		t.Errorf("row 0: expected id=1, got %v", result.Rows[0][0])
-	}
-	if result.Rows[1][0] != int64(3) {
-		t.Errorf("row 1: expected id=3, got %v", result.Rows[1][0])
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
+	assert.Equal(t, int64(1), result.Rows[0][0], "row 0: expected id=1")
+	assert.Equal(t, int64(3), result.Rows[1][0], "row 1: expected id=3")
 }
 
 func TestCaseWithNull(t *testing.T) {
@@ -411,15 +349,9 @@ func TestCaseWithNull(t *testing.T) {
 
 	// NULL in WHEN condition should be treated as false
 	result := run(t, exec, "SELECT id, CASE WHEN val > 0 THEN 'positive' ELSE 'other' END FROM t ORDER BY id")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][1] != "other" {
-		t.Errorf("row 0 (NULL val): expected 'other', got %v", result.Rows[0][1])
-	}
-	if result.Rows[1][1] != "positive" {
-		t.Errorf("row 1: expected 'positive', got %v", result.Rows[1][1])
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
+	assert.Equal(t, "other", result.Rows[0][1], "row 0 (NULL val): expected 'other'")
+	assert.Equal(t, "positive", result.Rows[1][1], "row 1: expected 'positive'")
 }
 
 func TestCoalesceFirstNonNull(t *testing.T) {
@@ -429,15 +361,9 @@ func TestCoalesceFirstNonNull(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (2, 10, NULL, 30)")
 
 	result := run(t, exec, "SELECT id, COALESCE(a, b, c) FROM t ORDER BY id")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][1] != int64(20) {
-		t.Errorf("row 0: expected 20, got %v", result.Rows[0][1])
-	}
-	if result.Rows[1][1] != int64(10) {
-		t.Errorf("row 1: expected 10, got %v", result.Rows[1][1])
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
+	assert.Equal(t, int64(20), result.Rows[0][1], "row 0: expected 20")
+	assert.Equal(t, int64(10), result.Rows[1][1], "row 1: expected 10")
 }
 
 func TestCoalesceAllNull(t *testing.T) {
@@ -446,12 +372,8 @@ func TestCoalesceAllNull(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (1, NULL, NULL)")
 
 	result := run(t, exec, "SELECT COALESCE(a, b) FROM t")
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != nil {
-		t.Errorf("expected NULL, got %v", result.Rows[0][0])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row")
+	assert.Nil(t, result.Rows[0][0], "expected NULL")
 }
 
 func TestCoalesceSingleArg(t *testing.T) {
@@ -461,15 +383,9 @@ func TestCoalesceSingleArg(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (2, NULL)")
 
 	result := run(t, exec, "SELECT id, COALESCE(a) FROM t ORDER BY id")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][1] != int64(42) {
-		t.Errorf("row 0: expected 42, got %v", result.Rows[0][1])
-	}
-	if result.Rows[1][1] != nil {
-		t.Errorf("row 1: expected NULL, got %v", result.Rows[1][1])
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
+	assert.Equal(t, int64(42), result.Rows[0][1], "row 0: expected 42")
+	assert.Nil(t, result.Rows[1][1], "row 1: expected NULL")
 }
 
 func TestCoalesceInWhere(t *testing.T) {
@@ -480,24 +396,16 @@ func TestCoalesceInWhere(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (3, NULL)")
 
 	result := run(t, exec, "SELECT id FROM t WHERE COALESCE(val, 0) > 0 ORDER BY id")
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != int64(2) {
-		t.Errorf("expected id=2, got %v", result.Rows[0][0])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row")
+	assert.Equal(t, int64(2), result.Rows[0][0], "expected id=2")
 }
 
 func TestCoalesceWithoutFrom(t *testing.T) {
 	exec := NewExecutor()
 
 	result := run(t, exec, "SELECT COALESCE(NULL, NULL, 'hello')")
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "hello" {
-		t.Errorf("expected 'hello', got %v", result.Rows[0][0])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row")
+	assert.Equal(t, "hello", result.Rows[0][0], "expected 'hello'")
 }
 
 func TestNullifEqual(t *testing.T) {
@@ -506,12 +414,8 @@ func TestNullifEqual(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (1, 1)")
 
 	result := run(t, exec, "SELECT NULLIF(val, 1) FROM t")
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != nil {
-		t.Errorf("expected NULL, got %v", result.Rows[0][0])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row")
+	assert.Nil(t, result.Rows[0][0], "expected NULL")
 }
 
 func TestNullifNotEqual(t *testing.T) {
@@ -520,12 +424,8 @@ func TestNullifNotEqual(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (1, 5)")
 
 	result := run(t, exec, "SELECT NULLIF(val, 1) FROM t")
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != int64(5) {
-		t.Errorf("expected 5, got %v", result.Rows[0][0])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row")
+	assert.Equal(t, int64(5), result.Rows[0][0], "expected 5")
 }
 
 func TestNullifWithNull(t *testing.T) {
@@ -534,32 +434,20 @@ func TestNullifWithNull(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (1, NULL)")
 
 	result := run(t, exec, "SELECT NULLIF(val, 1) FROM t")
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != nil {
-		t.Errorf("expected NULL (first arg is NULL), got %v", result.Rows[0][0])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row")
+	assert.Nil(t, result.Rows[0][0], "expected NULL (first arg is NULL)")
 }
 
 func TestNullifWithoutFrom(t *testing.T) {
 	exec := NewExecutor()
 
 	result := run(t, exec, "SELECT NULLIF(1, 1)")
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != nil {
-		t.Errorf("expected NULL, got %v", result.Rows[0][0])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row")
+	assert.Nil(t, result.Rows[0][0], "expected NULL")
 
 	result = run(t, exec, "SELECT NULLIF(1, 2)")
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != int64(1) {
-		t.Errorf("expected 1, got %v", result.Rows[0][0])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row")
+	assert.Equal(t, int64(1), result.Rows[0][0], "expected 1")
 }
 
 func TestAbsFunction(t *testing.T) {
@@ -570,18 +458,10 @@ func TestAbsFunction(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (3, NULL)")
 
 	result := run(t, exec, "SELECT id, ABS(val) FROM t ORDER BY id")
-	if len(result.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][1] != int64(5) {
-		t.Errorf("row 0: expected 5, got %v", result.Rows[0][1])
-	}
-	if result.Rows[1][1] != int64(3) {
-		t.Errorf("row 1: expected 3, got %v", result.Rows[1][1])
-	}
-	if result.Rows[2][1] != nil {
-		t.Errorf("row 2: expected NULL, got %v", result.Rows[2][1])
-	}
+	require.Len(t, result.Rows, 3, "expected 3 rows")
+	assert.Equal(t, int64(5), result.Rows[0][1], "row 0: expected 5")
+	assert.Equal(t, int64(3), result.Rows[1][1], "row 1: expected 3")
+	assert.Nil(t, result.Rows[2][1], "row 2: expected NULL")
 }
 
 func TestAbsFunctionFloat(t *testing.T) {
@@ -590,12 +470,8 @@ func TestAbsFunctionFloat(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (1, -3.14)")
 
 	result := run(t, exec, "SELECT ABS(val) FROM t")
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != float64(3.14) {
-		t.Errorf("expected 3.14, got %v", result.Rows[0][0])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row")
+	assert.Equal(t, float64(3.14), result.Rows[0][0], "expected 3.14")
 }
 
 func TestAbsFunctionWhere(t *testing.T) {
@@ -606,12 +482,8 @@ func TestAbsFunctionWhere(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (3, -1)")
 
 	result := run(t, exec, "SELECT id FROM t WHERE ABS(val) > 3 ORDER BY id")
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != int64(1) {
-		t.Errorf("expected id=1, got %v", result.Rows[0][0])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row")
+	assert.Equal(t, int64(1), result.Rows[0][0], "expected id=1")
 }
 
 func TestRoundFunction(t *testing.T) {
@@ -619,33 +491,23 @@ func TestRoundFunction(t *testing.T) {
 
 	// ROUND with integer (no change)
 	result := run(t, exec, "SELECT ROUND(5)")
-	if result.Rows[0][0] != int64(5) {
-		t.Errorf("ROUND(5): expected 5, got %v", result.Rows[0][0])
-	}
+	assert.Equal(t, int64(5), result.Rows[0][0], "ROUND(5): expected 5")
 
 	// ROUND float without precision
 	result = run(t, exec, "SELECT ROUND(3.7)")
-	if result.Rows[0][0] != float64(4.0) {
-		t.Errorf("ROUND(3.7): expected 4, got %v", result.Rows[0][0])
-	}
+	assert.Equal(t, float64(4.0), result.Rows[0][0], "ROUND(3.7): expected 4")
 
 	// ROUND float with precision
 	result = run(t, exec, "SELECT ROUND(3.14159, 2)")
-	if result.Rows[0][0] != float64(3.14) {
-		t.Errorf("ROUND(3.14159, 2): expected 3.14, got %v", result.Rows[0][0])
-	}
+	assert.Equal(t, float64(3.14), result.Rows[0][0], "ROUND(3.14159, 2): expected 3.14")
 
 	// ROUND negative float
 	result = run(t, exec, "SELECT ROUND(-2.5)")
-	if result.Rows[0][0] != float64(-3.0) {
-		t.Errorf("ROUND(-2.5): expected -3, got %v", result.Rows[0][0])
-	}
+	assert.Equal(t, float64(-3.0), result.Rows[0][0], "ROUND(-2.5): expected -3")
 
 	// ROUND NULL
 	result = run(t, exec, "SELECT ROUND(NULL)")
-	if result.Rows[0][0] != nil {
-		t.Errorf("ROUND(NULL): expected NULL, got %v", result.Rows[0][0])
-	}
+	assert.Nil(t, result.Rows[0][0], "ROUND(NULL): expected NULL")
 }
 
 func TestModFunction(t *testing.T) {
@@ -653,21 +515,15 @@ func TestModFunction(t *testing.T) {
 
 	// Basic MOD
 	result := run(t, exec, "SELECT MOD(10, 3)")
-	if result.Rows[0][0] != int64(1) {
-		t.Errorf("MOD(10,3): expected 1, got %v", result.Rows[0][0])
-	}
+	assert.Equal(t, int64(1), result.Rows[0][0], "MOD(10,3): expected 1")
 
 	// MOD with NULL
 	result = run(t, exec, "SELECT MOD(10, NULL)")
-	if result.Rows[0][0] != nil {
-		t.Errorf("MOD(10,NULL): expected NULL, got %v", result.Rows[0][0])
-	}
+	assert.Nil(t, result.Rows[0][0], "MOD(10,NULL): expected NULL")
 
 	// MOD division by zero
 	_, err := runWithError(exec, "SELECT MOD(10, 0)")
-	if err == nil {
-		t.Error("MOD(10,0): expected error, got nil")
-	}
+	require.Error(t, err, "MOD(10,0): expected error")
 }
 
 func TestCeilFunction(t *testing.T) {
@@ -675,27 +531,19 @@ func TestCeilFunction(t *testing.T) {
 
 	// Positive float
 	result := run(t, exec, "SELECT CEIL(2.3)")
-	if result.Rows[0][0] != int64(3) {
-		t.Errorf("CEIL(2.3): expected 3, got %v", result.Rows[0][0])
-	}
+	assert.Equal(t, int64(3), result.Rows[0][0], "CEIL(2.3): expected 3")
 
 	// Negative float
 	result = run(t, exec, "SELECT CEIL(-2.3)")
-	if result.Rows[0][0] != int64(-2) {
-		t.Errorf("CEIL(-2.3): expected -2, got %v", result.Rows[0][0])
-	}
+	assert.Equal(t, int64(-2), result.Rows[0][0], "CEIL(-2.3): expected -2")
 
 	// Integer (unchanged)
 	result = run(t, exec, "SELECT CEIL(5)")
-	if result.Rows[0][0] != int64(5) {
-		t.Errorf("CEIL(5): expected 5, got %v", result.Rows[0][0])
-	}
+	assert.Equal(t, int64(5), result.Rows[0][0], "CEIL(5): expected 5")
 
 	// NULL
 	result = run(t, exec, "SELECT CEIL(NULL)")
-	if result.Rows[0][0] != nil {
-		t.Errorf("CEIL(NULL): expected NULL, got %v", result.Rows[0][0])
-	}
+	assert.Nil(t, result.Rows[0][0], "CEIL(NULL): expected NULL")
 }
 
 func TestFloorFunction(t *testing.T) {
@@ -703,27 +551,19 @@ func TestFloorFunction(t *testing.T) {
 
 	// Positive float
 	result := run(t, exec, "SELECT FLOOR(2.7)")
-	if result.Rows[0][0] != int64(2) {
-		t.Errorf("FLOOR(2.7): expected 2, got %v", result.Rows[0][0])
-	}
+	assert.Equal(t, int64(2), result.Rows[0][0], "FLOOR(2.7): expected 2")
 
 	// Negative float
 	result = run(t, exec, "SELECT FLOOR(-2.3)")
-	if result.Rows[0][0] != int64(-3) {
-		t.Errorf("FLOOR(-2.3): expected -3, got %v", result.Rows[0][0])
-	}
+	assert.Equal(t, int64(-3), result.Rows[0][0], "FLOOR(-2.3): expected -3")
 
 	// Integer (unchanged)
 	result = run(t, exec, "SELECT FLOOR(5)")
-	if result.Rows[0][0] != int64(5) {
-		t.Errorf("FLOOR(5): expected 5, got %v", result.Rows[0][0])
-	}
+	assert.Equal(t, int64(5), result.Rows[0][0], "FLOOR(5): expected 5")
 
 	// NULL
 	result = run(t, exec, "SELECT FLOOR(NULL)")
-	if result.Rows[0][0] != nil {
-		t.Errorf("FLOOR(NULL): expected NULL, got %v", result.Rows[0][0])
-	}
+	assert.Nil(t, result.Rows[0][0], "FLOOR(NULL): expected NULL")
 }
 
 func TestPowerFunction(t *testing.T) {
@@ -731,21 +571,15 @@ func TestPowerFunction(t *testing.T) {
 
 	// Basic power
 	result := run(t, exec, "SELECT POWER(2, 10)")
-	if result.Rows[0][0] != float64(1024) {
-		t.Errorf("POWER(2,10): expected 1024, got %v", result.Rows[0][0])
-	}
+	assert.Equal(t, float64(1024), result.Rows[0][0], "POWER(2,10): expected 1024")
 
 	// Zero exponent
 	result = run(t, exec, "SELECT POWER(5, 0)")
-	if result.Rows[0][0] != float64(1) {
-		t.Errorf("POWER(5,0): expected 1, got %v", result.Rows[0][0])
-	}
+	assert.Equal(t, float64(1), result.Rows[0][0], "POWER(5,0): expected 1")
 
 	// NULL
 	result = run(t, exec, "SELECT POWER(2, NULL)")
-	if result.Rows[0][0] != nil {
-		t.Errorf("POWER(2,NULL): expected NULL, got %v", result.Rows[0][0])
-	}
+	assert.Nil(t, result.Rows[0][0], "POWER(2,NULL): expected NULL")
 }
 
 func TestNumericFunctionsWithTable(t *testing.T) {
@@ -755,41 +589,23 @@ func TestNumericFunctionsWithTable(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (2, 2.3)")
 
 	result := run(t, exec, "SELECT id, ABS(val), CEIL(val), FLOOR(val) FROM t ORDER BY id")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
 	// Row 0: val=-3.7 -> ABS=3.7, CEIL=-3, FLOOR=-4
-	if result.Rows[0][1] != float64(3.7) {
-		t.Errorf("row 0 ABS: expected 3.7, got %v", result.Rows[0][1])
-	}
-	if result.Rows[0][2] != int64(-3) {
-		t.Errorf("row 0 CEIL: expected -3, got %v", result.Rows[0][2])
-	}
-	if result.Rows[0][3] != int64(-4) {
-		t.Errorf("row 0 FLOOR: expected -4, got %v", result.Rows[0][3])
-	}
+	assert.Equal(t, float64(3.7), result.Rows[0][1], "row 0 ABS: expected 3.7")
+	assert.Equal(t, int64(-3), result.Rows[0][2], "row 0 CEIL: expected -3")
+	assert.Equal(t, int64(-4), result.Rows[0][3], "row 0 FLOOR: expected -4")
 	// Row 1: val=2.3 -> ABS=2.3, CEIL=3, FLOOR=2
-	if result.Rows[1][1] != float64(2.3) {
-		t.Errorf("row 1 ABS: expected 2.3, got %v", result.Rows[1][1])
-	}
-	if result.Rows[1][2] != int64(3) {
-		t.Errorf("row 1 CEIL: expected 3, got %v", result.Rows[1][2])
-	}
-	if result.Rows[1][3] != int64(2) {
-		t.Errorf("row 1 FLOOR: expected 2, got %v", result.Rows[1][3])
-	}
+	assert.Equal(t, float64(2.3), result.Rows[1][1], "row 1 ABS: expected 2.3")
+	assert.Equal(t, int64(3), result.Rows[1][2], "row 1 CEIL: expected 3")
+	assert.Equal(t, int64(2), result.Rows[1][3], "row 1 FLOOR: expected 2")
 }
 
 func TestDoubleQuoteStringLiteral(t *testing.T) {
 	exec := NewExecutor()
 
 	result := run(t, exec, `SELECT "hello"`)
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "hello" {
-		t.Errorf("expected 'hello', got %v", result.Rows[0][0])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row")
+	assert.Equal(t, "hello", result.Rows[0][0], "expected 'hello'")
 }
 
 func TestStringFunctionsWithoutTable(t *testing.T) {
@@ -837,13 +653,9 @@ func TestStringFunctionsWithoutTable(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := run(t, exec, tt.sql)
-			if len(result.Rows) != 1 {
-				t.Fatalf("expected 1 row, got %d", len(result.Rows))
-			}
+			require.Len(t, result.Rows, 1, "expected 1 row")
 			got := result.Rows[0][0]
-			if got != tt.want {
-				t.Errorf("got %v (%T), want %v (%T)", got, got, tt.want, tt.want)
-			}
+			assert.Equal(t, tt.want, got, "got %v (%T), want %v (%T)", got, got, tt.want, tt.want)
 		})
 	}
 }
@@ -856,54 +668,34 @@ func TestStringFunctionsWithTable(t *testing.T) {
 
 	// LENGTH with column
 	result := run(t, exec, "SELECT id, LENGTH(name) FROM t ORDER BY id")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][1] != int64(5) {
-		t.Errorf("row 0 LENGTH: expected 5, got %v", result.Rows[0][1])
-	}
-	if result.Rows[1][1] != int64(7) {
-		t.Errorf("row 1 LENGTH: expected 7, got %v", result.Rows[1][1])
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
+	assert.Equal(t, int64(5), result.Rows[0][1], "row 0 LENGTH: expected 5")
+	assert.Equal(t, int64(7), result.Rows[1][1], "row 1 LENGTH: expected 7")
 
 	// UPPER with column
 	result = run(t, exec, "SELECT UPPER(name) FROM t WHERE id = 1")
-	if result.Rows[0][0] != "ALICE" {
-		t.Errorf("UPPER: expected 'ALICE', got %v", result.Rows[0][0])
-	}
+	assert.Equal(t, "ALICE", result.Rows[0][0], "UPPER: expected 'ALICE'")
 
 	// LOWER with column
 	result = run(t, exec, "SELECT LOWER(name) FROM t WHERE id = 1")
-	if result.Rows[0][0] != "alice" {
-		t.Errorf("LOWER: expected 'alice', got %v", result.Rows[0][0])
-	}
+	assert.Equal(t, "alice", result.Rows[0][0], "LOWER: expected 'alice'")
 
 	// TRIM with column
 	result = run(t, exec, "SELECT TRIM(name) FROM t WHERE id = 2")
-	if result.Rows[0][0] != "Bob" {
-		t.Errorf("TRIM: expected 'Bob', got %v", result.Rows[0][0])
-	}
+	assert.Equal(t, "Bob", result.Rows[0][0], "TRIM: expected 'Bob'")
 
 	// SUBSTRING with column
 	result = run(t, exec, "SELECT SUBSTRING(name, 1, 3) FROM t WHERE id = 1")
-	if result.Rows[0][0] != "Ali" {
-		t.Errorf("SUBSTRING: expected 'Ali', got %v", result.Rows[0][0])
-	}
+	assert.Equal(t, "Ali", result.Rows[0][0], "SUBSTRING: expected 'Ali'")
 
 	// CONCAT with column
 	result = run(t, exec, "SELECT CONCAT(name, '!') FROM t WHERE id = 1")
-	if result.Rows[0][0] != "Alice!" {
-		t.Errorf("CONCAT: expected 'Alice!', got %v", result.Rows[0][0])
-	}
+	assert.Equal(t, "Alice!", result.Rows[0][0], "CONCAT: expected 'Alice!'")
 
 	// WHERE with string function
 	result = run(t, exec, "SELECT id FROM t WHERE LENGTH(name) > 5")
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != int64(2) {
-		t.Errorf("expected id=2, got %v", result.Rows[0][0])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row")
+	assert.Equal(t, int64(2), result.Rows[0][0], "expected id=2")
 }
 
 func TestOrderByLimitTopK(t *testing.T) {
@@ -917,50 +709,34 @@ func TestOrderByLimitTopK(t *testing.T) {
 
 	// Case A: ORDER BY ASC + LIMIT
 	result := run(t, exec, "SELECT val FROM t ORDER BY val ASC LIMIT 3")
-	if len(result.Rows) != 3 {
-		t.Fatalf("Case A: expected 3 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 3, "Case A: expected 3 rows")
 	expected := []int64{1, 2, 3}
 	for i, exp := range expected {
-		if result.Rows[i][0] != exp {
-			t.Errorf("Case A[%d]: expected %d, got %v", i, exp, result.Rows[i][0])
-		}
+		assert.Equal(t, exp, result.Rows[i][0], "Case A[%d]: expected %d", i, exp)
 	}
 
 	// Case B: ORDER BY DESC + LIMIT
 	result = run(t, exec, "SELECT val FROM t ORDER BY val DESC LIMIT 2")
-	if len(result.Rows) != 2 {
-		t.Fatalf("Case B: expected 2 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 2, "Case B: expected 2 rows")
 	expected = []int64{5, 4}
 	for i, exp := range expected {
-		if result.Rows[i][0] != exp {
-			t.Errorf("Case B[%d]: expected %d, got %v", i, exp, result.Rows[i][0])
-		}
+		assert.Equal(t, exp, result.Rows[i][0], "Case B[%d]: expected %d", i, exp)
 	}
 
 	// Case C: ORDER BY + LIMIT + OFFSET
 	result = run(t, exec, "SELECT val FROM t ORDER BY val ASC LIMIT 2 OFFSET 1")
-	if len(result.Rows) != 2 {
-		t.Fatalf("Case C: expected 2 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 2, "Case C: expected 2 rows")
 	expected = []int64{2, 3}
 	for i, exp := range expected {
-		if result.Rows[i][0] != exp {
-			t.Errorf("Case C[%d]: expected %d, got %v", i, exp, result.Rows[i][0])
-		}
+		assert.Equal(t, exp, result.Rows[i][0], "Case C[%d]: expected %d", i, exp)
 	}
 
 	// Case F: LIMIT larger than row count (returns all rows sorted)
 	result = run(t, exec, "SELECT val FROM t ORDER BY val ASC LIMIT 100")
-	if len(result.Rows) != 5 {
-		t.Fatalf("Case F: expected 5 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 5, "Case F: expected 5 rows")
 	expected = []int64{1, 2, 3, 4, 5}
 	for i, exp := range expected {
-		if result.Rows[i][0] != exp {
-			t.Errorf("Case F[%d]: expected %d, got %v", i, exp, result.Rows[i][0])
-		}
+		assert.Equal(t, exp, result.Rows[i][0], "Case F[%d]: expected %d", i, exp)
 	}
 }
 
@@ -974,18 +750,15 @@ func TestOrderByLimitTopKMultiColumn(t *testing.T) {
 
 	// Case D: Multi-column ORDER BY + LIMIT
 	result := run(t, exec, "SELECT col1, col2 FROM t2 ORDER BY col1 ASC, col2 ASC LIMIT 3")
-	if len(result.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 3, "expected 3 rows")
 	type row struct {
 		col1 int64
 		col2 string
 	}
 	expectedRows := []row{{1, "a"}, {1, "b"}, {2, "a"}}
 	for i, exp := range expectedRows {
-		if result.Rows[i][0] != exp.col1 || result.Rows[i][1] != exp.col2 {
-			t.Errorf("row[%d]: expected (%d, %s), got (%v, %v)", i, exp.col1, exp.col2, result.Rows[i][0], result.Rows[i][1])
-		}
+		assert.Equal(t, exp.col1, result.Rows[i][0], "row[%d] col1: expected %d", i, exp.col1)
+		assert.Equal(t, exp.col2, result.Rows[i][1], "row[%d] col2: expected %s", i, exp.col2)
 	}
 }
 
@@ -1000,26 +773,18 @@ func TestOrderByLimitTopKWithNull(t *testing.T) {
 
 	// Case E: NULLs sort last for ASC
 	result := run(t, exec, "SELECT val FROM tn ORDER BY val ASC LIMIT 3")
-	if len(result.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 3, "expected 3 rows")
 	expected := []interface{}{int64(1), int64(2), int64(3)}
 	for i, exp := range expected {
-		if result.Rows[i][0] != exp {
-			t.Errorf("ASC[%d]: expected %v, got %v", i, exp, result.Rows[i][0])
-		}
+		assert.Equal(t, exp, result.Rows[i][0], "ASC[%d]: expected %v", i, exp)
 	}
 
 	// NULLs sort last for DESC too
 	result = run(t, exec, "SELECT val FROM tn ORDER BY val DESC LIMIT 3")
-	if len(result.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 3, "expected 3 rows")
 	expected = []interface{}{int64(3), int64(2), int64(1)}
 	for i, exp := range expected {
-		if result.Rows[i][0] != exp {
-			t.Errorf("DESC[%d]: expected %v, got %v", i, exp, result.Rows[i][0])
-		}
+		assert.Equal(t, exp, result.Rows[i][0], "DESC[%d]: expected %v", i, exp)
 	}
 }
 
@@ -1034,14 +799,10 @@ func TestIndexOrderByAsc(t *testing.T) {
 	}
 
 	result := run(t, exec, "SELECT id, val FROM t ORDER BY val ASC")
-	if len(result.Rows) != 10 {
-		t.Fatalf("expected 10 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 10, "expected 10 rows")
 	for i := 0; i < 10; i++ {
 		expected := int64((i + 1) * 10)
-		if result.Rows[i][1] != expected {
-			t.Errorf("row %d: expected val=%d, got %v", i, expected, result.Rows[i][1])
-		}
+		assert.Equal(t, expected, result.Rows[i][1], "row %d: expected val=%d", i, expected)
 	}
 }
 
@@ -1054,14 +815,10 @@ func TestIndexOrderByDesc(t *testing.T) {
 	}
 
 	result := run(t, exec, "SELECT id, val FROM t ORDER BY val DESC")
-	if len(result.Rows) != 10 {
-		t.Fatalf("expected 10 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 10, "expected 10 rows")
 	for i := 0; i < 10; i++ {
 		expected := int64((10 - i) * 10)
-		if result.Rows[i][1] != expected {
-			t.Errorf("row %d: expected val=%d, got %v", i, expected, result.Rows[i][1])
-		}
+		assert.Equal(t, expected, result.Rows[i][1], "row %d: expected val=%d", i, expected)
 	}
 }
 
@@ -1076,18 +833,14 @@ func TestPKOrderByAscDesc(t *testing.T) {
 	result := run(t, exec, "SELECT id FROM t ORDER BY id ASC")
 	expected := []int64{1, 2, 3, 4, 5}
 	for i, exp := range expected {
-		if result.Rows[i][0] != exp {
-			t.Errorf("ASC[%d]: expected %d, got %v", i, exp, result.Rows[i][0])
-		}
+		assert.Equal(t, exp, result.Rows[i][0], "ASC[%d]: expected %d", i, exp)
 	}
 
 	// DESC
 	result = run(t, exec, "SELECT id FROM t ORDER BY id DESC")
 	expected = []int64{5, 4, 3, 2, 1}
 	for i, exp := range expected {
-		if result.Rows[i][0] != exp {
-			t.Errorf("DESC[%d]: expected %d, got %v", i, exp, result.Rows[i][0])
-		}
+		assert.Equal(t, exp, result.Rows[i][0], "DESC[%d]: expected %d", i, exp)
 	}
 }
 
@@ -1100,25 +853,17 @@ func TestIndexOrderByLimit(t *testing.T) {
 	}
 
 	result := run(t, exec, "SELECT val FROM t ORDER BY val ASC LIMIT 5")
-	if len(result.Rows) != 5 {
-		t.Fatalf("expected 5 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 5, "expected 5 rows")
 	expected := []int64{10, 20, 30, 40, 50}
 	for i, exp := range expected {
-		if result.Rows[i][0] != exp {
-			t.Errorf("row %d: expected %d, got %v", i, exp, result.Rows[i][0])
-		}
+		assert.Equal(t, exp, result.Rows[i][0], "row %d: expected %d", i, exp)
 	}
 
 	result = run(t, exec, "SELECT val FROM t ORDER BY val DESC LIMIT 5")
-	if len(result.Rows) != 5 {
-		t.Fatalf("expected 5 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 5, "expected 5 rows")
 	expected = []int64{1000, 990, 980, 970, 960}
 	for i, exp := range expected {
-		if result.Rows[i][0] != exp {
-			t.Errorf("DESC row %d: expected %d, got %v", i, exp, result.Rows[i][0])
-		}
+		assert.Equal(t, exp, result.Rows[i][0], "DESC row %d: expected %d", i, exp)
 	}
 }
 
@@ -1131,14 +876,10 @@ func TestIndexOrderByWithWhereRange(t *testing.T) {
 	}
 
 	result := run(t, exec, "SELECT val FROM t WHERE val > 50 ORDER BY val ASC LIMIT 5")
-	if len(result.Rows) != 5 {
-		t.Fatalf("expected 5 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 5, "expected 5 rows")
 	expected := []int64{51, 52, 53, 54, 55}
 	for i, exp := range expected {
-		if result.Rows[i][0] != exp {
-			t.Errorf("row %d: expected %d, got %v", i, exp, result.Rows[i][0])
-		}
+		assert.Equal(t, exp, result.Rows[i][0], "row %d: expected %d", i, exp)
 	}
 }
 
@@ -1151,14 +892,10 @@ func TestIndexOrderByOffsetLimit(t *testing.T) {
 	}
 
 	result := run(t, exec, "SELECT val FROM t ORDER BY val ASC LIMIT 3 OFFSET 5")
-	if len(result.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 3, "expected 3 rows")
 	expected := []int64{60, 70, 80}
 	for i, exp := range expected {
-		if result.Rows[i][0] != exp {
-			t.Errorf("row %d: expected %d, got %v", i, exp, result.Rows[i][0])
-		}
+		assert.Equal(t, exp, result.Rows[i][0], "row %d: expected %d", i, exp)
 	}
 }
 
@@ -1175,14 +912,10 @@ func TestIndexOrderByDuplicates(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (6, 20)")
 
 	result := run(t, exec, "SELECT val FROM t ORDER BY val ASC")
-	if len(result.Rows) != 6 {
-		t.Fatalf("expected 6 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 6, "expected 6 rows")
 	expected := []int64{10, 10, 20, 20, 30, 30}
 	for i, exp := range expected {
-		if result.Rows[i][0] != exp {
-			t.Errorf("row %d: expected %d, got %v", i, exp, result.Rows[i][0])
-		}
+		assert.Equal(t, exp, result.Rows[i][0], "row %d: expected %d", i, exp)
 	}
 }
 
@@ -1197,15 +930,12 @@ func TestIndexOrderByMultiColumn(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (5, 3, 50)")
 
 	result := run(t, exec, "SELECT col1, col2 FROM t ORDER BY col1 ASC, col2 ASC")
-	if len(result.Rows) != 5 {
-		t.Fatalf("expected 5 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 5, "expected 5 rows")
 	type pair struct{ c1, c2 int64 }
 	expected := []pair{{1, 20}, {1, 40}, {2, 10}, {2, 30}, {3, 50}}
 	for i, exp := range expected {
-		if result.Rows[i][0] != exp.c1 || result.Rows[i][1] != exp.c2 {
-			t.Errorf("row %d: expected (%d,%d), got (%v,%v)", i, exp.c1, exp.c2, result.Rows[i][0], result.Rows[i][1])
-		}
+		assert.Equal(t, exp.c1, result.Rows[i][0], "row %d col1: expected %d", i, exp.c1)
+		assert.Equal(t, exp.c2, result.Rows[i][1], "row %d col2: expected %d", i, exp.c2)
 	}
 }
 
@@ -1219,15 +949,12 @@ func TestIndexOrderByMultiColumnLimit(t *testing.T) {
 	}
 
 	result := run(t, exec, "SELECT col1, col2 FROM t ORDER BY col1 ASC, col2 ASC LIMIT 4")
-	if len(result.Rows) != 4 {
-		t.Fatalf("expected 4 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 4, "expected 4 rows")
 	type pair struct{ c1, c2 int64 }
 	expected := []pair{{1, 70}, {1, 80}, {1, 90}, {2, 40}}
 	for i, exp := range expected {
-		if result.Rows[i][0] != exp.c1 || result.Rows[i][1] != exp.c2 {
-			t.Errorf("row %d: expected (%d,%d), got (%v,%v)", i, exp.c1, exp.c2, result.Rows[i][0], result.Rows[i][1])
-		}
+		assert.Equal(t, exp.c1, result.Rows[i][0], "row %d col1: expected %d", i, exp.c1)
+		assert.Equal(t, exp.c2, result.Rows[i][1], "row %d col2: expected %d", i, exp.c2)
 	}
 }
 
@@ -1243,14 +970,10 @@ func TestIndexOrderByNullableDescLimit(t *testing.T) {
 
 	// DESC + LIMIT on nullable column: NULLs should sort last
 	result := run(t, exec, "SELECT id, val FROM t ORDER BY val DESC LIMIT 3")
-	if len(result.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 3, "expected 3 rows")
 	expected := []int64{30, 20, 10}
 	for i, exp := range expected {
-		if result.Rows[i][1] != exp {
-			t.Errorf("row %d: expected val=%d, got %v", i, exp, result.Rows[i][1])
-		}
+		assert.Equal(t, exp, result.Rows[i][1], "row %d: expected val=%d", i, exp)
 	}
 }
 
@@ -1266,14 +989,10 @@ func TestIndexOrderByNullableAscLimit(t *testing.T) {
 
 	// ASC + LIMIT on nullable column: NULLs should sort last
 	result := run(t, exec, "SELECT id, val FROM t ORDER BY val ASC LIMIT 3")
-	if len(result.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 3, "expected 3 rows")
 	expected := []int64{10, 20, 30}
 	for i, exp := range expected {
-		if result.Rows[i][1] != exp {
-			t.Errorf("row %d: expected val=%d, got %v", i, exp, result.Rows[i][1])
-		}
+		assert.Equal(t, exp, result.Rows[i][1], "row %d: expected val=%d", i, exp)
 	}
 }
 
@@ -1289,14 +1008,10 @@ func TestIndexOrderByNullableDescNoLimit(t *testing.T) {
 
 	// DESC without LIMIT on nullable column: NULLs should sort last
 	result := run(t, exec, "SELECT id, val FROM t ORDER BY val DESC")
-	if len(result.Rows) != 5 {
-		t.Fatalf("expected 5 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 5, "expected 5 rows")
 	expectedVals := []interface{}{int64(30), int64(20), int64(10), nil, nil}
 	for i, exp := range expectedVals {
-		if result.Rows[i][1] != exp {
-			t.Errorf("row %d: expected val=%v, got %v", i, exp, result.Rows[i][1])
-		}
+		assert.Equal(t, exp, result.Rows[i][1], "row %d: expected val=%v", i, exp)
 	}
 }
 
@@ -1310,14 +1025,10 @@ func TestOrderByNonIndexedFallback(t *testing.T) {
 
 	// ORDER BY other (no index) should still work via normal sort path
 	result := run(t, exec, "SELECT other FROM t ORDER BY other ASC")
-	if len(result.Rows) != 5 {
-		t.Fatalf("expected 5 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 5, "expected 5 rows")
 	expected := []int64{10, 20, 30, 40, 50}
 	for i, exp := range expected {
-		if result.Rows[i][0] != exp {
-			t.Errorf("row %d: expected %d, got %v", i, exp, result.Rows[i][0])
-		}
+		assert.Equal(t, exp, result.Rows[i][0], "row %d: expected %d", i, exp)
 	}
 }
 
@@ -1331,16 +1042,8 @@ func TestOrderByWithGroupByFallback(t *testing.T) {
 
 	// GROUP BY + ORDER BY should use fallback (not index order)
 	result := run(t, exec, "SELECT grp, COUNT(*) FROM t GROUP BY grp ORDER BY grp ASC")
-	if len(result.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != int64(0) {
-		t.Errorf("row 0: expected grp=0, got %v", result.Rows[0][0])
-	}
-	if result.Rows[1][0] != int64(1) {
-		t.Errorf("row 1: expected grp=1, got %v", result.Rows[1][0])
-	}
-	if result.Rows[2][0] != int64(2) {
-		t.Errorf("row 2: expected grp=2, got %v", result.Rows[2][0])
-	}
+	require.Len(t, result.Rows, 3, "expected 3 rows")
+	assert.Equal(t, int64(0), result.Rows[0][0], "row 0: expected grp=0")
+	assert.Equal(t, int64(1), result.Rows[1][0], "row 1: expected grp=1")
+	assert.Equal(t, int64(2), result.Rows[2][0], "row 2: expected grp=2")
 }

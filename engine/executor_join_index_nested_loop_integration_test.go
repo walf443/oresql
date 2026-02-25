@@ -2,6 +2,9 @@ package engine
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestJoinWithIndexNestedLoop(t *testing.T) {
@@ -18,18 +21,13 @@ func TestJoinWithIndexNestedLoop(t *testing.T) {
 	run(t, exec, "INSERT INTO orders VALUES (30, 1, 'tablet')")
 
 	result := run(t, exec, "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id ORDER BY o.id")
-	if len(result.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "alice" || result.Rows[0][1] != "laptop" {
-		t.Errorf("row 0: expected [alice laptop], got %v", result.Rows[0])
-	}
-	if result.Rows[1][0] != "bob" || result.Rows[1][1] != "phone" {
-		t.Errorf("row 1: expected [bob phone], got %v", result.Rows[1])
-	}
-	if result.Rows[2][0] != "alice" || result.Rows[2][1] != "tablet" {
-		t.Errorf("row 2: expected [alice tablet], got %v", result.Rows[2])
-	}
+	require.Len(t, result.Rows, 3, "expected 3 rows")
+	assert.Equal(t, "alice", result.Rows[0][0])
+	assert.Equal(t, "laptop", result.Rows[0][1])
+	assert.Equal(t, "bob", result.Rows[1][0])
+	assert.Equal(t, "phone", result.Rows[1][1])
+	assert.Equal(t, "alice", result.Rows[2][0])
+	assert.Equal(t, "tablet", result.Rows[2][1])
 }
 
 func TestJoinWithWherePushdown(t *testing.T) {
@@ -46,15 +44,11 @@ func TestJoinWithWherePushdown(t *testing.T) {
 
 	// WHERE u.status = 'active' should be pushed down to users table
 	result := run(t, exec, "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE u.status = 'active' ORDER BY u.id")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "alice" || result.Rows[0][1] != "laptop" {
-		t.Errorf("row 0: expected [alice laptop], got %v", result.Rows[0])
-	}
-	if result.Rows[1][0] != "charlie" || result.Rows[1][1] != "tablet" {
-		t.Errorf("row 1: expected [charlie tablet], got %v", result.Rows[1])
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
+	assert.Equal(t, "alice", result.Rows[0][0])
+	assert.Equal(t, "laptop", result.Rows[0][1])
+	assert.Equal(t, "charlie", result.Rows[1][0])
+	assert.Equal(t, "tablet", result.Rows[1][1])
 }
 
 func TestJoinDrivingTableChoice(t *testing.T) {
@@ -72,12 +66,9 @@ func TestJoinDrivingTableChoice(t *testing.T) {
 
 	// WHERE o.amount = 1000 with index on amount should cause orders to be considered as driving table
 	result := run(t, exec, "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE o.amount = 1000")
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "alice" || result.Rows[0][1] != "laptop" {
-		t.Errorf("expected [alice laptop], got %v", result.Rows[0])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row")
+	assert.Equal(t, "alice", result.Rows[0][0])
+	assert.Equal(t, "laptop", result.Rows[0][1])
 }
 
 func TestJoinReversedOrderSelectStar(t *testing.T) {
@@ -91,29 +82,15 @@ func TestJoinReversedOrderSelectStar(t *testing.T) {
 
 	// Even if driving table is switched, SELECT * should maintain FROM + JOIN column order
 	result := run(t, exec, "SELECT * FROM users u JOIN orders o ON u.id = o.user_id")
-	if len(result.Columns) != 5 {
-		t.Fatalf("expected 5 columns, got %d", len(result.Columns))
-	}
+	require.Len(t, result.Columns, 5, "expected 5 columns")
 	// Columns should be: id, name, id, user_id, product (users + orders)
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row")
 	row := result.Rows[0]
-	if row[0] != int64(1) {
-		t.Errorf("users.id = %v, want 1", row[0])
-	}
-	if row[1] != "alice" {
-		t.Errorf("users.name = %v, want alice", row[1])
-	}
-	if row[2] != int64(10) {
-		t.Errorf("orders.id = %v, want 10", row[2])
-	}
-	if row[3] != int64(1) {
-		t.Errorf("orders.user_id = %v, want 1", row[3])
-	}
-	if row[4] != "laptop" {
-		t.Errorf("orders.product = %v, want laptop", row[4])
-	}
+	assert.Equal(t, int64(1), row[0], "users.id")
+	assert.Equal(t, "alice", row[1], "users.name")
+	assert.Equal(t, int64(10), row[2], "orders.id")
+	assert.Equal(t, int64(1), row[3], "orders.user_id")
+	assert.Equal(t, "laptop", row[4], "orders.product")
 }
 
 func TestJoinNullEquiJoinValue(t *testing.T) {
@@ -129,12 +106,9 @@ func TestJoinNullEquiJoinValue(t *testing.T) {
 
 	// NULL user_id should not match any user
 	result := run(t, exec, "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id")
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "alice" || result.Rows[0][1] != "laptop" {
-		t.Errorf("expected [alice laptop], got %v", result.Rows[0])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row")
+	assert.Equal(t, "alice", result.Rows[0][0])
+	assert.Equal(t, "laptop", result.Rows[0][1])
 }
 
 func TestJoinCrossTableWhere(t *testing.T) {
@@ -149,12 +123,9 @@ func TestJoinCrossTableWhere(t *testing.T) {
 
 	// Cross-table WHERE: u.id + o.id > 15 (references both tables)
 	result := run(t, exec, "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE u.id + o.id > 15")
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "bob" || result.Rows[0][1] != "phone" {
-		t.Errorf("expected [bob phone], got %v", result.Rows[0])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row")
+	assert.Equal(t, "bob", result.Rows[0][0])
+	assert.Equal(t, "phone", result.Rows[0][1])
 }
 
 func TestJoinOrWhereNotPushed(t *testing.T) {
@@ -169,15 +140,11 @@ func TestJoinOrWhereNotPushed(t *testing.T) {
 
 	// OR across tables should not be pushed down, but should still work correctly
 	result := run(t, exec, "SELECT u.name, o.amount FROM users u JOIN orders o ON u.id = o.user_id WHERE u.status = 'active' OR o.amount > 100 ORDER BY u.id")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "alice" || result.Rows[0][1] != int64(50) {
-		t.Errorf("row 0: expected [alice 50], got %v", result.Rows[0])
-	}
-	if result.Rows[1][0] != "bob" || result.Rows[1][1] != int64(200) {
-		t.Errorf("row 1: expected [bob 200], got %v", result.Rows[1])
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
+	assert.Equal(t, "alice", result.Rows[0][0])
+	assert.Equal(t, int64(50), result.Rows[0][1])
+	assert.Equal(t, "bob", result.Rows[1][0])
+	assert.Equal(t, int64(200), result.Rows[1][1])
 }
 
 func TestJoinBothTablesPushedDown(t *testing.T) {
@@ -194,12 +161,9 @@ func TestJoinBothTablesPushedDown(t *testing.T) {
 
 	// Both tables have pushdown conditions
 	result := run(t, exec, "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE u.status = 'active' AND o.amount > 500 ORDER BY u.id")
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "alice" || result.Rows[0][1] != "laptop" {
-		t.Errorf("expected [alice laptop], got %v", result.Rows[0])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row")
+	assert.Equal(t, "alice", result.Rows[0][0])
+	assert.Equal(t, "laptop", result.Rows[0][1])
 }
 
 func TestJoinInnerTableLocalWhereIndexScan(t *testing.T) {
@@ -221,15 +185,11 @@ func TestJoinInnerTableLocalWhereIndexScan(t *testing.T) {
 	// No index on user_id (JOIN column), but index on status (WHERE column)
 	// tryIndexScan should be used for LocalWhere on inner table
 	result := run(t, exec, "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE o.status = 'active' ORDER BY o.id")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "alice" || result.Rows[0][1] != "laptop" {
-		t.Errorf("row 0: expected [alice laptop], got %v", result.Rows[0])
-	}
-	if result.Rows[1][0] != "charlie" || result.Rows[1][1] != "tablet" {
-		t.Errorf("row 1: expected [charlie tablet], got %v", result.Rows[1])
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
+	assert.Equal(t, "alice", result.Rows[0][0])
+	assert.Equal(t, "laptop", result.Rows[0][1])
+	assert.Equal(t, "charlie", result.Rows[1][0])
+	assert.Equal(t, "tablet", result.Rows[1][1])
 }
 
 func TestJoinInnerTableLocalWherePKWithJoinIndex(t *testing.T) {
@@ -250,12 +210,9 @@ func TestJoinInnerTableLocalWherePKWithJoinIndex(t *testing.T) {
 	// JOIN index on user_id + PK WHERE on o.id = 10
 	// innerWhereKeys should intersect with JOIN index lookup results
 	result := run(t, exec, "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE o.id = 10")
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "alice" || result.Rows[0][1] != "laptop" {
-		t.Errorf("expected [alice laptop], got %v", result.Rows[0])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row")
+	assert.Equal(t, "alice", result.Rows[0][0])
+	assert.Equal(t, "laptop", result.Rows[0][1])
 }
 
 func TestJoinThreeTablesNaivePath(t *testing.T) {
@@ -269,12 +226,10 @@ func TestJoinThreeTablesNaivePath(t *testing.T) {
 
 	// 3-table JOIN should use the existing naive path
 	result := run(t, exec, "SELECT t1.val, t2.val, t3.val FROM t1 JOIN t2 ON t1.id = t2.t1_id JOIN t3 ON t2.id = t3.t2_id")
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "a" || result.Rows[0][1] != "b" || result.Rows[0][2] != "c" {
-		t.Errorf("expected [a b c], got %v", result.Rows[0])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row")
+	assert.Equal(t, "a", result.Rows[0][0])
+	assert.Equal(t, "b", result.Rows[0][1])
+	assert.Equal(t, "c", result.Rows[0][2])
 }
 
 func TestJoinCompositeIndexFullEquality(t *testing.T) {
@@ -295,18 +250,13 @@ func TestJoinCompositeIndexFullEquality(t *testing.T) {
 
 	// Composite index (user_id, status) should allow single Lookup([joinVal, 'active'])
 	result := run(t, exec, "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE o.status = 'active' ORDER BY o.id")
-	if len(result.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "alice" || result.Rows[0][1] != "laptop" {
-		t.Errorf("row 0: expected [alice laptop], got %v", result.Rows[0])
-	}
-	if result.Rows[1][0] != "bob" || result.Rows[1][1] != "tablet" {
-		t.Errorf("row 1: expected [bob tablet], got %v", result.Rows[1])
-	}
-	if result.Rows[2][0] != "charlie" || result.Rows[2][1] != "monitor" {
-		t.Errorf("row 2: expected [charlie monitor], got %v", result.Rows[2])
-	}
+	require.Len(t, result.Rows, 3, "expected 3 rows")
+	assert.Equal(t, "alice", result.Rows[0][0])
+	assert.Equal(t, "laptop", result.Rows[0][1])
+	assert.Equal(t, "bob", result.Rows[1][0])
+	assert.Equal(t, "tablet", result.Rows[1][1])
+	assert.Equal(t, "charlie", result.Rows[2][0])
+	assert.Equal(t, "monitor", result.Rows[2][1])
 }
 
 func TestJoinCompositeIndexPrefixRange(t *testing.T) {
@@ -326,18 +276,13 @@ func TestJoinCompositeIndexPrefixRange(t *testing.T) {
 
 	// Composite index (user_id, amount): prefix=[joinVal], range amount >= 500
 	result := run(t, exec, "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE o.amount >= 500 ORDER BY o.id")
-	if len(result.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "alice" || result.Rows[0][1] != "laptop" {
-		t.Errorf("row 0: expected [alice laptop], got %v", result.Rows[0])
-	}
-	if result.Rows[1][0] != "alice" || result.Rows[1][1] != "tablet" {
-		t.Errorf("row 1: expected [alice tablet], got %v", result.Rows[1])
-	}
-	if result.Rows[2][0] != "bob" || result.Rows[2][1] != "monitor" {
-		t.Errorf("row 2: expected [bob monitor], got %v", result.Rows[2])
-	}
+	require.Len(t, result.Rows, 3, "expected 3 rows")
+	assert.Equal(t, "alice", result.Rows[0][0])
+	assert.Equal(t, "laptop", result.Rows[0][1])
+	assert.Equal(t, "alice", result.Rows[1][0])
+	assert.Equal(t, "tablet", result.Rows[1][1])
+	assert.Equal(t, "bob", result.Rows[2][0])
+	assert.Equal(t, "monitor", result.Rows[2][1])
 }
 
 func TestJoinCompositeIndex3ColPrefixScan(t *testing.T) {
@@ -357,16 +302,11 @@ func TestJoinCompositeIndex3ColPrefixScan(t *testing.T) {
 
 	// 3-col index (user_id, status, amount): prefix scan with [joinVal, 'active']
 	result := run(t, exec, "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE o.status = 'active' ORDER BY o.id")
-	if len(result.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "alice" || result.Rows[0][1] != "laptop" {
-		t.Errorf("row 0: expected [alice laptop], got %v", result.Rows[0])
-	}
-	if result.Rows[1][0] != "alice" || result.Rows[1][1] != "tablet" {
-		t.Errorf("row 1: expected [alice tablet], got %v", result.Rows[1])
-	}
-	if result.Rows[2][0] != "bob" || result.Rows[2][1] != "monitor" {
-		t.Errorf("row 2: expected [bob monitor], got %v", result.Rows[2])
-	}
+	require.Len(t, result.Rows, 3, "expected 3 rows")
+	assert.Equal(t, "alice", result.Rows[0][0])
+	assert.Equal(t, "laptop", result.Rows[0][1])
+	assert.Equal(t, "alice", result.Rows[1][0])
+	assert.Equal(t, "tablet", result.Rows[1][1])
+	assert.Equal(t, "bob", result.Rows[2][0])
+	assert.Equal(t, "monitor", result.Rows[2][1])
 }

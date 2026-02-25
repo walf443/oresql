@@ -1,6 +1,10 @@
 package repl
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
 
 func TestFormatValueFloat(t *testing.T) {
 	tests := []struct {
@@ -17,8 +21,6 @@ func TestFormatValueFloat(t *testing.T) {
 	}
 	for _, tt := range tests {
 		got := formatValue(tt.input)
-		if got != tt.expected {
-			t.Errorf("formatValue(%v) = %q, want %q", tt.input, got, tt.expected)
-		}
+		assert.Equal(t, tt.expected, got, "formatValue(%v)", tt.input)
 	}
 }

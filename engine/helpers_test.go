@@ -3,6 +3,7 @@ package engine
 import (
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"github.com/walf443/oresql/lexer"
 	"github.com/walf443/oresql/parser"
 )
@@ -12,13 +13,9 @@ func run(t *testing.T, exec *Executor, sql string) *Result {
 	l := lexer.New(sql)
 	p := parser.New(l)
 	stmt, err := p.Parse()
-	if err != nil {
-		t.Fatalf("parse error for %q: %s", sql, err)
-	}
+	require.NoError(t, err, "parse error for %q", sql)
 	result, err := exec.Execute(stmt)
-	if err != nil {
-		t.Fatalf("execute error for %q: %s", sql, err)
-	}
+	require.NoError(t, err, "execute error for %q", sql)
 	return result
 }
 
@@ -41,7 +38,5 @@ func runExpectError(t *testing.T, exec *Executor, sql string) {
 		return // parse error is also acceptable
 	}
 	_, err = exec.Execute(stmt)
-	if err == nil {
-		t.Fatalf("expected error for %q, got nil", sql)
-	}
+	require.Error(t, err, "expected error for %q", sql)
 }

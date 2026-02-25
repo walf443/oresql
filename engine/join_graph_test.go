@@ -3,6 +3,8 @@ package engine
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/walf443/oresql/ast"
 )
 
@@ -32,15 +34,10 @@ func TestExtractAllEquiJoinPairs(t *testing.T) {
 			Right: &ast.IdentExpr{Table: "o", Name: "user_id"},
 		}
 		pairs, residual := extractAllEquiJoinPairs(on, tableA, tableB)
-		if len(pairs) != 1 {
-			t.Fatalf("expected 1 pair, got %d", len(pairs))
-		}
-		if pairs[0].leftCol != "id" || pairs[0].rightCol != "user_id" {
-			t.Errorf("pair = %s.%s = %s.%s", pairs[0].leftTable, pairs[0].leftCol, pairs[0].rightTable, pairs[0].rightCol)
-		}
-		if residual != nil {
-			t.Errorf("expected no residual, got %v", residual)
-		}
+		require.Len(t, pairs, 1, "expected 1 equi-join pair")
+		assert.Equal(t, "id", pairs[0].leftCol)
+		assert.Equal(t, "user_id", pairs[0].rightCol)
+		assert.Nil(t, residual, "expected no residual")
 	})
 
 	t.Run("multiple pairs", func(t *testing.T) {
@@ -59,12 +56,8 @@ func TestExtractAllEquiJoinPairs(t *testing.T) {
 			},
 		}
 		pairs, residual := extractAllEquiJoinPairs(on, tableA, tableB)
-		if len(pairs) != 2 {
-			t.Fatalf("expected 2 pairs, got %d", len(pairs))
-		}
-		if residual != nil {
-			t.Errorf("expected no residual, got %v", residual)
-		}
+		require.Len(t, pairs, 2, "expected 2 equi-join pairs")
+		assert.Nil(t, residual, "expected no residual")
 	})
 
 	t.Run("mixed equi and non-equi", func(t *testing.T) {
@@ -83,12 +76,8 @@ func TestExtractAllEquiJoinPairs(t *testing.T) {
 			},
 		}
 		pairs, residual := extractAllEquiJoinPairs(on, tableA, tableB)
-		if len(pairs) != 1 {
-			t.Fatalf("expected 1 pair, got %d", len(pairs))
-		}
-		if residual == nil {
-			t.Error("expected residual, got nil")
-		}
+		require.Len(t, pairs, 1, "expected 1 equi-join pair")
+		assert.NotNil(t, residual, "expected residual for non-equi condition")
 	})
 
 	t.Run("no equi pairs", func(t *testing.T) {
@@ -98,12 +87,8 @@ func TestExtractAllEquiJoinPairs(t *testing.T) {
 			Right: &ast.IdentExpr{Table: "o", Name: "user_id"},
 		}
 		pairs, residual := extractAllEquiJoinPairs(on, tableA, tableB)
-		if len(pairs) != 0 {
-			t.Errorf("expected 0 pairs, got %d", len(pairs))
-		}
-		if residual == nil {
-			t.Error("expected residual, got nil")
-		}
+		assert.Len(t, pairs, 0, "expected 0 equi-join pairs")
+		assert.NotNil(t, residual, "expected residual for non-equi condition")
 	})
 }
 
@@ -147,32 +132,24 @@ func TestResolveUnqualifiedTableN(t *testing.T) {
 	t.Run("unique column", func(t *testing.T) {
 		// "status" only in users
 		got := resolveUnqualifiedTableN("status", nodes)
-		if got != "users" {
-			t.Errorf("got %q, want %q", got, "users")
-		}
+		assert.Equal(t, "users", got)
 	})
 
 	t.Run("unique column user_id", func(t *testing.T) {
 		// "user_id" only in orders
 		got := resolveUnqualifiedTableN("user_id", nodes)
-		if got != "orders" {
-			t.Errorf("got %q, want %q", got, "orders")
-		}
+		assert.Equal(t, "orders", got)
 	})
 
 	t.Run("ambiguous column", func(t *testing.T) {
 		// "id" in all three
 		got := resolveUnqualifiedTableN("id", nodes)
-		if got != "" {
-			t.Errorf("got %q, want empty (ambiguous)", got)
-		}
+		assert.Equal(t, "", got, "expected empty (ambiguous)")
 	})
 
 	t.Run("not found column", func(t *testing.T) {
 		got := resolveUnqualifiedTableN("nonexistent", nodes)
-		if got != "" {
-			t.Errorf("got %q, want empty (not found)", got)
-		}
+		assert.Equal(t, "", got, "expected empty (not found)")
 	})
 }
 
@@ -200,29 +177,17 @@ func TestBuildJoinGraph_TwoTables(t *testing.T) {
 	}
 
 	graph, err := exec.buildJoinGraph(stmt)
-	if err != nil {
-		t.Fatalf("buildJoinGraph error: %v", err)
-	}
+	require.NoError(t, err, "buildJoinGraph error")
 
-	if len(graph.Nodes) != 2 {
-		t.Errorf("expected 2 nodes, got %d", len(graph.Nodes))
-	}
-	if len(graph.Edges) != 1 {
-		t.Errorf("expected 1 edge, got %d", len(graph.Edges))
-	}
+	assert.Len(t, graph.Nodes, 2, "expected 2 nodes")
+	assert.Len(t, graph.Edges, 1, "expected 1 edge")
 
 	// Check edge
 	key := edgeKey("u", "o")
 	edge, ok := graph.Edges[key]
-	if !ok {
-		t.Fatal("edge u-o not found")
-	}
-	if len(edge.EquiJoinPairs) != 1 {
-		t.Errorf("expected 1 equi-join pair, got %d", len(edge.EquiJoinPairs))
-	}
-	if !edge.IndexOnB {
-		t.Error("expected IndexOnB to be true (orders has index on user_id)")
-	}
+	require.True(t, ok, "edge u-o not found")
+	assert.Len(t, edge.EquiJoinPairs, 1, "expected 1 equi-join pair")
+	assert.True(t, edge.IndexOnB, "expected IndexOnB to be true (orders has index on user_id)")
 }
 
 func TestBuildJoinGraph_ThreeTables(t *testing.T) {
@@ -258,24 +223,14 @@ func TestBuildJoinGraph_ThreeTables(t *testing.T) {
 	}
 
 	graph, err := exec.buildJoinGraph(stmt)
-	if err != nil {
-		t.Fatalf("buildJoinGraph error: %v", err)
-	}
+	require.NoError(t, err, "buildJoinGraph error")
 
-	if len(graph.Nodes) != 3 {
-		t.Errorf("expected 3 nodes, got %d", len(graph.Nodes))
-	}
-	if len(graph.Edges) != 2 {
-		t.Errorf("expected 2 edges, got %d", len(graph.Edges))
-	}
-	if len(graph.TableOrder) != 3 {
-		t.Errorf("expected TableOrder length 3, got %d", len(graph.TableOrder))
-	}
+	assert.Len(t, graph.Nodes, 3, "expected 3 nodes")
+	assert.Len(t, graph.Edges, 2, "expected 2 edges")
+	assert.Len(t, graph.TableOrder, 3, "expected TableOrder length 3")
 
 	// Check adjacency
-	if len(graph.Adjacency["o"]) != 2 {
-		t.Errorf("expected orders to have 2 neighbors, got %d", len(graph.Adjacency["o"]))
-	}
+	assert.Len(t, graph.Adjacency["o"], 2, "expected orders to have 2 neighbors")
 }
 
 func TestBuildJoinGraph_WhereClassification(t *testing.T) {
@@ -333,23 +288,13 @@ func TestBuildJoinGraph_WhereClassification(t *testing.T) {
 	}
 
 	graph, err := exec.buildJoinGraph(stmt)
-	if err != nil {
-		t.Fatalf("buildJoinGraph error: %v", err)
-	}
+	require.NoError(t, err, "buildJoinGraph error")
 
 	// Check WHERE classification
-	if len(graph.Nodes["u"].LocalWhere) != 1 {
-		t.Errorf("users LocalWhere = %d, want 1", len(graph.Nodes["u"].LocalWhere))
-	}
-	if len(graph.Nodes["o"].LocalWhere) != 1 {
-		t.Errorf("orders LocalWhere = %d, want 1", len(graph.Nodes["o"].LocalWhere))
-	}
-	if len(graph.Nodes["i"].LocalWhere) != 1 {
-		t.Errorf("items LocalWhere = %d, want 1", len(graph.Nodes["i"].LocalWhere))
-	}
-	if len(graph.CrossWhere) != 0 {
-		t.Errorf("CrossWhere = %d, want 0", len(graph.CrossWhere))
-	}
+	assert.Len(t, graph.Nodes["u"].LocalWhere, 1, "users LocalWhere count")
+	assert.Len(t, graph.Nodes["o"].LocalWhere, 1, "orders LocalWhere count")
+	assert.Len(t, graph.Nodes["i"].LocalWhere, 1, "items LocalWhere count")
+	assert.Len(t, graph.CrossWhere, 0, "CrossWhere count")
 }
 
 func TestBuildJoinGraph_IndexAnnotation(t *testing.T) {
@@ -376,22 +321,14 @@ func TestBuildJoinGraph_IndexAnnotation(t *testing.T) {
 	}
 
 	graph, err := exec.buildJoinGraph(stmt)
-	if err != nil {
-		t.Fatalf("buildJoinGraph error: %v", err)
-	}
+	require.NoError(t, err, "buildJoinGraph error")
 
 	key := edgeKey("u", "o")
 	edge := graph.Edges[key]
-	if edge == nil {
-		t.Fatal("edge u-o not found")
-	}
+	require.NotNil(t, edge, "edge u-o not found")
 	// users.id has no index, orders.user_id has index
-	if edge.IndexOnA {
-		t.Error("expected IndexOnA = false (no index on users.id)")
-	}
-	if !edge.IndexOnB {
-		t.Error("expected IndexOnB = true (index on orders.user_id)")
-	}
+	assert.False(t, edge.IndexOnA, "expected IndexOnA = false (no index on users.id)")
+	assert.True(t, edge.IndexOnB, "expected IndexOnB = true (index on orders.user_id)")
 }
 
 func TestOptimizeJoinOrder_PrefersIndexed(t *testing.T) {
@@ -420,18 +357,12 @@ func TestOptimizeJoinOrder_PrefersIndexed(t *testing.T) {
 	}
 
 	graph, err := exec.buildJoinGraph(stmt)
-	if err != nil {
-		t.Fatalf("buildJoinGraph error: %v", err)
-	}
+	require.NoError(t, err, "buildJoinGraph error")
 
 	order := exec.OptimizeJoinOrder(graph)
-	if len(order) != 2 {
-		t.Fatalf("expected 2 tables, got %d", len(order))
-	}
+	require.Len(t, order, 2, "expected 2 tables in join order")
 	// Without any WHERE, original order should be preserved (users first)
-	if order[0] != "u" {
-		t.Errorf("expected driving table 'u', got %q", order[0])
-	}
+	assert.Equal(t, "u", order[0], "expected driving table 'u'")
 }
 
 func TestOptimizeJoinOrder_PrefersFiltered(t *testing.T) {
@@ -466,15 +397,11 @@ func TestOptimizeJoinOrder_PrefersFiltered(t *testing.T) {
 	}
 
 	graph, err := exec.buildJoinGraph(stmt)
-	if err != nil {
-		t.Fatalf("buildJoinGraph error: %v", err)
-	}
+	require.NoError(t, err, "buildJoinGraph error")
 
 	order := exec.OptimizeJoinOrder(graph)
 	// users has WHERE with index -> should be driving table
-	if order[0] != "u" {
-		t.Errorf("expected driving table 'u' (has indexed WHERE), got %q", order[0])
-	}
+	assert.Equal(t, "u", order[0], "expected driving table 'u' (has indexed WHERE)")
 }
 
 func TestOptimizeJoinOrder_ThreeTables(t *testing.T) {
@@ -519,24 +446,14 @@ func TestOptimizeJoinOrder_ThreeTables(t *testing.T) {
 	}
 
 	graph, err := exec.buildJoinGraph(stmt)
-	if err != nil {
-		t.Fatalf("buildJoinGraph error: %v", err)
-	}
+	require.NoError(t, err, "buildJoinGraph error")
 
 	order := exec.OptimizeJoinOrder(graph)
-	if len(order) != 3 {
-		t.Fatalf("expected 3 tables, got %d", len(order))
-	}
+	require.Len(t, order, 3, "expected 3 tables in join order")
 	// users has indexed WHERE -> driving table
-	if order[0] != "u" {
-		t.Errorf("expected driving table 'u', got %q", order[0])
-	}
+	assert.Equal(t, "u", order[0], "expected driving table 'u'")
 	// orders and items both have indexed equi-join columns
 	// orders should come next as it connects to users
-	if order[1] != "o" {
-		t.Errorf("expected second table 'o', got %q", order[1])
-	}
-	if order[2] != "i" {
-		t.Errorf("expected third table 'i', got %q", order[2])
-	}
+	assert.Equal(t, "o", order[1], "expected second table 'o'")
+	assert.Equal(t, "i", order[2], "expected third table 'i'")
 }

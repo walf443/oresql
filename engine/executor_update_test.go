@@ -2,6 +2,9 @@ package engine
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestUpdateBasic(t *testing.T) {
@@ -11,17 +14,11 @@ func TestUpdateBasic(t *testing.T) {
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
 
 	result := run(t, exec, "UPDATE users SET name = 'ALICE' WHERE id = 1")
-	if result.Message != "1 row updated" {
-		t.Errorf("expected '1 row updated', got %q", result.Message)
-	}
+	assert.Equal(t, "1 row updated", result.Message)
 
 	result = run(t, exec, "SELECT name FROM users WHERE id = 1")
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "ALICE" {
-		t.Errorf("expected 'ALICE', got %v", result.Rows[0][0])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row for id=1")
+	assert.Equal(t, "ALICE", result.Rows[0][0])
 }
 
 func TestUpdateMultipleRows(t *testing.T) {
@@ -32,15 +29,11 @@ func TestUpdateMultipleRows(t *testing.T) {
 	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
 
 	result := run(t, exec, "UPDATE users SET name = 'updated' WHERE id > 1")
-	if result.Message != "2 rows updated" {
-		t.Errorf("expected '2 rows updated', got %q", result.Message)
-	}
+	assert.Equal(t, "2 rows updated", result.Message)
 
 	result = run(t, exec, "SELECT name FROM users WHERE id > 1")
 	for _, row := range result.Rows {
-		if row[0] != "updated" {
-			t.Errorf("expected 'updated', got %v", row[0])
-		}
+		assert.Equal(t, "updated", row[0])
 	}
 }
 
@@ -50,9 +43,7 @@ func TestUpdateNoMatch(t *testing.T) {
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 
 	result := run(t, exec, "UPDATE users SET name = 'bob' WHERE id = 999")
-	if result.Message != "0 rows updated" {
-		t.Errorf("expected '0 rows updated', got %q", result.Message)
-	}
+	assert.Equal(t, "0 rows updated", result.Message)
 }
 
 func TestUpdateNoWhere(t *testing.T) {
@@ -62,15 +53,11 @@ func TestUpdateNoWhere(t *testing.T) {
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
 
 	result := run(t, exec, "UPDATE users SET name = 'updated'")
-	if result.Message != "2 rows updated" {
-		t.Errorf("expected '2 rows updated', got %q", result.Message)
-	}
+	assert.Equal(t, "2 rows updated", result.Message)
 
 	result = run(t, exec, "SELECT name FROM users")
 	for _, row := range result.Rows {
-		if row[0] != "updated" {
-			t.Errorf("expected 'updated', got %v", row[0])
-		}
+		assert.Equal(t, "updated", row[0])
 	}
 }
 
@@ -81,17 +68,11 @@ func TestUpdateMultipleSets(t *testing.T) {
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob', 25)")
 
 	result := run(t, exec, "UPDATE users SET name = 'ALICE', age = 30 WHERE id = 1")
-	if result.Message != "1 row updated" {
-		t.Errorf("expected '1 row updated', got %q", result.Message)
-	}
+	assert.Equal(t, "1 row updated", result.Message)
 
 	result = run(t, exec, "SELECT name, age FROM users WHERE id = 1")
-	if result.Rows[0][0] != "ALICE" {
-		t.Errorf("expected 'ALICE', got %v", result.Rows[0][0])
-	}
-	if result.Rows[0][1] != int64(30) {
-		t.Errorf("expected 30, got %v", result.Rows[0][1])
-	}
+	assert.Equal(t, "ALICE", result.Rows[0][0])
+	assert.Equal(t, int64(30), result.Rows[0][1])
 }
 
 func TestErrorUpdateTypeMismatch(t *testing.T) {
@@ -117,27 +98,17 @@ func TestUpdateWithIndex(t *testing.T) {
 	run(t, exec, "INSERT INTO users VALUES (3, 'charlie', 30)")
 
 	result := run(t, exec, "UPDATE users SET age = 21 WHERE name = 'alice'")
-	if result.Message != "1 row updated" {
-		t.Errorf("expected '1 row updated', got %q", result.Message)
-	}
+	assert.Equal(t, "1 row updated", result.Message)
 
 	// Verify the update
 	result = run(t, exec, "SELECT * FROM users WHERE name = 'alice'")
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][2] != int64(21) {
-		t.Errorf("expected age=21, got %v", result.Rows[0][2])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row for alice")
+	assert.Equal(t, int64(21), result.Rows[0][2])
 
 	// Verify other rows unchanged
 	result = run(t, exec, "SELECT * FROM users WHERE name = 'bob'")
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][2] != int64(25) {
-		t.Errorf("expected age=25, got %v", result.Rows[0][2])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row for bob")
+	assert.Equal(t, int64(25), result.Rows[0][2])
 }
 
 func TestUpdateWithIndexRange(t *testing.T) {
@@ -150,20 +121,14 @@ func TestUpdateWithIndexRange(t *testing.T) {
 	run(t, exec, "INSERT INTO products VALUES (4, 400)")
 
 	result := run(t, exec, "UPDATE products SET price = 999 WHERE price >= 200 AND price <= 300")
-	if result.Message != "2 rows updated" {
-		t.Errorf("expected '2 rows updated', got %q", result.Message)
-	}
+	assert.Equal(t, "2 rows updated", result.Message)
 
 	// Verify updates
 	result = run(t, exec, "SELECT * FROM products ORDER BY id")
-	if len(result.Rows) != 4 {
-		t.Fatalf("expected 4 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 4, "expected 4 rows in products")
 	expected := []int64{100, 999, 999, 400}
 	for i, row := range result.Rows {
-		if row[1] != expected[i] {
-			t.Errorf("row %d: expected price=%d, got %v", i, expected[i], row[1])
-		}
+		assert.Equal(t, expected[i], row[1], "row %d: unexpected price", i)
 	}
 }
 
@@ -177,19 +142,13 @@ func TestUpdateOrderByLimit(t *testing.T) {
 
 	// UPDATE with ORDER BY id ASC LIMIT 2 → updates only id=1 and id=2
 	result := run(t, exec, "UPDATE users SET name = 'updated' ORDER BY id LIMIT 2")
-	if result.Message != "2 rows updated" {
-		t.Errorf("expected '2 rows updated', got %q", result.Message)
-	}
+	assert.Equal(t, "2 rows updated", result.Message)
 
 	result = run(t, exec, "SELECT id, name FROM users ORDER BY id")
-	if len(result.Rows) != 4 {
-		t.Fatalf("expected 4 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 4, "expected 4 rows in users")
 	expected := []string{"updated", "updated", "charlie", "dave"}
 	for i, row := range result.Rows {
-		if row[1] != expected[i] {
-			t.Errorf("row %d: expected name=%q, got %v", i, expected[i], row[1])
-		}
+		assert.Equal(t, expected[i], row[1], "row %d: unexpected name", i)
 	}
 }
 
@@ -202,16 +161,12 @@ func TestUpdateOrderByDescLimit(t *testing.T) {
 
 	// UPDATE with ORDER BY id DESC LIMIT 1 → updates only id=3
 	result := run(t, exec, "UPDATE users SET name = 'updated' ORDER BY id DESC LIMIT 1")
-	if result.Message != "1 row updated" {
-		t.Errorf("expected '1 row updated', got %q", result.Message)
-	}
+	assert.Equal(t, "1 row updated", result.Message)
 
 	result = run(t, exec, "SELECT id, name FROM users ORDER BY id")
 	expected := []string{"alice", "bob", "updated"}
 	for i, row := range result.Rows {
-		if row[1] != expected[i] {
-			t.Errorf("row %d: expected name=%q, got %v", i, expected[i], row[1])
-		}
+		assert.Equal(t, expected[i], row[1], "row %d: unexpected name", i)
 	}
 }
 
@@ -225,16 +180,12 @@ func TestUpdateWhereOrderByLimit(t *testing.T) {
 
 	// WHERE id > 1 → {2,3,4}, ORDER BY id DESC → {4,3,2}, LIMIT 2 → {4,3}
 	result := run(t, exec, "UPDATE users SET name = 'updated' WHERE id > 1 ORDER BY id DESC LIMIT 2")
-	if result.Message != "2 rows updated" {
-		t.Errorf("expected '2 rows updated', got %q", result.Message)
-	}
+	assert.Equal(t, "2 rows updated", result.Message)
 
 	result = run(t, exec, "SELECT id, name FROM users ORDER BY id")
 	expected := []string{"alice", "bob", "updated", "updated"}
 	for i, row := range result.Rows {
-		if row[1] != expected[i] {
-			t.Errorf("row %d: expected name=%q, got %v", i, expected[i], row[1])
-		}
+		assert.Equal(t, expected[i], row[1], "row %d: unexpected name", i)
 	}
 }
 
@@ -247,15 +198,11 @@ func TestUpdateNoWhereWithIndex(t *testing.T) {
 	run(t, exec, "INSERT INTO users VALUES (3, 'charlie', 0)")
 
 	result := run(t, exec, "UPDATE users SET active = 1")
-	if result.Message != "3 rows updated" {
-		t.Errorf("expected '3 rows updated', got %q", result.Message)
-	}
+	assert.Equal(t, "3 rows updated", result.Message)
 
 	// Verify all rows updated
 	result = run(t, exec, "SELECT * FROM users")
 	for _, row := range result.Rows {
-		if row[2] != int64(1) {
-			t.Errorf("expected active=1, got %v", row[2])
-		}
+		assert.Equal(t, int64(1), row[2])
 	}
 }

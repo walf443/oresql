@@ -2,6 +2,9 @@ package engine
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestHashJoinInnerBasic tests basic INNER JOIN without indexes (hash join path).
@@ -18,18 +21,10 @@ func TestHashJoinInnerBasic(t *testing.T) {
 	run(t, exec, "INSERT INTO orders VALUES (30, 1, 'Doohickey')")
 
 	res := run(t, exec, "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id ORDER BY o.id")
-	if len(res.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(res.Rows))
-	}
-	if res.Rows[0][0] != "Alice" || res.Rows[0][1] != "Widget" {
-		t.Errorf("row 0 = %v, want [Alice Widget]", res.Rows[0])
-	}
-	if res.Rows[1][0] != "Bob" || res.Rows[1][1] != "Gadget" {
-		t.Errorf("row 1 = %v, want [Bob Gadget]", res.Rows[1])
-	}
-	if res.Rows[2][0] != "Alice" || res.Rows[2][1] != "Doohickey" {
-		t.Errorf("row 2 = %v, want [Alice Doohickey]", res.Rows[2])
-	}
+	require.Len(t, res.Rows, 3, "expected 3 rows from hash join")
+	assert.Equal(t, Row{"Alice", "Widget"}, res.Rows[0], "row 0")
+	assert.Equal(t, Row{"Bob", "Gadget"}, res.Rows[1], "row 1")
+	assert.Equal(t, Row{"Alice", "Doohickey"}, res.Rows[2], "row 2")
 }
 
 // TestHashJoinInnerNoMatch tests INNER JOIN with no matching rows.
@@ -42,9 +37,7 @@ func TestHashJoinInnerNoMatch(t *testing.T) {
 	run(t, exec, "INSERT INTO t2 VALUES (1, 999)")
 
 	res := run(t, exec, "SELECT t1.val, t2.ref FROM t1 JOIN t2 ON t1.id = t2.ref")
-	if len(res.Rows) != 0 {
-		t.Fatalf("expected 0 rows, got %d", len(res.Rows))
-	}
+	require.Len(t, res.Rows, 0, "expected 0 rows when no match")
 }
 
 // TestHashJoinInnerWithWhere tests hash join with LocalWhere on inner table.
@@ -60,15 +53,9 @@ func TestHashJoinInnerWithWhere(t *testing.T) {
 	run(t, exec, "INSERT INTO orders VALUES (30, 2, 'active')")
 
 	res := run(t, exec, "SELECT u.name, o.status FROM users u JOIN orders o ON u.id = o.user_id WHERE o.status = 'active' ORDER BY o.id")
-	if len(res.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(res.Rows))
-	}
-	if res.Rows[0][0] != "Alice" {
-		t.Errorf("row 0 name = %v, want Alice", res.Rows[0][0])
-	}
-	if res.Rows[1][0] != "Bob" {
-		t.Errorf("row 1 name = %v, want Bob", res.Rows[1][0])
-	}
+	require.Len(t, res.Rows, 2, "expected 2 rows after WHERE filter")
+	assert.Equal(t, "Alice", res.Rows[0][0], "row 0 name")
+	assert.Equal(t, "Bob", res.Rows[1][0], "row 1 name")
 }
 
 // TestHashJoinLeftJoinBasic tests LEFT JOIN without indexes (hash join path).
@@ -83,18 +70,13 @@ func TestHashJoinLeftJoinBasic(t *testing.T) {
 	run(t, exec, "INSERT INTO orders VALUES (10, 1, 'Widget')")
 
 	res := run(t, exec, "SELECT u.name, o.product FROM users u LEFT JOIN orders o ON u.id = o.user_id ORDER BY u.id")
-	if len(res.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(res.Rows))
-	}
-	if res.Rows[0][0] != "Alice" || res.Rows[0][1] != "Widget" {
-		t.Errorf("row 0 = %v, want [Alice Widget]", res.Rows[0])
-	}
-	if res.Rows[1][0] != "Bob" || res.Rows[1][1] != nil {
-		t.Errorf("row 1 = %v, want [Bob <nil>]", res.Rows[1])
-	}
-	if res.Rows[2][0] != "Charlie" || res.Rows[2][1] != nil {
-		t.Errorf("row 2 = %v, want [Charlie <nil>]", res.Rows[2])
-	}
+	require.Len(t, res.Rows, 3, "expected 3 rows from LEFT JOIN")
+	assert.Equal(t, "Alice", res.Rows[0][0], "row 0 name")
+	assert.Equal(t, "Widget", res.Rows[0][1], "row 0 product")
+	assert.Equal(t, "Bob", res.Rows[1][0], "row 1 name")
+	assert.Nil(t, res.Rows[1][1], "row 1 product should be nil")
+	assert.Equal(t, "Charlie", res.Rows[2][0], "row 2 name")
+	assert.Nil(t, res.Rows[2][1], "row 2 product should be nil")
 }
 
 // TestHashJoinWithResidualOn tests hash join with equi + non-equi ON conditions.
@@ -111,15 +93,9 @@ func TestHashJoinWithResidualOn(t *testing.T) {
 
 	// equi: t1.id = t2.ref, residual: t2.val > 10
 	res := run(t, exec, "SELECT t1.val, t2.val FROM t1 JOIN t2 ON t1.id = t2.ref AND t2.val > 10 ORDER BY t2.id")
-	if len(res.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(res.Rows))
-	}
-	if res.Rows[0][0] != int64(10) || res.Rows[0][1] != int64(15) {
-		t.Errorf("row 0 = %v, want [10 15]", res.Rows[0])
-	}
-	if res.Rows[1][0] != int64(20) || res.Rows[1][1] != int64(25) {
-		t.Errorf("row 1 = %v, want [20 25]", res.Rows[1])
-	}
+	require.Len(t, res.Rows, 2, "expected 2 rows with residual ON")
+	assert.Equal(t, Row{int64(10), int64(15)}, res.Rows[0], "row 0")
+	assert.Equal(t, Row{int64(20), int64(25)}, res.Rows[1], "row 1")
 }
 
 // TestHashJoinMultiColumnKey tests multi-column equi-join.
@@ -134,12 +110,8 @@ func TestHashJoinMultiColumnKey(t *testing.T) {
 	run(t, exec, "INSERT INTO t2 VALUES (2, 2, 'wrong')")
 
 	res := run(t, exec, "SELECT t1.val, t2.data FROM t1 JOIN t2 ON t1.a = t2.x AND t1.b = t2.y")
-	if len(res.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(res.Rows))
-	}
-	if res.Rows[0][0] != "match" || res.Rows[0][1] != "found" {
-		t.Errorf("row 0 = %v, want [match found]", res.Rows[0])
-	}
+	require.Len(t, res.Rows, 1, "expected 1 row from multi-column key join")
+	assert.Equal(t, Row{"match", "found"}, res.Rows[0], "row 0")
 }
 
 // TestHashJoinWithNullJoinKey tests that NULL join keys don't match (SQL semantics).
@@ -154,12 +126,8 @@ func TestHashJoinWithNullJoinKey(t *testing.T) {
 	run(t, exec, "INSERT INTO t2 VALUES (NULL, 'null_match')")
 
 	res := run(t, exec, "SELECT t1.val, t2.data FROM t1 JOIN t2 ON t1.id = t2.ref")
-	if len(res.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(res.Rows))
-	}
-	if res.Rows[0][0] != "one" || res.Rows[0][1] != "match" {
-		t.Errorf("row 0 = %v, want [one match]", res.Rows[0])
-	}
+	require.Len(t, res.Rows, 1, "expected 1 row (NULL keys should not match)")
+	assert.Equal(t, Row{"one", "match"}, res.Rows[0], "row 0")
 }
 
 // TestHashJoinWithLimit tests hash join with LIMIT early termination.
@@ -174,9 +142,7 @@ func TestHashJoinWithLimit(t *testing.T) {
 	}
 
 	res := run(t, exec, "SELECT t1.val, t2.data FROM t1 JOIN t2 ON t1.id = t2.ref LIMIT 5")
-	if len(res.Rows) != 5 {
-		t.Fatalf("expected 5 rows, got %d", len(res.Rows))
-	}
+	require.Len(t, res.Rows, 5, "expected 5 rows with LIMIT")
 }
 
 // TestHashJoinThreeTableNoIndex tests 3-table JOIN without any indexes.
@@ -195,18 +161,10 @@ func TestHashJoinThreeTableNoIndex(t *testing.T) {
 	run(t, exec, "INSERT INTO items VALUES (300, 10, 'Doohickey')")
 
 	res := run(t, exec, "SELECT c.name, o.total, i.product FROM customers c JOIN orders o ON c.id = o.cust_id JOIN items i ON o.id = i.order_id ORDER BY i.id")
-	if len(res.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(res.Rows))
-	}
-	if res.Rows[0][0] != "Alice" || res.Rows[0][1] != int64(100) || res.Rows[0][2] != "Widget" {
-		t.Errorf("row 0 = %v, want [Alice 100 Widget]", res.Rows[0])
-	}
-	if res.Rows[1][0] != "Bob" || res.Rows[1][1] != int64(200) || res.Rows[1][2] != "Gadget" {
-		t.Errorf("row 1 = %v, want [Bob 200 Gadget]", res.Rows[1])
-	}
-	if res.Rows[2][0] != "Alice" || res.Rows[2][1] != int64(100) || res.Rows[2][2] != "Doohickey" {
-		t.Errorf("row 2 = %v, want [Alice 100 Doohickey]", res.Rows[2])
-	}
+	require.Len(t, res.Rows, 3, "expected 3 rows from three-table hash join")
+	assert.Equal(t, Row{"Alice", int64(100), "Widget"}, res.Rows[0], "row 0")
+	assert.Equal(t, Row{"Bob", int64(200), "Gadget"}, res.Rows[1], "row 1")
+	assert.Equal(t, Row{"Alice", int64(100), "Doohickey"}, res.Rows[2], "row 2")
 }
 
 // itoa is a simple int-to-string helper for test SQL generation.

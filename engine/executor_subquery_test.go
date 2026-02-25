@@ -2,6 +2,9 @@ package engine
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestInSubquery(t *testing.T) {
@@ -15,9 +18,8 @@ func TestInSubquery(t *testing.T) {
 		"INSERT INTO orders VALUES (1, 1, 'active'), (2, 1, 'completed'), (3, 2, 'active')",
 	}
 	for _, sql := range setup {
-		if _, err := e.ExecuteSQL(sql); err != nil {
-			t.Fatalf("setup failed: %s: %v", sql, err)
-		}
+		_, err := e.ExecuteSQL(sql)
+		require.NoError(t, err, "setup failed: %s", sql)
 	}
 
 	tests := []struct {
@@ -59,20 +61,12 @@ func TestInSubquery(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := e.ExecuteSQL(tt.sql)
-			if err != nil {
-				t.Fatalf("ExecuteSQL(%q) error: %v", tt.sql, err)
-			}
-			if len(result.Rows) != tt.wantRows {
-				t.Errorf("got %d rows, want %d", len(result.Rows), tt.wantRows)
-			}
+			require.NoError(t, err, "ExecuteSQL(%q)", tt.sql)
+			assert.Len(t, result.Rows, tt.wantRows, "row count")
 			if tt.wantCols != nil {
-				if len(result.Columns) != len(tt.wantCols) {
-					t.Errorf("got %d columns, want %d", len(result.Columns), len(tt.wantCols))
-				}
+				require.Len(t, result.Columns, len(tt.wantCols), "column count")
 				for i, col := range tt.wantCols {
-					if i < len(result.Columns) && result.Columns[i] != col {
-						t.Errorf("column[%d] = %q, want %q", i, result.Columns[i], col)
-					}
+					assert.Equal(t, col, result.Columns[i], "column[%d]", i)
 				}
 			}
 			if tt.wantData != nil {
@@ -81,8 +75,8 @@ func TestInSubquery(t *testing.T) {
 						break
 					}
 					for j, wantVal := range wantRow {
-						if j < len(result.Rows[i]) && result.Rows[i][j] != wantVal {
-							t.Errorf("row[%d][%d] = %v, want %v", i, j, result.Rows[i][j], wantVal)
+						if j < len(result.Rows[i]) {
+							assert.Equal(t, wantVal, result.Rows[i][j], "row[%d][%d]", i, j)
 						}
 					}
 				}
@@ -102,9 +96,8 @@ func TestScalarSubquery(t *testing.T) {
 		"INSERT INTO orders VALUES (1, 1, 100), (2, 1, 200), (3, 2, 150)",
 	}
 	for _, sql := range setup {
-		if _, err := e.ExecuteSQL(sql); err != nil {
-			t.Fatalf("setup failed: %s: %v", sql, err)
-		}
+		_, err := e.ExecuteSQL(sql)
+		require.NoError(t, err, "setup failed: %s", sql)
 	}
 
 	tests := []struct {
@@ -153,25 +146,15 @@ func TestScalarSubquery(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := e.ExecuteSQL(tt.sql)
 			if tt.wantErr {
-				if err == nil {
-					t.Fatalf("expected error, got nil")
-				}
+				require.Error(t, err, "expected error")
 				return
 			}
-			if err != nil {
-				t.Fatalf("ExecuteSQL(%q) error: %v", tt.sql, err)
-			}
-			if len(result.Rows) != tt.wantRows {
-				t.Errorf("got %d rows, want %d", len(result.Rows), tt.wantRows)
-			}
+			require.NoError(t, err, "ExecuteSQL(%q)", tt.sql)
+			assert.Len(t, result.Rows, tt.wantRows, "row count")
 			if tt.wantCols != nil {
-				if len(result.Columns) != len(tt.wantCols) {
-					t.Errorf("got %d columns, want %d", len(result.Columns), len(tt.wantCols))
-				}
+				require.Len(t, result.Columns, len(tt.wantCols), "column count")
 				for i, col := range tt.wantCols {
-					if i < len(result.Columns) && result.Columns[i] != col {
-						t.Errorf("column[%d] = %q, want %q", i, result.Columns[i], col)
-					}
+					assert.Equal(t, col, result.Columns[i], "column[%d]", i)
 				}
 			}
 			if tt.wantData != nil {
@@ -180,8 +163,8 @@ func TestScalarSubquery(t *testing.T) {
 						break
 					}
 					for j, wantVal := range wantRow {
-						if j < len(result.Rows[i]) && result.Rows[i][j] != wantVal {
-							t.Errorf("row[%d][%d] = %v, want %v", i, j, result.Rows[i][j], wantVal)
+						if j < len(result.Rows[i]) {
+							assert.Equal(t, wantVal, result.Rows[i][j], "row[%d][%d]", i, j)
 						}
 					}
 				}
@@ -198,9 +181,8 @@ func TestFromSubqueryBasic(t *testing.T) {
 		"INSERT INTO t1 VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Charlie')",
 	}
 	for _, sql := range setup {
-		if _, err := e.ExecuteSQL(sql); err != nil {
-			t.Fatalf("setup failed: %s: %v", sql, err)
-		}
+		_, err := e.ExecuteSQL(sql)
+		require.NoError(t, err, "setup failed: %s", sql)
 	}
 
 	tests := []struct {
@@ -250,20 +232,12 @@ func TestFromSubqueryBasic(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := e.ExecuteSQL(tt.sql)
-			if err != nil {
-				t.Fatalf("ExecuteSQL(%q) error: %v", tt.sql, err)
-			}
-			if len(result.Rows) != tt.wantRows {
-				t.Errorf("got %d rows, want %d", len(result.Rows), tt.wantRows)
-			}
+			require.NoError(t, err, "ExecuteSQL(%q)", tt.sql)
+			assert.Len(t, result.Rows, tt.wantRows, "row count")
 			if tt.wantCols != nil {
-				if len(result.Columns) != len(tt.wantCols) {
-					t.Errorf("got %d columns, want %d", len(result.Columns), len(tt.wantCols))
-				}
+				require.Len(t, result.Columns, len(tt.wantCols), "column count")
 				for i, col := range tt.wantCols {
-					if i < len(result.Columns) && result.Columns[i] != col {
-						t.Errorf("column[%d] = %q, want %q", i, result.Columns[i], col)
-					}
+					assert.Equal(t, col, result.Columns[i], "column[%d]", i)
 				}
 			}
 			if tt.wantData != nil {
@@ -272,8 +246,8 @@ func TestFromSubqueryBasic(t *testing.T) {
 						break
 					}
 					for j, wantVal := range wantRow {
-						if j < len(result.Rows[i]) && result.Rows[i][j] != wantVal {
-							t.Errorf("row[%d][%d] = %v, want %v", i, j, result.Rows[i][j], wantVal)
+						if j < len(result.Rows[i]) {
+							assert.Equal(t, wantVal, result.Rows[i][j], "row[%d][%d]", i, j)
 						}
 					}
 				}
@@ -292,22 +266,15 @@ func TestFromSubqueryWithUnion(t *testing.T) {
 		"INSERT INTO t2 VALUES (3), (4)",
 	}
 	for _, sql := range setup {
-		if _, err := e.ExecuteSQL(sql); err != nil {
-			t.Fatalf("setup failed: %s: %v", sql, err)
-		}
+		_, err := e.ExecuteSQL(sql)
+		require.NoError(t, err, "setup failed: %s", sql)
 	}
 
 	result, err := e.ExecuteSQL("SELECT * FROM (SELECT id FROM t1 UNION SELECT id FROM t2) AS sub ORDER BY sub.id")
-	if err != nil {
-		t.Fatalf("ExecuteSQL error: %v", err)
-	}
-	if len(result.Rows) != 4 {
-		t.Fatalf("got %d rows, want 4", len(result.Rows))
-	}
+	require.NoError(t, err, "ExecuteSQL error")
+	require.Len(t, result.Rows, 4, "expected 4 rows")
 	for i, want := range []int64{1, 2, 3, 4} {
-		if result.Rows[i][0] != want {
-			t.Errorf("row[%d][0] = %v, want %v", i, result.Rows[i][0], want)
-		}
+		assert.Equal(t, want, result.Rows[i][0], "row[%d][0]", i)
 	}
 }
 
@@ -321,24 +288,17 @@ func TestFromSubqueryWithJoin(t *testing.T) {
 		"INSERT INTO t2 VALUES (1, 'Alice'), (2, 'Bob')",
 	}
 	for _, sql := range setup {
-		if _, err := e.ExecuteSQL(sql); err != nil {
-			t.Fatalf("setup failed: %s: %v", sql, err)
-		}
+		_, err := e.ExecuteSQL(sql)
+		require.NoError(t, err, "setup failed: %s", sql)
 	}
 
 	result, err := e.ExecuteSQL("SELECT a.id, b.name FROM (SELECT id FROM t1) AS a JOIN t2 AS b ON a.id = b.id ORDER BY a.id")
-	if err != nil {
-		t.Fatalf("ExecuteSQL error: %v", err)
-	}
-	if len(result.Rows) != 2 {
-		t.Fatalf("got %d rows, want 2", len(result.Rows))
-	}
-	if result.Rows[0][0] != int64(1) || result.Rows[0][1] != "Alice" {
-		t.Errorf("row[0] = %v, want [1, Alice]", result.Rows[0])
-	}
-	if result.Rows[1][0] != int64(2) || result.Rows[1][1] != "Bob" {
-		t.Errorf("row[1] = %v, want [2, Bob]", result.Rows[1])
-	}
+	require.NoError(t, err, "ExecuteSQL error")
+	require.Len(t, result.Rows, 2, "expected 2 rows")
+	assert.Equal(t, int64(1), result.Rows[0][0], "row[0][0]")
+	assert.Equal(t, "Alice", result.Rows[0][1], "row[0][1]")
+	assert.Equal(t, int64(2), result.Rows[1][0], "row[1][0]")
+	assert.Equal(t, "Bob", result.Rows[1][1], "row[1][1]")
 }
 
 func TestFromSubqueryColumnTypes(t *testing.T) {
@@ -349,24 +309,15 @@ func TestFromSubqueryColumnTypes(t *testing.T) {
 		"INSERT INTO t1 VALUES (1, 'Alice')",
 	}
 	for _, sql := range setup {
-		if _, err := e.ExecuteSQL(sql); err != nil {
-			t.Fatalf("setup failed: %s: %v", sql, err)
-		}
+		_, err := e.ExecuteSQL(sql)
+		require.NoError(t, err, "setup failed: %s", sql)
 	}
 
 	result, err := e.ExecuteSQL("SELECT * FROM (SELECT id, name FROM t1) AS sub")
-	if err != nil {
-		t.Fatalf("ExecuteSQL error: %v", err)
-	}
-	if len(result.ColumnTypes) != 2 {
-		t.Fatalf("got %d column types, want 2", len(result.ColumnTypes))
-	}
-	if result.ColumnTypes[0] != "INT" {
-		t.Errorf("column type[0] = %q, want %q", result.ColumnTypes[0], "INT")
-	}
-	if result.ColumnTypes[1] != "TEXT" {
-		t.Errorf("column type[1] = %q, want %q", result.ColumnTypes[1], "TEXT")
-	}
+	require.NoError(t, err, "ExecuteSQL error")
+	require.Len(t, result.ColumnTypes, 2, "expected 2 column types")
+	assert.Equal(t, "INT", result.ColumnTypes[0], "column type[0]")
+	assert.Equal(t, "TEXT", result.ColumnTypes[1], "column type[1]")
 }
 
 func TestExistsSubquery(t *testing.T) {
@@ -380,9 +331,8 @@ func TestExistsSubquery(t *testing.T) {
 		"INSERT INTO orders VALUES (1, 1, 'active'), (2, 1, 'completed'), (3, 2, 'active')",
 	}
 	for _, sql := range setup {
-		if _, err := e.ExecuteSQL(sql); err != nil {
-			t.Fatalf("setup failed: %s: %v", sql, err)
-		}
+		_, err := e.ExecuteSQL(sql)
+		require.NoError(t, err, "setup failed: %s", sql)
 	}
 
 	tests := []struct {
@@ -449,20 +399,12 @@ func TestExistsSubquery(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := e.ExecuteSQL(tt.sql)
-			if err != nil {
-				t.Fatalf("ExecuteSQL(%q) error: %v", tt.sql, err)
-			}
-			if len(result.Rows) != tt.wantRows {
-				t.Errorf("got %d rows, want %d", len(result.Rows), tt.wantRows)
-			}
+			require.NoError(t, err, "ExecuteSQL(%q)", tt.sql)
+			assert.Len(t, result.Rows, tt.wantRows, "row count")
 			if tt.wantCols != nil {
-				if len(result.Columns) != len(tt.wantCols) {
-					t.Errorf("got %d columns, want %d", len(result.Columns), len(tt.wantCols))
-				}
+				require.Len(t, result.Columns, len(tt.wantCols), "column count")
 				for i, col := range tt.wantCols {
-					if i < len(result.Columns) && result.Columns[i] != col {
-						t.Errorf("column[%d] = %q, want %q", i, result.Columns[i], col)
-					}
+					assert.Equal(t, col, result.Columns[i], "column[%d]", i)
 				}
 			}
 			if tt.wantData != nil {
@@ -471,8 +413,8 @@ func TestExistsSubquery(t *testing.T) {
 						break
 					}
 					for j, wantVal := range wantRow {
-						if j < len(result.Rows[i]) && result.Rows[i][j] != wantVal {
-							t.Errorf("row[%d][%d] = %v, want %v", i, j, result.Rows[i][j], wantVal)
+						if j < len(result.Rows[i]) {
+							assert.Equal(t, wantVal, result.Rows[i][j], "row[%d][%d]", i, j)
 						}
 					}
 				}

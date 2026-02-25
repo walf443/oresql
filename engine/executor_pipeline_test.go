@@ -3,6 +3,8 @@ package engine
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/walf443/oresql/ast"
 )
 
@@ -28,9 +30,7 @@ func TestApplyOffset(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := applyOffset(rows, tt.offset)
-			if len(result) != tt.want {
-				t.Errorf("got %d rows, want %d", len(result), tt.want)
-			}
+			assert.Len(t, result, tt.want, "unexpected number of rows after offset")
 		})
 	}
 }
@@ -56,9 +56,7 @@ func TestApplyLimit(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := applyLimit(rows, tt.limit)
-			if len(result) != tt.want {
-				t.Errorf("got %d rows, want %d", len(result), tt.want)
-			}
+			assert.Len(t, result, tt.want, "unexpected number of rows after limit")
 		})
 	}
 }
@@ -89,21 +87,13 @@ func TestFilterWhere(t *testing.T) {
 		Right: &ast.StringLitExpr{Value: "Alice"},
 	}
 	result, err := filterWhere(rows, where, eval, rowIdentity)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(result) != 2 {
-		t.Errorf("expected 2 rows, got %d", len(result))
-	}
+	require.NoError(t, err)
+	assert.Len(t, result, 2, "expected 2 rows matching name='Alice'")
 
 	// Nil where returns all rows
 	result, err = filterWhere(rows, nil, eval, rowIdentity)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(result) != 3 {
-		t.Errorf("expected 3 rows, got %d", len(result))
-	}
+	require.NoError(t, err)
+	assert.Len(t, result, 3, "expected all 3 rows with nil where")
 }
 
 func TestFilterWhereLimit(t *testing.T) {
@@ -130,30 +120,18 @@ func TestFilterWhereLimit(t *testing.T) {
 		Right: &ast.StringLitExpr{Value: "Alice"},
 	}
 	result, err := filterWhereLimit(rows, where, eval, rowIdentity, 2)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(result) != 2 {
-		t.Errorf("expected 2 rows, got %d", len(result))
-	}
+	require.NoError(t, err)
+	assert.Len(t, result, 2, "expected 2 rows matching name='Alice' with limit 2")
 
 	// Nil where with limit 3 returns first 3 rows
 	result, err = filterWhereLimit(rows, nil, eval, rowIdentity, 3)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(result) != 3 {
-		t.Errorf("expected 3 rows, got %d", len(result))
-	}
+	require.NoError(t, err)
+	assert.Len(t, result, 3, "expected 3 rows with nil where and limit 3")
 
 	// Limit larger than matching rows returns all matching
 	result, err = filterWhereLimit(rows, where, eval, rowIdentity, 10)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(result) != 3 {
-		t.Errorf("expected 3 rows, got %d", len(result))
-	}
+	require.NoError(t, err)
+	assert.Len(t, result, 3, "expected all 3 matching rows when limit exceeds matches")
 }
 
 func TestSortRows(t *testing.T) {
@@ -176,33 +154,25 @@ func TestSortRows(t *testing.T) {
 		{Expr: &ast.IdentExpr{Name: "id"}, Desc: false},
 	}
 	result, err := sortRows(rows, orderBy, eval, rowIdentity)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result[0][0] != int64(1) || result[1][0] != int64(2) || result[2][0] != int64(3) {
-		t.Errorf("unexpected sort order: %v", result)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), result[0][0])
+	assert.Equal(t, int64(2), result[1][0])
+	assert.Equal(t, int64(3), result[2][0])
 
 	// Sort by id DESC
 	orderBy = []ast.OrderByClause{
 		{Expr: &ast.IdentExpr{Name: "id"}, Desc: true},
 	}
 	result, err = sortRows(rows, orderBy, eval, rowIdentity)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result[0][0] != int64(3) || result[1][0] != int64(2) || result[2][0] != int64(1) {
-		t.Errorf("unexpected sort order: %v", result)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), result[0][0])
+	assert.Equal(t, int64(2), result[1][0])
+	assert.Equal(t, int64(1), result[2][0])
 
 	// Empty orderBy returns unchanged
 	result, err = sortRows(rows, nil, eval, rowIdentity)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(result) != 3 {
-		t.Errorf("expected 3 rows, got %d", len(result))
-	}
+	require.NoError(t, err)
+	assert.Len(t, result, 3, "expected 3 rows with nil orderBy")
 }
 
 func TestProjectRows(t *testing.T) {
@@ -226,24 +196,15 @@ func TestProjectRows(t *testing.T) {
 		&ast.IdentExpr{Name: "age"},
 	}
 	result, err := projectRows(rows, colExprs, false, eval)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(result) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result))
-	}
-	if result[0][0] != "Alice" || result[0][1] != int64(30) {
-		t.Errorf("unexpected projection: %v", result[0])
-	}
+	require.NoError(t, err)
+	require.Len(t, result, 2, "expected 2 projected rows")
+	assert.Equal(t, "Alice", result[0][0])
+	assert.Equal(t, int64(30), result[0][1])
 
 	// Star projection
 	result, err = projectRows(rows, nil, true, eval)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(result[0]) != 3 {
-		t.Errorf("expected 3 columns, got %d", len(result[0]))
-	}
+	require.NoError(t, err)
+	assert.Len(t, result[0], 3, "expected 3 columns in star projection")
 }
 
 func TestCompareSortKeys(t *testing.T) {
@@ -284,9 +245,7 @@ func TestCompareSortKeys(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := compareSortKeys(tt.a, tt.b, tt.orderBy)
-			if sign(got) != tt.want {
-				t.Errorf("compareSortKeys(%v, %v) = %d, want sign %d", tt.a, tt.b, got, tt.want)
-			}
+			assert.Equal(t, tt.want, sign(got), "compareSortKeys(%v, %v)", tt.a, tt.b)
 		})
 	}
 }
@@ -321,9 +280,7 @@ func TestTopKHeapInvariant(t *testing.T) {
 	for h.Len() > 0 {
 		sk := heapPop(h)
 		val := sk.values[0].(int64)
-		if val > prev {
-			t.Errorf("heap invariant violated: got %d after %d", val, prev)
-		}
+		assert.LessOrEqual(t, val, prev, "heap invariant violated: got %d after %d", val, prev)
 		prev = val
 	}
 }
@@ -383,15 +340,9 @@ func TestSortRowsTopK(t *testing.T) {
 		}
 		// limit=1, rows=5 → 1*4=4 < 5, heap path
 		result, err := sortRowsTopK(rows, orderBy, eval, rowIdentity, 1)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(result) != 1 {
-			t.Fatalf("expected 1 row, got %d", len(result))
-		}
-		if result[0][0] != int64(1) {
-			t.Errorf("expected 1, got %v", result[0][0])
-		}
+		require.NoError(t, err)
+		require.Len(t, result, 1, "expected 1 row")
+		assert.Equal(t, int64(1), result[0][0])
 	})
 
 	t.Run("basic DESC limit", func(t *testing.T) {
@@ -406,15 +357,9 @@ func TestSortRowsTopK(t *testing.T) {
 			{Expr: &ast.IdentExpr{Name: "id"}, Desc: true},
 		}
 		result, err := sortRowsTopK(rows, orderBy, eval, rowIdentity, 1)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(result) != 1 {
-			t.Fatalf("expected 1 row, got %d", len(result))
-		}
-		if result[0][0] != int64(5) {
-			t.Errorf("expected 5, got %v", result[0][0])
-		}
+		require.NoError(t, err)
+		require.Len(t, result, 1, "expected 1 row")
+		assert.Equal(t, int64(5), result[0][0])
 	})
 
 	t.Run("fallback when limit*4 >= len", func(t *testing.T) {
@@ -428,16 +373,10 @@ func TestSortRowsTopK(t *testing.T) {
 		}
 		// limit=1, rows=3 → 1*4=4 >= 3, falls back to sortRows
 		result, err := sortRowsTopK(rows, orderBy, eval, rowIdentity, 1)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		// Falls back to full sort, returns all rows
-		if len(result) != 3 {
-			t.Fatalf("expected 3 rows (fallback), got %d", len(result))
-		}
-		if result[0][0] != int64(1) {
-			t.Errorf("expected sorted first=1, got %v", result[0][0])
-		}
+		require.Len(t, result, 3, "expected 3 rows (fallback)")
+		assert.Equal(t, int64(1), result[0][0])
 	})
 
 	t.Run("empty rows", func(t *testing.T) {
@@ -445,23 +384,15 @@ func TestSortRowsTopK(t *testing.T) {
 			{Expr: &ast.IdentExpr{Name: "id"}, Desc: false},
 		}
 		result, err := sortRowsTopK([]Row{}, orderBy, eval, rowIdentity, 3)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(result) != 0 {
-			t.Errorf("expected 0 rows, got %d", len(result))
-		}
+		require.NoError(t, err)
+		assert.Len(t, result, 0, "expected 0 rows")
 	})
 
 	t.Run("empty orderBy", func(t *testing.T) {
 		rows := []Row{{int64(2), "b"}, {int64(1), "a"}}
 		result, err := sortRowsTopK(rows, nil, eval, rowIdentity, 1)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(result) != 2 {
-			t.Errorf("expected 2 rows unchanged, got %d", len(result))
-		}
+		require.NoError(t, err)
+		assert.Len(t, result, 2, "expected 2 rows unchanged")
 	})
 
 	t.Run("limit zero", func(t *testing.T) {
@@ -475,12 +406,8 @@ func TestSortRowsTopK(t *testing.T) {
 		}
 		// limit <= 0 falls back to sortRows
 		result, err := sortRowsTopK(rows, orderBy, eval, rowIdentity, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if result[0][0] != int64(1) {
-			t.Errorf("expected sorted first=1, got %v", result[0][0])
-		}
+		require.NoError(t, err)
+		assert.Equal(t, int64(1), result[0][0])
 	})
 
 	t.Run("with duplicates", func(t *testing.T) {
@@ -495,15 +422,9 @@ func TestSortRowsTopK(t *testing.T) {
 			{Expr: &ast.IdentExpr{Name: "id"}, Desc: false},
 		}
 		result, err := sortRowsTopK(rows, orderBy, eval, rowIdentity, 1)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(result) != 1 {
-			t.Fatalf("expected 1 row, got %d", len(result))
-		}
-		if result[0][0] != int64(1) {
-			t.Errorf("expected 1, got %v", result[0][0])
-		}
+		require.NoError(t, err)
+		require.Len(t, result, 1, "expected 1 row")
+		assert.Equal(t, int64(1), result[0][0])
 	})
 
 	t.Run("multi column ORDER BY", func(t *testing.T) {
@@ -519,15 +440,10 @@ func TestSortRowsTopK(t *testing.T) {
 			{Expr: &ast.IdentExpr{Name: "name"}, Desc: false},
 		}
 		result, err := sortRowsTopK(rows, orderBy, eval, rowIdentity, 1)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(result) != 1 {
-			t.Fatalf("expected 1 row, got %d", len(result))
-		}
-		if result[0][0] != int64(1) || result[0][1] != "a" {
-			t.Errorf("expected (1, a), got (%v, %v)", result[0][0], result[0][1])
-		}
+		require.NoError(t, err)
+		require.Len(t, result, 1, "expected 1 row")
+		assert.Equal(t, int64(1), result[0][0])
+		assert.Equal(t, "a", result[0][1])
 	})
 
 	t.Run("with NULLs", func(t *testing.T) {
@@ -543,15 +459,9 @@ func TestSortRowsTopK(t *testing.T) {
 		}
 		// Top 2 ASC: should be 1, 2 (NULLs sort last)
 		result, err := sortRowsTopK(rows, orderBy, eval, rowIdentity, 1)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(result) != 1 {
-			t.Fatalf("expected 1 row, got %d", len(result))
-		}
-		if result[0][0] != int64(1) {
-			t.Errorf("expected 1 (NULLs last), got %v", result[0][0])
-		}
+		require.NoError(t, err)
+		require.Len(t, result, 1, "expected 1 row")
+		assert.Equal(t, int64(1), result[0][0])
 	})
 
 	t.Run("with NULLs DESC", func(t *testing.T) {
@@ -567,15 +477,9 @@ func TestSortRowsTopK(t *testing.T) {
 		}
 		// Top 1 DESC: should be 3 (NULLs sort last even for DESC)
 		result, err := sortRowsTopK(rows, orderBy, eval, rowIdentity, 1)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(result) != 1 {
-			t.Fatalf("expected 1 row, got %d", len(result))
-		}
-		if result[0][0] != int64(3) {
-			t.Errorf("expected 3 (NULLs last DESC), got %v", result[0][0])
-		}
+		require.NoError(t, err)
+		require.Len(t, result, 1, "expected 1 row")
+		assert.Equal(t, int64(3), result[0][0])
 	})
 
 	t.Run("KeyRow generic type", func(t *testing.T) {
@@ -590,18 +494,10 @@ func TestSortRowsTopK(t *testing.T) {
 			{Expr: &ast.IdentExpr{Name: "id"}, Desc: false},
 		}
 		result, err := sortRowsTopK(krows, orderBy, eval, rowOfKeyRow, 1)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(result) != 1 {
-			t.Fatalf("expected 1 row, got %d", len(result))
-		}
-		if result[0].Row[0] != int64(1) {
-			t.Errorf("expected id=1, got %v", result[0].Row[0])
-		}
-		if result[0].Key != 30 {
-			t.Errorf("expected key=30, got %d", result[0].Key)
-		}
+		require.NoError(t, err)
+		require.Len(t, result, 1, "expected 1 row")
+		assert.Equal(t, int64(1), result[0].Row[0])
+		assert.Equal(t, int64(30), result[0].Key)
 	})
 
 	t.Run("result order with limit 3", func(t *testing.T) {
@@ -615,17 +511,11 @@ func TestSortRowsTopK(t *testing.T) {
 		}
 		// limit=3, rows=20 → 3*4=12 < 20, heap path
 		result, err := sortRowsTopK(rows, orderBy, eval, rowIdentity, 3)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(result) != 3 {
-			t.Fatalf("expected 3 rows, got %d", len(result))
-		}
+		require.NoError(t, err)
+		require.Len(t, result, 3, "expected 3 rows")
 		// Should be sorted: 1, 2, 3
 		for i, exp := range []int64{1, 2, 3} {
-			if result[i][0] != exp {
-				t.Errorf("result[%d]: expected %d, got %v", i, exp, result[i][0])
-			}
+			assert.Equal(t, exp, result[i][0], "result[%d]", i)
 		}
 	})
 }
@@ -642,18 +532,12 @@ func TestResolveSelectColumns(t *testing.T) {
 
 	// Star
 	colNames, colExprs, isStar, err := resolveSelectColumns([]ast.Expr{&ast.StarExpr{}}, eval)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !isStar {
-		t.Error("expected isStar=true")
-	}
-	if len(colNames) != 2 || colNames[0] != "id" || colNames[1] != "name" {
-		t.Errorf("unexpected column names: %v", colNames)
-	}
-	if colExprs != nil {
-		t.Error("expected nil colExprs for star")
-	}
+	require.NoError(t, err)
+	assert.True(t, isStar, "expected isStar=true")
+	require.Len(t, colNames, 2, "expected 2 column names for star")
+	assert.Equal(t, "id", colNames[0])
+	assert.Equal(t, "name", colNames[1])
+	assert.Nil(t, colExprs, "expected nil colExprs for star")
 
 	// Named columns
 	columns := []ast.Expr{
@@ -661,16 +545,10 @@ func TestResolveSelectColumns(t *testing.T) {
 		&ast.AliasExpr{Expr: &ast.IdentExpr{Name: "id"}, Alias: "user_id"},
 	}
 	colNames, colExprs, isStar, err = resolveSelectColumns(columns, eval)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if isStar {
-		t.Error("expected isStar=false")
-	}
-	if len(colNames) != 2 || colNames[0] != "name" || colNames[1] != "user_id" {
-		t.Errorf("unexpected column names: %v", colNames)
-	}
-	if len(colExprs) != 2 {
-		t.Errorf("expected 2 colExprs, got %d", len(colExprs))
-	}
+	require.NoError(t, err)
+	assert.False(t, isStar, "expected isStar=false")
+	require.Len(t, colNames, 2, "expected 2 column names")
+	assert.Equal(t, "name", colNames[0])
+	assert.Equal(t, "user_id", colNames[1])
+	assert.Len(t, colExprs, 2, "expected 2 colExprs")
 }

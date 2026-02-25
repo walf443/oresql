@@ -3,6 +3,8 @@ package engine
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/walf443/oresql/ast"
 )
 
@@ -57,9 +59,7 @@ func TestFlattenAND(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := flattenAND(tt.expr)
-			if len(got) != tt.want {
-				t.Errorf("flattenAND() returned %d exprs, want %d", len(got), tt.want)
-			}
+			assert.Len(t, got, tt.want, "flattenAND() returned expression count")
 		})
 	}
 }
@@ -107,14 +107,9 @@ func TestCollectTableRefs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := collectTableRefs(tt.expr)
-			if len(got) != len(tt.want) {
-				t.Errorf("collectTableRefs() = %v, want %v", got, tt.want)
-				return
-			}
+			require.Len(t, got, len(tt.want), "collectTableRefs() result count")
 			for k := range tt.want {
-				if !got[k] {
-					t.Errorf("collectTableRefs() missing key %q", k)
-				}
+				assert.True(t, got[k], "collectTableRefs() missing key %q", k)
 			}
 		})
 	}
@@ -168,12 +163,8 @@ func TestStripTableQualifier(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := stripTableQualifier(tt.expr, tt.tableName, tt.alias)
 			ident, ok := got.(*ast.IdentExpr)
-			if !ok {
-				t.Fatalf("stripTableQualifier() returned %T, want *ast.IdentExpr", got)
-			}
-			if ident.Table != tt.wantTable {
-				t.Errorf("stripTableQualifier().Table = %q, want %q", ident.Table, tt.wantTable)
-			}
+			require.True(t, ok, "stripTableQualifier() returned %T, want *ast.IdentExpr", got)
+			assert.Equal(t, tt.wantTable, ident.Table)
 		})
 	}
 }
@@ -187,16 +178,10 @@ func TestStripTableQualifierBinaryExpr(t *testing.T) {
 	}
 	got := stripTableQualifier(expr, "users", "u")
 	binExpr, ok := got.(*ast.BinaryExpr)
-	if !ok {
-		t.Fatalf("expected *ast.BinaryExpr, got %T", got)
-	}
+	require.True(t, ok, "expected *ast.BinaryExpr, got %T", got)
 	ident, ok := binExpr.Left.(*ast.IdentExpr)
-	if !ok {
-		t.Fatalf("expected *ast.IdentExpr, got %T", binExpr.Left)
-	}
-	if ident.Table != "" {
-		t.Errorf("expected Table to be stripped, got %q", ident.Table)
-	}
+	require.True(t, ok, "expected *ast.IdentExpr, got %T", binExpr.Left)
+	assert.Equal(t, "", ident.Table, "expected Table to be stripped")
 }
 
 func TestCombineExprsAND(t *testing.T) {
@@ -215,11 +200,10 @@ func TestCombineExprsAND(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := combineExprsAND(tt.in)
-			if tt.want && got == nil {
-				t.Errorf("combineExprsAND() = nil, want non-nil")
-			}
-			if !tt.want && got != nil {
-				t.Errorf("combineExprsAND() = %v, want nil", got)
+			if tt.want {
+				assert.NotNil(t, got, "combineExprsAND() should return non-nil")
+			} else {
+				assert.Nil(t, got, "combineExprsAND() should return nil")
 			}
 		})
 	}
@@ -229,7 +213,5 @@ func TestCombineExprsAND(t *testing.T) {
 		&ast.BinaryExpr{Left: &ast.IdentExpr{Name: "a"}, Op: "=", Right: &ast.IntLitExpr{Value: 1}},
 		&ast.BinaryExpr{Left: &ast.IdentExpr{Name: "b"}, Op: "=", Right: &ast.IntLitExpr{Value: 2}},
 	})
-	if _, ok := two.(*ast.LogicalExpr); !ok {
-		t.Errorf("combineExprsAND(2 exprs) = %T, want *ast.LogicalExpr", two)
-	}
+	assert.IsType(t, &ast.LogicalExpr{}, two, "combineExprsAND(2 exprs) should return *ast.LogicalExpr")
 }

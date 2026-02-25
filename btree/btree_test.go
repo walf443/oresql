@@ -5,51 +5,43 @@ import (
 	"math/rand"
 	"sort"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestInsertAndGet(t *testing.T) {
 	tree := New[int64](4) // small degree for easier testing
 
-	if ok := tree.Insert(10, "ten"); !ok {
-		t.Fatal("expected Insert to return true for new key")
-	}
-	if ok := tree.Insert(20, "twenty"); !ok {
-		t.Fatal("expected Insert to return true for new key")
-	}
-	if ok := tree.Insert(5, "five"); !ok {
-		t.Fatal("expected Insert to return true for new key")
-	}
+	ok := tree.Insert(10, "ten")
+	require.True(t, ok, "expected Insert to return true for new key")
+	ok = tree.Insert(20, "twenty")
+	require.True(t, ok, "expected Insert to return true for new key")
+	ok = tree.Insert(5, "five")
+	require.True(t, ok, "expected Insert to return true for new key")
 
 	val, ok := tree.Get(10)
-	if !ok || val != "ten" {
-		t.Errorf("Get(10): expected 'ten', got %v (ok=%v)", val, ok)
-	}
+	assert.True(t, ok, "Get(10): expected ok=true")
+	assert.Equal(t, "ten", val)
 	val, ok = tree.Get(20)
-	if !ok || val != "twenty" {
-		t.Errorf("Get(20): expected 'twenty', got %v (ok=%v)", val, ok)
-	}
+	assert.True(t, ok, "Get(20): expected ok=true")
+	assert.Equal(t, "twenty", val)
 	val, ok = tree.Get(5)
-	if !ok || val != "five" {
-		t.Errorf("Get(5): expected 'five', got %v (ok=%v)", val, ok)
-	}
+	assert.True(t, ok, "Get(5): expected ok=true")
+	assert.Equal(t, "five", val)
 
 	_, ok = tree.Get(999)
-	if ok {
-		t.Error("Get(999): expected ok=false for missing key")
-	}
+	assert.False(t, ok, "Get(999): expected ok=false for missing key")
 }
 
 func TestInsertDuplicate(t *testing.T) {
 	tree := New[int64](4)
 	tree.Insert(10, "ten")
-	if ok := tree.Insert(10, "ten-again"); ok {
-		t.Error("expected Insert to return false for duplicate key")
-	}
+	ok := tree.Insert(10, "ten-again")
+	assert.False(t, ok, "expected Insert to return false for duplicate key")
 	// Original value should be preserved
 	val, _ := tree.Get(10)
-	if val != "ten" {
-		t.Errorf("expected 'ten' after duplicate insert, got %v", val)
-	}
+	assert.Equal(t, "ten", val, "expected 'ten' after duplicate insert")
 }
 
 func TestPut(t *testing.T) {
@@ -57,9 +49,8 @@ func TestPut(t *testing.T) {
 	tree.Put(10, "ten")
 	tree.Put(10, "TEN") // upsert
 	val, ok := tree.Get(10)
-	if !ok || val != "TEN" {
-		t.Errorf("Put upsert: expected 'TEN', got %v", val)
-	}
+	assert.True(t, ok, "Put upsert: expected ok=true")
+	assert.Equal(t, "TEN", val, "Put upsert: expected 'TEN'")
 }
 
 func TestDelete(t *testing.T) {
@@ -68,45 +59,32 @@ func TestDelete(t *testing.T) {
 	tree.Insert(20, "twenty")
 	tree.Insert(5, "five")
 
-	if ok := tree.Delete(10); !ok {
-		t.Fatal("expected Delete to return true for existing key")
-	}
-	if _, ok := tree.Get(10); ok {
-		t.Error("Get(10) should return false after delete")
-	}
-	if tree.Len() != 2 {
-		t.Errorf("expected Len()=2 after delete, got %d", tree.Len())
-	}
+	ok := tree.Delete(10)
+	require.True(t, ok, "expected Delete to return true for existing key")
+	_, ok = tree.Get(10)
+	assert.False(t, ok, "Get(10) should return false after delete")
+	assert.Equal(t, 2, tree.Len(), "expected Len()=2 after delete")
 
 	// Delete non-existent key
-	if ok := tree.Delete(999); ok {
-		t.Error("expected Delete to return false for non-existent key")
-	}
+	ok = tree.Delete(999)
+	assert.False(t, ok, "expected Delete to return false for non-existent key")
 }
 
 func TestHas(t *testing.T) {
 	tree := New[int64](4)
 	tree.Insert(10, "ten")
 
-	if !tree.Has(10) {
-		t.Error("Has(10): expected true")
-	}
-	if tree.Has(999) {
-		t.Error("Has(999): expected false")
-	}
+	assert.True(t, tree.Has(10), "Has(10): expected true")
+	assert.False(t, tree.Has(999), "Has(999): expected false")
 }
 
 func TestLen(t *testing.T) {
 	tree := New[int64](4)
-	if tree.Len() != 0 {
-		t.Errorf("expected Len()=0 for empty tree, got %d", tree.Len())
-	}
+	assert.Equal(t, 0, tree.Len(), "expected Len()=0 for empty tree")
 	tree.Insert(1, nil)
 	tree.Insert(2, nil)
 	tree.Insert(3, nil)
-	if tree.Len() != 3 {
-		t.Errorf("expected Len()=3, got %d", tree.Len())
-	}
+	assert.Equal(t, 3, tree.Len(), "expected Len()=3")
 }
 
 func TestForEachInOrder(t *testing.T) {
@@ -122,12 +100,10 @@ func TestForEachInOrder(t *testing.T) {
 		return true
 	})
 
-	if len(result) != len(keys) {
-		t.Fatalf("expected %d keys, got %d", len(keys), len(result))
-	}
+	require.Len(t, result, len(keys), "expected same number of keys")
 	for i := 1; i < len(result); i++ {
 		if result[i] <= result[i-1] {
-			t.Errorf("keys not in order: %v", result)
+			assert.Fail(t, fmt.Sprintf("keys not in order: %v", result))
 			break
 		}
 	}
@@ -145,9 +121,7 @@ func TestForEachEarlyTermination(t *testing.T) {
 		return count < 5 // stop after 5
 	})
 
-	if count != 5 {
-		t.Errorf("expected ForEach to stop after 5 items, got %d", count)
-	}
+	assert.Equal(t, 5, count, "expected ForEach to stop after 5 items")
 }
 
 func TestLargeDataSet(t *testing.T) {
@@ -162,26 +136,20 @@ func TestLargeDataSet(t *testing.T) {
 		tree.Insert(k, i*10)
 	}
 
-	if tree.Len() != n {
-		t.Fatalf("expected Len()=%d, got %d", n, tree.Len())
-	}
+	require.Equal(t, n, tree.Len(), "expected Len() to match n")
 
 	// Verify all values retrievable
 	for i := 0; i < n; i++ {
 		val, ok := tree.Get(int64(i))
-		if !ok {
-			t.Fatalf("Get(%d): expected ok=true", i)
-		}
-		if val != i*10 {
-			t.Fatalf("Get(%d): expected %d, got %v", i, i*10, val)
-		}
+		require.True(t, ok, "Get(%d): expected ok=true", i)
+		require.Equal(t, i*10, val, "Get(%d): expected %d", i, i*10)
 	}
 
 	// Verify sorted order
 	var prev int64 = -1
 	tree.ForEach(func(key int64, value any) bool {
 		if key <= prev {
-			t.Errorf("keys not in order: %d after %d", key, prev)
+			assert.Fail(t, fmt.Sprintf("keys not in order: %d after %d", key, prev))
 			return false
 		}
 		prev = key
@@ -191,30 +159,24 @@ func TestLargeDataSet(t *testing.T) {
 	// Delete half
 	for i := 0; i < n/2; i++ {
 		k := int64(perm[i])
-		if !tree.Delete(k) {
-			t.Fatalf("Delete(%d): expected true", k)
-		}
+		require.True(t, tree.Delete(k), "Delete(%d): expected true", k)
 	}
 
-	if tree.Len() != n/2 {
-		t.Fatalf("expected Len()=%d after deletes, got %d", n/2, tree.Len())
-	}
+	require.Equal(t, n/2, tree.Len(), "expected Len() after deletes")
 
 	// Verify remaining are still accessible and sorted
 	prev = -1
 	count := 0
 	tree.ForEach(func(key int64, value any) bool {
 		if key <= prev {
-			t.Errorf("keys not in order after delete: %d after %d", key, prev)
+			assert.Fail(t, fmt.Sprintf("keys not in order after delete: %d after %d", key, prev))
 			return false
 		}
 		prev = key
 		count++
 		return true
 	})
-	if count != n/2 {
-		t.Errorf("expected %d items in ForEach, got %d", n/2, count)
-	}
+	assert.Equal(t, n/2, count, "expected correct number of items in ForEach")
 }
 
 func TestDeleteAndReinsert(t *testing.T) {
@@ -222,13 +184,11 @@ func TestDeleteAndReinsert(t *testing.T) {
 	tree.Insert(10, "first")
 	tree.Delete(10)
 
-	if ok := tree.Insert(10, "second"); !ok {
-		t.Fatal("expected Insert to return true after delete")
-	}
+	ok := tree.Insert(10, "second")
+	require.True(t, ok, "expected Insert to return true after delete")
 	val, ok := tree.Get(10)
-	if !ok || val != "second" {
-		t.Errorf("expected 'second' after reinsert, got %v", val)
-	}
+	assert.True(t, ok, "expected ok=true after reinsert")
+	assert.Equal(t, "second", val, "expected 'second' after reinsert")
 }
 
 // --- String key tests ---
@@ -241,22 +201,17 @@ func TestStringBTreePutAndGet(t *testing.T) {
 	tree.Put("cherry", 3)
 
 	val, ok := tree.Get("banana")
-	if !ok || val != 2 {
-		t.Errorf("Get(banana): expected 2, got %v (ok=%v)", val, ok)
-	}
+	assert.True(t, ok, "Get(banana): expected ok=true")
+	assert.Equal(t, 2, val)
 	val, ok = tree.Get("apple")
-	if !ok || val != 1 {
-		t.Errorf("Get(apple): expected 1, got %v (ok=%v)", val, ok)
-	}
+	assert.True(t, ok, "Get(apple): expected ok=true")
+	assert.Equal(t, 1, val)
 	val, ok = tree.Get("cherry")
-	if !ok || val != 3 {
-		t.Errorf("Get(cherry): expected 3, got %v (ok=%v)", val, ok)
-	}
+	assert.True(t, ok, "Get(cherry): expected ok=true")
+	assert.Equal(t, 3, val)
 
 	_, ok = tree.Get("missing")
-	if ok {
-		t.Error("Get(missing): expected ok=false")
-	}
+	assert.False(t, ok, "Get(missing): expected ok=false")
 }
 
 func TestStringBTreePutUpsert(t *testing.T) {
@@ -264,12 +219,9 @@ func TestStringBTreePutUpsert(t *testing.T) {
 	tree.Put("key", "first")
 	tree.Put("key", "second")
 	val, ok := tree.Get("key")
-	if !ok || val != "second" {
-		t.Errorf("Put upsert: expected 'second', got %v", val)
-	}
-	if tree.Len() != 1 {
-		t.Errorf("expected Len()=1 after upsert, got %d", tree.Len())
-	}
+	assert.True(t, ok, "Put upsert: expected ok=true")
+	assert.Equal(t, "second", val, "Put upsert: expected 'second'")
+	assert.Equal(t, 1, tree.Len(), "expected Len()=1 after upsert")
 }
 
 func TestStringBTreeDelete(t *testing.T) {
@@ -278,19 +230,14 @@ func TestStringBTreeDelete(t *testing.T) {
 	tree.Put("b", 2)
 	tree.Put("c", 3)
 
-	if ok := tree.Delete("b"); !ok {
-		t.Fatal("expected Delete to return true for existing key")
-	}
-	if _, ok := tree.Get("b"); ok {
-		t.Error("Get(b) should return false after delete")
-	}
-	if tree.Len() != 2 {
-		t.Errorf("expected Len()=2 after delete, got %d", tree.Len())
-	}
+	ok := tree.Delete("b")
+	require.True(t, ok, "expected Delete to return true for existing key")
+	_, ok = tree.Get("b")
+	assert.False(t, ok, "Get(b) should return false after delete")
+	assert.Equal(t, 2, tree.Len(), "expected Len()=2 after delete")
 
-	if ok := tree.Delete("missing"); ok {
-		t.Error("expected Delete to return false for non-existent key")
-	}
+	ok = tree.Delete("missing")
+	assert.False(t, ok, "expected Delete to return false for non-existent key")
 }
 
 func TestStringBTreeForEachInOrder(t *testing.T) {
@@ -306,12 +253,10 @@ func TestStringBTreeForEachInOrder(t *testing.T) {
 		return true
 	})
 
-	if len(result) != len(keys) {
-		t.Fatalf("expected %d keys, got %d", len(keys), len(result))
-	}
+	require.Len(t, result, len(keys), "expected same number of keys")
 	for i := 1; i < len(result); i++ {
 		if result[i] <= result[i-1] {
-			t.Errorf("keys not in order: %v", result)
+			assert.Fail(t, fmt.Sprintf("keys not in order: %v", result))
 			break
 		}
 	}
@@ -329,9 +274,7 @@ func TestStringBTreeForEachEarlyTermination(t *testing.T) {
 		return count < 5
 	})
 
-	if count != 5 {
-		t.Errorf("expected ForEach to stop after 5 items, got %d", count)
-	}
+	assert.Equal(t, 5, count, "expected ForEach to stop after 5 items")
 }
 
 func TestStringBTreeLargeDataSet(t *testing.T) {
@@ -348,25 +291,19 @@ func TestStringBTreeLargeDataSet(t *testing.T) {
 		tree.Put(keys[i], i*10)
 	}
 
-	if tree.Len() != n {
-		t.Fatalf("expected Len()=%d, got %d", n, tree.Len())
-	}
+	require.Equal(t, n, tree.Len(), "expected Len() to match n")
 
 	for i := 0; i < n; i++ {
 		val, ok := tree.Get(keys[i])
-		if !ok {
-			t.Fatalf("Get(%s): expected ok=true", keys[i])
-		}
-		if val != i*10 {
-			t.Fatalf("Get(%s): expected %d, got %v", keys[i], i*10, val)
-		}
+		require.True(t, ok, "Get(%s): expected ok=true", keys[i])
+		require.Equal(t, i*10, val, "Get(%s): expected %d", keys[i], i*10)
 	}
 
 	// Verify sorted order
 	var prev string
 	tree.ForEach(func(key string, value any) bool {
 		if prev != "" && key <= prev {
-			t.Errorf("keys not in order: %s after %s", key, prev)
+			assert.Fail(t, fmt.Sprintf("keys not in order: %s after %s", key, prev))
 			return false
 		}
 		prev = key
@@ -376,30 +313,24 @@ func TestStringBTreeLargeDataSet(t *testing.T) {
 	// Delete half
 	for i := 0; i < n/2; i++ {
 		k := keys[perm[i]]
-		if !tree.Delete(k) {
-			t.Fatalf("Delete(%s): expected true", k)
-		}
+		require.True(t, tree.Delete(k), "Delete(%s): expected true", k)
 	}
 
-	if tree.Len() != n/2 {
-		t.Fatalf("expected Len()=%d after deletes, got %d", n/2, tree.Len())
-	}
+	require.Equal(t, n/2, tree.Len(), "expected Len() after deletes")
 
 	// Verify remaining are sorted
 	prev = ""
 	count := 0
 	tree.ForEach(func(key string, value any) bool {
 		if prev != "" && key <= prev {
-			t.Errorf("keys not in order after delete: %s after %s", key, prev)
+			assert.Fail(t, fmt.Sprintf("keys not in order after delete: %s after %s", key, prev))
 			return false
 		}
 		prev = key
 		count++
 		return true
 	})
-	if count != n/2 {
-		t.Errorf("expected %d items in ForEach, got %d", n/2, count)
-	}
+	assert.Equal(t, n/2, count, "expected correct number of items in ForEach")
 }
 
 func TestStringBTreeDeleteAndReinsert(t *testing.T) {
@@ -409,9 +340,8 @@ func TestStringBTreeDeleteAndReinsert(t *testing.T) {
 
 	tree.Put("key", "second")
 	val, ok := tree.Get("key")
-	if !ok || val != "second" {
-		t.Errorf("expected 'second' after reinsert, got %v", val)
-	}
+	assert.True(t, ok, "expected ok=true after reinsert")
+	assert.Equal(t, "second", val, "expected 'second' after reinsert")
 }
 
 // --- ForEachRange tests ---
@@ -495,13 +425,9 @@ func TestForEachRange(t *testing.T) {
 				got = append(got, key)
 				return true
 			})
-			if len(got) != len(tt.wantKeys) {
-				t.Fatalf("expected %d keys, got %d: %v", len(tt.wantKeys), len(got), got)
-			}
+			require.Len(t, got, len(tt.wantKeys), "unexpected number of keys: %v", got)
 			for i := range tt.wantKeys {
-				if got[i] != tt.wantKeys[i] {
-					t.Errorf("position %d: expected %d, got %d", i, tt.wantKeys[i], got[i])
-				}
+				assert.Equal(t, tt.wantKeys[i], got[i], "position %d", i)
 			}
 		})
 	}
@@ -520,9 +446,7 @@ func TestForEachRangeNoMatch(t *testing.T) {
 		got = append(got, key)
 		return true
 	})
-	if len(got) != 0 {
-		t.Errorf("expected 0 keys, got %d: %v", len(got), got)
-	}
+	assert.Len(t, got, 0, "expected 0 keys")
 }
 
 func TestForEachRangeEarlyTermination(t *testing.T) {
@@ -537,9 +461,7 @@ func TestForEachRangeEarlyTermination(t *testing.T) {
 		count++
 		return count < 3
 	})
-	if count != 3 {
-		t.Errorf("expected 3 items before early termination, got %d", count)
-	}
+	assert.Equal(t, 3, count, "expected 3 items before early termination")
 }
 
 func TestForEachRangeStringKeys(t *testing.T) {
@@ -557,13 +479,9 @@ func TestForEachRangeStringKeys(t *testing.T) {
 		return true
 	})
 	expected := []string{"cherry", "date", "elderberry", "fig"}
-	if len(got) != len(expected) {
-		t.Fatalf("expected %d keys, got %d: %v", len(expected), len(got), got)
-	}
+	require.Len(t, got, len(expected), "unexpected number of keys: %v", got)
 	for i := range expected {
-		if got[i] != expected[i] {
-			t.Errorf("position %d: expected %s, got %s", i, expected[i], got[i])
-		}
+		assert.Equal(t, expected[i], got[i], "position %d", i)
 	}
 }
 
@@ -586,12 +504,10 @@ func TestForEachReverse(t *testing.T) {
 		return true
 	})
 
-	if len(result) != len(keys) {
-		t.Fatalf("expected %d keys, got %d", len(keys), len(result))
-	}
+	require.Len(t, result, len(keys), "expected same number of keys")
 	for i := 1; i < len(result); i++ {
 		if result[i] >= result[i-1] {
-			t.Errorf("keys not in descending order: %v", result)
+			assert.Fail(t, fmt.Sprintf("keys not in descending order: %v", result))
 			break
 		}
 	}
@@ -609,9 +525,7 @@ func TestForEachReverseEarlyTermination(t *testing.T) {
 		return count < 5
 	})
 
-	if count != 5 {
-		t.Errorf("expected ForEachReverse to stop after 5 items, got %d", count)
-	}
+	assert.Equal(t, 5, count, "expected ForEachReverse to stop after 5 items")
 }
 
 func TestForEachRangeReverse(t *testing.T) {
@@ -693,13 +607,9 @@ func TestForEachRangeReverse(t *testing.T) {
 				got = append(got, key)
 				return true
 			})
-			if len(got) != len(tt.wantKeys) {
-				t.Fatalf("expected %d keys, got %d: %v", len(tt.wantKeys), len(got), got)
-			}
+			require.Len(t, got, len(tt.wantKeys), "unexpected number of keys: %v", got)
 			for i := range tt.wantKeys {
-				if got[i] != tt.wantKeys[i] {
-					t.Errorf("position %d: expected %d, got %d", i, tt.wantKeys[i], got[i])
-				}
+				assert.Equal(t, tt.wantKeys[i], got[i], "position %d", i)
 			}
 		})
 	}
@@ -718,9 +628,7 @@ func TestForEachRangeReverseNoMatch(t *testing.T) {
 		got = append(got, key)
 		return true
 	})
-	if len(got) != 0 {
-		t.Errorf("expected 0 keys, got %d: %v", len(got), got)
-	}
+	assert.Len(t, got, 0, "expected 0 keys")
 }
 
 func TestForEachReverseStringKeys(t *testing.T) {
@@ -737,13 +645,9 @@ func TestForEachReverseStringKeys(t *testing.T) {
 	})
 
 	expected := []string{"grape", "fig", "elderberry", "date", "cherry", "banana", "apple"}
-	if len(got) != len(expected) {
-		t.Fatalf("expected %d keys, got %d: %v", len(expected), len(got), got)
-	}
+	require.Len(t, got, len(expected), "unexpected number of keys: %v", got)
 	for i := range expected {
-		if got[i] != expected[i] {
-			t.Errorf("position %d: expected %s, got %s", i, expected[i], got[i])
-		}
+		assert.Equal(t, expected[i], got[i], "position %d", i)
 	}
 }
 
@@ -764,12 +668,8 @@ func TestStringBTreeSortedKeys(t *testing.T) {
 	copy(expected, input)
 	sort.Strings(expected)
 
-	if len(result) != len(expected) {
-		t.Fatalf("expected %d keys, got %d", len(expected), len(result))
-	}
+	require.Len(t, result, len(expected), "unexpected number of keys")
 	for i := range expected {
-		if result[i] != expected[i] {
-			t.Errorf("position %d: expected %s, got %s", i, expected[i], result[i])
-		}
+		assert.Equal(t, expected[i], result[i], "position %d", i)
 	}
 }

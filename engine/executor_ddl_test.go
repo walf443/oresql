@@ -2,43 +2,33 @@ package engine
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCreateInsertSelect(t *testing.T) {
 	exec := NewExecutor()
 
 	result := run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
-	if result.Message != "table created" {
-		t.Errorf("expected 'table created', got %q", result.Message)
-	}
+	assert.Equal(t, "table created", result.Message)
 
 	result = run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
-	if result.Message != "1 row inserted" {
-		t.Errorf("expected '1 row inserted', got %q", result.Message)
-	}
+	assert.Equal(t, "1 row inserted", result.Message)
 
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
 
 	// SELECT *
 	result = run(t, exec, "SELECT * FROM users")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
-	if len(result.Columns) != 2 {
-		t.Fatalf("expected 2 columns, got %d", len(result.Columns))
-	}
-	if result.Columns[0] != "id" || result.Columns[1] != "name" {
-		t.Errorf("columns: expected [id, name], got %v", result.Columns)
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
+	require.Len(t, result.Columns, 2, "expected 2 columns")
+	assert.Equal(t, []string{"id", "name"}, result.Columns)
 
 	// SELECT specific columns
 	result = run(t, exec, "SELECT name FROM users")
-	if len(result.Columns) != 1 || result.Columns[0] != "name" {
-		t.Errorf("expected [name], got %v", result.Columns)
-	}
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Columns, 1, "expected 1 column")
+	assert.Equal(t, "name", result.Columns[0])
+	require.Len(t, result.Rows, 2, "expected 2 rows")
 }
 
 func TestErrorDuplicateTable(t *testing.T) {
@@ -54,25 +44,17 @@ func TestTruncateTable(t *testing.T) {
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
 
 	result := run(t, exec, "TRUNCATE TABLE users")
-	if result.Message != "table truncated" {
-		t.Errorf("expected 'table truncated', got %q", result.Message)
-	}
+	assert.Equal(t, "table truncated", result.Message)
 
 	// Table still exists but has no rows
 	result = run(t, exec, "SELECT * FROM users")
-	if len(result.Rows) != 0 {
-		t.Fatalf("expected 0 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 0, "expected 0 rows")
 
 	// Can insert again after truncate
 	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
 	result = run(t, exec, "SELECT * FROM users")
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != int64(3) {
-		t.Errorf("expected id=3, got %v", result.Rows[0][0])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row")
+	assert.Equal(t, int64(3), result.Rows[0][0])
 }
 
 func TestTruncateTableNotExists(t *testing.T) {
@@ -86,9 +68,7 @@ func TestDropTable(t *testing.T) {
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 
 	result := run(t, exec, "DROP TABLE users")
-	if result.Message != "table dropped" {
-		t.Errorf("expected 'table dropped', got %q", result.Message)
-	}
+	assert.Equal(t, "table dropped", result.Message)
 
 	// SELECT after DROP TABLE should error
 	runExpectError(t, exec, "SELECT * FROM users")
@@ -110,21 +90,15 @@ func TestDropTableRecreate(t *testing.T) {
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
 
 	result := run(t, exec, "SELECT * FROM users")
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != int64(2) {
-		t.Errorf("expected id=2, got %v", result.Rows[0][0])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row")
+	assert.Equal(t, int64(2), result.Rows[0][0])
 }
 
 func TestCreateIndex(t *testing.T) {
 	exec := NewExecutor()
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	result := run(t, exec, "CREATE INDEX idx_name ON users(name)")
-	if result.Message != "index created" {
-		t.Errorf("expected 'index created', got %q", result.Message)
-	}
+	assert.Equal(t, "index created", result.Message)
 }
 
 func TestCreateIndexTableNotExists(t *testing.T) {
@@ -150,9 +124,7 @@ func TestDropIndex(t *testing.T) {
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "CREATE INDEX idx_name ON users(name)")
 	result := run(t, exec, "DROP INDEX idx_name")
-	if result.Message != "index dropped" {
-		t.Errorf("expected 'index dropped', got %q", result.Message)
-	}
+	assert.Equal(t, "index dropped", result.Message)
 }
 
 func TestDropIndexNotExists(t *testing.T) {
@@ -169,9 +141,7 @@ func TestDropTableRemovesIndexes(t *testing.T) {
 	// Re-create table and try to create index with same name
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	result := run(t, exec, "CREATE INDEX idx_name ON users(name)")
-	if result.Message != "index created" {
-		t.Errorf("expected 'index created', got %q", result.Message)
-	}
+	assert.Equal(t, "index created", result.Message)
 }
 
 func TestPrimaryKeyCreateInsertSelect(t *testing.T) {
@@ -183,21 +153,11 @@ func TestPrimaryKeyCreateInsertSelect(t *testing.T) {
 
 	// SELECT should return rows in PK order
 	result := run(t, exec, "SELECT * FROM users")
-	if len(result.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != int64(1) {
-		t.Errorf("row 0: expected id=1, got %v", result.Rows[0][0])
-	}
-	if result.Rows[0][1] != "alice" {
-		t.Errorf("row 0: expected name='alice', got %v", result.Rows[0][1])
-	}
-	if result.Rows[1][0] != int64(2) {
-		t.Errorf("row 1: expected id=2, got %v", result.Rows[1][0])
-	}
-	if result.Rows[2][0] != int64(3) {
-		t.Errorf("row 2: expected id=3, got %v", result.Rows[2][0])
-	}
+	require.Len(t, result.Rows, 3, "expected 3 rows")
+	assert.Equal(t, int64(1), result.Rows[0][0])
+	assert.Equal(t, "alice", result.Rows[0][1])
+	assert.Equal(t, int64(2), result.Rows[1][0])
+	assert.Equal(t, int64(3), result.Rows[2][0])
 }
 
 func TestPrimaryKeyDuplicateInsertError(t *testing.T) {
@@ -216,12 +176,8 @@ func TestPrimaryKeyDeleteAndReinsert(t *testing.T) {
 	// Should be able to reinsert with the same PK
 	run(t, exec, "INSERT INTO users VALUES (1, 'bob')")
 	result := run(t, exec, "SELECT name FROM users WHERE id = 1")
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "bob" {
-		t.Errorf("expected 'bob', got %v", result.Rows[0][0])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row")
+	assert.Equal(t, "bob", result.Rows[0][0])
 }
 
 func TestPrimaryKeyImpliesNotNull(t *testing.T) {
@@ -233,9 +189,7 @@ func TestPrimaryKeyImpliesNotNull(t *testing.T) {
 func TestTextPrimaryKeyAllowed(t *testing.T) {
 	exec := NewExecutor()
 	result := run(t, exec, "CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT)")
-	if result.Message != "table created" {
-		t.Errorf("expected 'table created', got %q", result.Message)
-	}
+	assert.Equal(t, "table created", result.Message)
 }
 
 func TestErrorMultiplePrimaryKeys(t *testing.T) {
@@ -251,12 +205,8 @@ func TestPrimaryKeyUpdate(t *testing.T) {
 
 	run(t, exec, "UPDATE users SET name = 'ALICE' WHERE id = 1")
 	result := run(t, exec, "SELECT name FROM users WHERE id = 1")
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "ALICE" {
-		t.Errorf("expected 'ALICE', got %v", result.Rows[0][0])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row")
+	assert.Equal(t, "ALICE", result.Rows[0][0])
 }
 
 func TestPrimaryKeyTruncateAndReinsert(t *testing.T) {
@@ -268,12 +218,8 @@ func TestPrimaryKeyTruncateAndReinsert(t *testing.T) {
 	// Should be able to insert with same PK after truncate
 	run(t, exec, "INSERT INTO users VALUES (1, 'bob')")
 	result := run(t, exec, "SELECT * FROM users")
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][1] != "bob" {
-		t.Errorf("expected 'bob', got %v", result.Rows[0][1])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row")
+	assert.Equal(t, "bob", result.Rows[0][1])
 }
 
 func TestCompositePrimaryKey(t *testing.T) {
@@ -284,9 +230,7 @@ func TestCompositePrimaryKey(t *testing.T) {
 	run(t, exec, "INSERT INTO enrollment VALUES (2, 100, 'C')")
 
 	result := run(t, exec, "SELECT * FROM enrollment")
-	if len(result.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 3, "expected 3 rows")
 }
 
 func TestCompositePrimaryKeyDuplicate(t *testing.T) {
@@ -315,9 +259,7 @@ func TestCompositePrimaryKeyWithTextColumns(t *testing.T) {
 	run(t, exec, "INSERT INTO tags VALUES ('size', 'red', 3)")
 
 	result := run(t, exec, "SELECT * FROM tags")
-	if len(result.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 3, "expected 3 rows")
 
 	// Duplicate composite key with TEXT should fail
 	runExpectError(t, exec, "INSERT INTO tags VALUES ('color', 'red', 99)")
@@ -335,9 +277,8 @@ func TestCompositePrimaryKeyUpdate(t *testing.T) {
 	// Update non-PK column should succeed
 	run(t, exec, "UPDATE enrollment SET grade = 'A+' WHERE student_id = 1 AND course_id = 100")
 	result := run(t, exec, "SELECT grade FROM enrollment WHERE student_id = 1 AND course_id = 100")
-	if len(result.Rows) != 1 || result.Rows[0][0] != "A+" {
-		t.Errorf("expected grade='A+', got %v", result.Rows)
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row")
+	assert.Equal(t, "A+", result.Rows[0][0])
 }
 
 func TestCompositePrimaryKeyDropColumn(t *testing.T) {
@@ -369,9 +310,7 @@ func TestTableLevelSinglePrimaryKey(t *testing.T) {
 	runExpectError(t, exec, "INSERT INTO t VALUES (1, 'charlie')")
 
 	result := run(t, exec, "SELECT * FROM t")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
 }
 
 func TestCompositePrimaryKeyDeleteAndReinsert(t *testing.T) {
@@ -386,9 +325,8 @@ func TestCompositePrimaryKeyDeleteAndReinsert(t *testing.T) {
 	run(t, exec, "INSERT INTO enrollment VALUES (1, 100, 'B')")
 
 	result := run(t, exec, "SELECT grade FROM enrollment WHERE student_id = 1 AND course_id = 100")
-	if len(result.Rows) != 1 || result.Rows[0][0] != "B" {
-		t.Errorf("expected grade='B', got %v", result.Rows)
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row")
+	assert.Equal(t, "B", result.Rows[0][0])
 }
 
 func TestTextColumnPrimaryKey(t *testing.T) {
@@ -404,9 +342,7 @@ func TestTextColumnPrimaryKey(t *testing.T) {
 	runExpectError(t, exec, "INSERT INTO codes VALUES (NULL, 'null key')")
 
 	result := run(t, exec, "SELECT * FROM codes")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
 }
 
 func TestFloatColumnPrimaryKey(t *testing.T) {
@@ -419,9 +355,7 @@ func TestFloatColumnPrimaryKey(t *testing.T) {
 	runExpectError(t, exec, "INSERT INTO measurements VALUES (1.5, 'duplicate')")
 
 	result := run(t, exec, "SELECT * FROM measurements")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
 }
 
 func TestAlterTableAddColumn(t *testing.T) {
@@ -431,30 +365,20 @@ func TestAlterTableAddColumn(t *testing.T) {
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
 
 	result := run(t, exec, "ALTER TABLE users ADD COLUMN age INT")
-	if result.Message != "table altered" {
-		t.Errorf("expected 'table altered', got %q", result.Message)
-	}
+	assert.Equal(t, "table altered", result.Message)
 
 	// New column should be usable in INSERT
 	run(t, exec, "INSERT INTO users VALUES (3, 'charlie', 30)")
 
 	// Existing rows should have NULL for the new column
 	result = run(t, exec, "SELECT id, name, age FROM users ORDER BY id")
-	if len(result.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][2] != nil {
-		t.Errorf("expected nil for alice's age, got %v", result.Rows[0][2])
-	}
-	if result.Rows[2][2] != int64(30) {
-		t.Errorf("expected 30 for charlie's age, got %v", result.Rows[2][2])
-	}
+	require.Len(t, result.Rows, 3, "expected 3 rows")
+	assert.Nil(t, result.Rows[0][2])
+	assert.Equal(t, int64(30), result.Rows[2][2])
 
 	// COLUMN keyword should be optional
 	result = run(t, exec, "ALTER TABLE users ADD email TEXT")
-	if result.Message != "table altered" {
-		t.Errorf("expected 'table altered', got %q", result.Message)
-	}
+	assert.Equal(t, "table altered", result.Message)
 }
 
 func TestAlterTableAddColumnWithDefault(t *testing.T) {
@@ -467,15 +391,9 @@ func TestAlterTableAddColumnWithDefault(t *testing.T) {
 
 	// Existing rows should have the default value
 	result := run(t, exec, "SELECT id, status FROM users ORDER BY id")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][1] != "active" {
-		t.Errorf("expected 'active', got %v", result.Rows[0][1])
-	}
-	if result.Rows[1][1] != "active" {
-		t.Errorf("expected 'active', got %v", result.Rows[1][1])
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
+	assert.Equal(t, "active", result.Rows[0][1])
+	assert.Equal(t, "active", result.Rows[1][1])
 }
 
 func TestAlterTableAddColumnNotNull(t *testing.T) {
@@ -487,12 +405,8 @@ func TestAlterTableAddColumnNotNull(t *testing.T) {
 	run(t, exec, "ALTER TABLE users ADD COLUMN age INT NOT NULL DEFAULT 0")
 
 	result := run(t, exec, "SELECT id, age FROM users")
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][1] != int64(0) {
-		t.Errorf("expected 0, got %v", result.Rows[0][1])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row")
+	assert.Equal(t, int64(0), result.Rows[0][1])
 }
 
 func TestAlterTableAddColumnNotNullNoDefault(t *testing.T) {
@@ -511,33 +425,21 @@ func TestAlterTableDropColumn(t *testing.T) {
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob', 25)")
 
 	result := run(t, exec, "ALTER TABLE users DROP COLUMN age")
-	if result.Message != "table altered" {
-		t.Errorf("expected 'table altered', got %q", result.Message)
-	}
+	assert.Equal(t, "table altered", result.Message)
 
 	// Column should be gone
 	result = run(t, exec, "SELECT * FROM users ORDER BY id")
-	if len(result.Columns) != 2 {
-		t.Fatalf("expected 2 columns, got %d", len(result.Columns))
-	}
-	if result.Columns[0] != "id" || result.Columns[1] != "name" {
-		t.Errorf("expected [id, name], got %v", result.Columns)
-	}
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != int64(1) || result.Rows[0][1] != "alice" {
-		t.Errorf("unexpected row 0: %v", result.Rows[0])
-	}
-	if result.Rows[1][0] != int64(2) || result.Rows[1][1] != "bob" {
-		t.Errorf("unexpected row 1: %v", result.Rows[1])
-	}
+	require.Len(t, result.Columns, 2, "expected 2 columns")
+	assert.Equal(t, []string{"id", "name"}, result.Columns)
+	require.Len(t, result.Rows, 2, "expected 2 rows")
+	assert.Equal(t, int64(1), result.Rows[0][0])
+	assert.Equal(t, "alice", result.Rows[0][1])
+	assert.Equal(t, int64(2), result.Rows[1][0])
+	assert.Equal(t, "bob", result.Rows[1][1])
 
 	// COLUMN keyword should be optional
 	result = run(t, exec, "ALTER TABLE users DROP name")
-	if result.Message != "table altered" {
-		t.Errorf("expected 'table altered', got %q", result.Message)
-	}
+	assert.Equal(t, "table altered", result.Message)
 }
 
 func TestAlterTableDropColumnWithIndex(t *testing.T) {
@@ -577,12 +479,8 @@ func TestAlterTableDropColumnAdjustsIndex(t *testing.T) {
 
 	// Index on c should still work for lookups
 	result := run(t, exec, "SELECT a, c FROM t WHERE c = 100")
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != int64(1) {
-		t.Errorf("expected a=1, got %v", result.Rows[0][0])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row")
+	assert.Equal(t, int64(1), result.Rows[0][0])
 }
 
 func TestAlterTableDropPrimaryKey(t *testing.T) {
@@ -635,9 +533,7 @@ func TestUniqueColumnConstraint(t *testing.T) {
 
 	// Verify existing data is intact
 	result := run(t, exec, "SELECT * FROM users")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
 }
 
 func TestUniqueColumnInsertNull(t *testing.T) {
@@ -649,9 +545,7 @@ func TestUniqueColumnInsertNull(t *testing.T) {
 	run(t, exec, "INSERT INTO users VALUES (2, NULL)")
 
 	result := run(t, exec, "SELECT * FROM users")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
 }
 
 func TestCreateUniqueIndex(t *testing.T) {
@@ -680,9 +574,7 @@ func TestCreateUniqueCompositeIndex(t *testing.T) {
 	runExpectError(t, exec, "INSERT INTO orders VALUES (1, 100, 5)")
 
 	result := run(t, exec, "SELECT * FROM orders")
-	if len(result.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 3, "expected 3 rows")
 }
 
 func TestCreateUniqueIndexOnExistingDuplicates(t *testing.T) {
@@ -706,12 +598,8 @@ func TestUniqueUpdateViolation(t *testing.T) {
 
 	// Verify data unchanged
 	result := run(t, exec, "SELECT email FROM users WHERE id = 2")
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "bob@example.com" {
-		t.Errorf("expected 'bob@example.com', got %v", result.Rows[0][0])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row")
+	assert.Equal(t, "bob@example.com", result.Rows[0][0])
 }
 
 func TestUniqueUpdateSameRow(t *testing.T) {
@@ -724,12 +612,8 @@ func TestUniqueUpdateSameRow(t *testing.T) {
 	run(t, exec, "UPDATE users SET email = 'alice@example.com' WHERE id = 1")
 
 	result := run(t, exec, "SELECT email FROM users WHERE id = 1")
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "alice@example.com" {
-		t.Errorf("expected 'alice@example.com', got %v", result.Rows[0][0])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row")
+	assert.Equal(t, "alice@example.com", result.Rows[0][0])
 }
 
 func TestUniqueColumnWithNotNull(t *testing.T) {
@@ -748,9 +632,7 @@ func TestUniqueColumnWithNotNull(t *testing.T) {
 func TestCreateTableWithDefault(t *testing.T) {
 	exec := NewExecutor()
 	result := run(t, exec, "CREATE TABLE t (id INT DEFAULT 0, name TEXT DEFAULT 'unknown')")
-	if result.Message != "table created" {
-		t.Errorf("expected 'table created', got %q", result.Message)
-	}
+	assert.Equal(t, "table created", result.Message)
 }
 
 func TestErrorCreateTableNotNullDefaultNull(t *testing.T) {

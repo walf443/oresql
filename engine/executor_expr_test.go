@@ -3,6 +3,8 @@ package engine
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/walf443/oresql/ast"
 )
 
@@ -73,18 +75,11 @@ func TestValidateAndCoerceValue(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := validateAndCoerceValue(tt.val, tt.col)
 			if tt.wantErr {
-				if err == nil {
-					t.Errorf("expected error, got nil")
-				}
+				require.Error(t, err)
 				return
 			}
-			if err != nil {
-				t.Errorf("unexpected error: %v", err)
-				return
-			}
-			if got != tt.want {
-				t.Errorf("got %v (%T), want %v (%T)", got, got, tt.want, tt.want)
-			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -136,18 +131,11 @@ func TestEvalComparison(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := evalComparison(tt.left, tt.op, tt.right)
 			if tt.wantErr {
-				if err == nil {
-					t.Errorf("expected error, got nil")
-				}
+				require.Error(t, err)
 				return
 			}
-			if err != nil {
-				t.Errorf("unexpected error: %v", err)
-				return
-			}
-			if got != tt.want {
-				t.Errorf("evalComparison(%v, %q, %v) = %v, want %v", tt.left, tt.op, tt.right, got, tt.want)
-			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got, "evalComparison(%v, %q, %v)", tt.left, tt.op, tt.right)
 		})
 	}
 }
@@ -187,9 +175,7 @@ func TestCompareValues(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := compareValues(tt.a, tt.b)
-			if got != tt.want {
-				t.Errorf("compareValues(%v, %v) = %d, want %d", tt.a, tt.b, got, tt.want)
-			}
+			assert.Equal(t, tt.want, got, "compareValues(%v, %v)", tt.a, tt.b)
 		})
 	}
 }
@@ -235,18 +221,11 @@ func TestEvalArithmetic(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := evalArithmetic(tt.left, tt.op, tt.right)
 			if tt.wantErr {
-				if err == nil {
-					t.Errorf("expected error, got nil")
-				}
+				require.Error(t, err)
 				return
 			}
-			if err != nil {
-				t.Errorf("unexpected error: %v", err)
-				return
-			}
-			if got != tt.want {
-				t.Errorf("evalArithmetic(%v, %q, %v) = %v (%T), want %v (%T)", tt.left, tt.op, tt.right, got, got, tt.want, tt.want)
-			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got, "evalArithmetic(%v, %q, %v)", tt.left, tt.op, tt.right)
 		})
 	}
 }
@@ -266,12 +245,9 @@ func TestToFloat64(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, ok := toFloat64(tt.val)
-			if ok != tt.wantOK {
-				t.Errorf("toFloat64(%v) ok = %v, want %v", tt.val, ok, tt.wantOK)
-				return
-			}
-			if ok && got != tt.want {
-				t.Errorf("toFloat64(%v) = %v, want %v", tt.val, got, tt.want)
+			require.Equal(t, tt.wantOK, ok, "toFloat64(%v) ok", tt.val)
+			if ok {
+				assert.Equal(t, tt.want, got, "toFloat64(%v)", tt.val)
 			}
 		})
 	}
@@ -307,9 +283,7 @@ func TestMatchLike(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := matchLike(tt.str, tt.pattern)
-			if got != tt.want {
-				t.Errorf("matchLike(%q, %q) = %v, want %v", tt.str, tt.pattern, got, tt.want)
-			}
+			assert.Equal(t, tt.want, got, "matchLike(%q, %q)", tt.str, tt.pattern)
 		})
 	}
 }
@@ -346,18 +320,11 @@ func TestEvalLiteral(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := evalLiteral(tt.expr)
 			if tt.wantErr {
-				if err == nil {
-					t.Errorf("expected error, got nil")
-				}
+				require.Error(t, err)
 				return
 			}
-			if err != nil {
-				t.Errorf("unexpected error: %v", err)
-				return
-			}
-			if got != tt.want {
-				t.Errorf("evalLiteral() = %v (%T), want %v (%T)", got, got, tt.want, tt.want)
-			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got, "evalLiteral()")
 		})
 	}
 }
@@ -388,9 +355,7 @@ func TestFormatExpr(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := formatExpr(tt.expr)
-			if got != tt.want {
-				t.Errorf("formatExpr() = %q, want %q", got, tt.want)
-			}
+			assert.Equal(t, tt.want, got, "formatExpr()")
 		})
 	}
 }
@@ -411,14 +376,10 @@ func TestValidateTableRef(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			err := validateTableRef(tt.tableRef, tt.targetTable)
 			if tt.wantErr {
-				if err == nil {
-					t.Errorf("expected error, got nil")
-				}
+				require.Error(t, err)
 				return
 			}
-			if err != nil {
-				t.Errorf("unexpected error: %v", err)
-			}
+			require.NoError(t, err)
 		})
 	}
 }
@@ -439,30 +400,32 @@ func TestExtractLikePrefix(t *testing.T) {
 		{"\\%%", "%"},
 	}
 	for _, tt := range tests {
-		got := extractLikePrefix(tt.pattern)
-		if got != tt.want {
-			t.Errorf("extractLikePrefix(%q) = %q, want %q", tt.pattern, got, tt.want)
-		}
+		t.Run(tt.pattern, func(t *testing.T) {
+			got := extractLikePrefix(tt.pattern)
+			assert.Equal(t, tt.want, got, "extractLikePrefix(%q)", tt.pattern)
+		})
 	}
 }
 
 func TestNextPrefix(t *testing.T) {
 	tests := []struct {
+		name   string
 		input  string
 		want   string
 		wantOK bool
 	}{
-		{"abc", "abd", true},
-		{"ab" + string([]byte{0xFF}), "ac", true},
-		{string([]byte{0xFF}), "", false},
-		{string([]byte{0xFF, 0xFF}), "", false},
-		{"", "", false},
-		{"a", "b", true},
+		{"simple", "abc", "abd", true},
+		{"trailing 0xFF", "ab" + string([]byte{0xFF}), "ac", true},
+		{"all 0xFF single", string([]byte{0xFF}), "", false},
+		{"all 0xFF double", string([]byte{0xFF, 0xFF}), "", false},
+		{"empty", "", "", false},
+		{"single char", "a", "b", true},
 	}
 	for _, tt := range tests {
-		got, ok := nextPrefix(tt.input)
-		if ok != tt.wantOK || got != tt.want {
-			t.Errorf("nextPrefix(%q) = (%q, %v), want (%q, %v)", tt.input, got, ok, tt.want, tt.wantOK)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := nextPrefix(tt.input)
+			require.Equal(t, tt.wantOK, ok, "nextPrefix(%q) ok", tt.input)
+			assert.Equal(t, tt.want, got, "nextPrefix(%q)", tt.input)
+		})
 	}
 }

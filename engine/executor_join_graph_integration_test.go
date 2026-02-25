@@ -2,6 +2,9 @@ package engine
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestThreeTableJoinWithIndex(t *testing.T) {
@@ -28,9 +31,7 @@ func TestThreeTableJoinWithIndex(t *testing.T) {
 		ORDER BY i.product
 	`)
 
-	if len(result.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 3, "expected 3 rows from three-table join")
 
 	// Sorted by product: doohickey, gadget, widget
 	expected := []struct {
@@ -45,15 +46,9 @@ func TestThreeTableJoinWithIndex(t *testing.T) {
 
 	for i, exp := range expected {
 		row := result.Rows[i]
-		if row[0] != exp.name {
-			t.Errorf("row %d name: got %v, want %v", i, row[0], exp.name)
-		}
-		if row[1] != exp.amount {
-			t.Errorf("row %d amount: got %v, want %v", i, row[1], exp.amount)
-		}
-		if row[2] != exp.product {
-			t.Errorf("row %d product: got %v, want %v", i, row[2], exp.product)
-		}
+		assert.Equal(t, exp.name, row[0], "row %d name", i)
+		assert.Equal(t, exp.amount, row[1], "row %d amount", i)
+		assert.Equal(t, exp.product, row[2], "row %d product", i)
 	}
 }
 
@@ -80,15 +75,9 @@ func TestThreeTableJoinWithWherePushdown(t *testing.T) {
 		WHERE u.status = 'active'
 	`)
 
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "alice" {
-		t.Errorf("expected alice, got %v", result.Rows[0][0])
-	}
-	if result.Rows[0][2] != "widget" {
-		t.Errorf("expected widget, got %v", result.Rows[0][2])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row after WHERE pushdown")
+	assert.Equal(t, "alice", result.Rows[0][0])
+	assert.Equal(t, "widget", result.Rows[0][2])
 }
 
 func TestThreeTableJoinStarSchema(t *testing.T) {
@@ -116,17 +105,11 @@ func TestThreeTableJoinStarSchema(t *testing.T) {
 		ORDER BY s.quantity
 	`)
 
-	if len(result.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 3, "expected 3 rows from star schema join")
 
 	// Sorted by quantity: 10, 20, 30
-	if result.Rows[0][2] != int64(10) {
-		t.Errorf("row 0 quantity: got %v, want 10", result.Rows[0][2])
-	}
-	if result.Rows[2][2] != int64(30) {
-		t.Errorf("row 2 quantity: got %v, want 30", result.Rows[2][2])
-	}
+	assert.Equal(t, int64(10), result.Rows[0][2], "row 0 quantity")
+	assert.Equal(t, int64(30), result.Rows[2][2], "row 2 quantity")
 }
 
 func TestThreeTableJoinChainSchema(t *testing.T) {
@@ -153,15 +136,9 @@ func TestThreeTableJoinChainSchema(t *testing.T) {
 		ORDER BY a.val
 	`)
 
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "a1" || result.Rows[0][1] != "b1" || result.Rows[0][2] != "c1" {
-		t.Errorf("row 0: got %v, want [a1 b1 c1]", result.Rows[0])
-	}
-	if result.Rows[1][0] != "a2" || result.Rows[1][1] != "b2" || result.Rows[1][2] != "c2" {
-		t.Errorf("row 1: got %v, want [a2 b2 c2]", result.Rows[1])
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows from chain join")
+	assert.Equal(t, Row{"a1", "b1", "c1"}, result.Rows[0], "row 0")
+	assert.Equal(t, Row{"a2", "b2", "c2"}, result.Rows[1], "row 1")
 }
 
 func TestFourTableJoin(t *testing.T) {
@@ -187,12 +164,9 @@ func TestFourTableJoin(t *testing.T) {
 		INNER JOIN products p ON i.product_id = p.id
 	`)
 
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "alice" || result.Rows[0][1] != "widget" {
-		t.Errorf("got %v, want [alice widget]", result.Rows[0])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row from four-table join")
+	assert.Equal(t, "alice", result.Rows[0][0])
+	assert.Equal(t, "widget", result.Rows[0][1])
 }
 
 func TestThreeTableJoinSelectStar(t *testing.T) {
@@ -212,31 +186,17 @@ func TestThreeTableJoinSelectStar(t *testing.T) {
 		INNER JOIN c ON b.id = c.b_id
 	`)
 
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row from SELECT *")
 
 	// Column order should be: a.id, a.aval, b.id, b.a_id, b.bval, c.id, c.b_id, c.cval
-	if len(result.Columns) != 8 {
-		t.Fatalf("expected 8 columns, got %d: %v", len(result.Columns), result.Columns)
-	}
+	require.Len(t, result.Columns, 8, "expected 8 columns from SELECT *")
 
 	row := result.Rows[0]
-	if row[0] != int64(1) { // a.id
-		t.Errorf("a.id: got %v, want 1", row[0])
-	}
-	if row[1] != "a1" { // a.aval
-		t.Errorf("a.aval: got %v, want a1", row[1])
-	}
-	if row[2] != int64(10) { // b.id
-		t.Errorf("b.id: got %v, want 10", row[2])
-	}
-	if row[5] != int64(100) { // c.id
-		t.Errorf("c.id: got %v, want 100", row[5])
-	}
-	if row[7] != "c1" { // c.cval
-		t.Errorf("c.cval: got %v, want c1", row[7])
-	}
+	assert.Equal(t, int64(1), row[0], "a.id")
+	assert.Equal(t, "a1", row[1], "a.aval")
+	assert.Equal(t, int64(10), row[2], "b.id")
+	assert.Equal(t, int64(100), row[5], "c.id")
+	assert.Equal(t, "c1", row[7], "c.cval")
 }
 
 func TestThreeTableJoinCrossTableWhere(t *testing.T) {
@@ -261,13 +221,7 @@ func TestThreeTableJoinCrossTableWhere(t *testing.T) {
 		WHERE a.val + c.val > 1500
 	`)
 
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != int64(20) {
-		t.Errorf("a.val: got %v, want 20", result.Rows[0][0])
-	}
-	if result.Rows[0][2] != int64(2000) {
-		t.Errorf("c.val: got %v, want 2000", result.Rows[0][2])
-	}
+	require.Len(t, result.Rows, 1, "expected 1 row after cross-table WHERE")
+	assert.Equal(t, int64(20), result.Rows[0][0], "a.val")
+	assert.Equal(t, int64(2000), result.Rows[0][2], "c.val")
 }

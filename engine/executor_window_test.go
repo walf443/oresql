@@ -2,6 +2,9 @@ package engine
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestWindowRowNumber(t *testing.T) {
@@ -12,9 +15,7 @@ func TestWindowRowNumber(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (2, 'bob')")
 
 	result := run(t, exec, "SELECT name, ROW_NUMBER() OVER (ORDER BY id) AS rn FROM t")
-	if len(result.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 3, "expected 3 rows")
 	// Ordered by id: alice(1), bob(2), charlie(3)
 	expected := []struct {
 		name string
@@ -25,12 +26,8 @@ func TestWindowRowNumber(t *testing.T) {
 		{"charlie", 3},
 	}
 	for i, exp := range expected {
-		if result.Rows[i][0] != exp.name {
-			t.Errorf("row %d name: expected %q, got %v", i, exp.name, result.Rows[i][0])
-		}
-		if result.Rows[i][1] != exp.rn {
-			t.Errorf("row %d rn: expected %d, got %v", i, exp.rn, result.Rows[i][1])
-		}
+		assert.Equal(t, exp.name, result.Rows[i][0], "row %d name", i)
+		assert.Equal(t, exp.rn, result.Rows[i][1], "row %d rn", i)
 	}
 }
 
@@ -44,9 +41,7 @@ func TestWindowRowNumberPartitioned(t *testing.T) {
 	run(t, exec, "INSERT INTO emp VALUES (5, 'eng', 'eve')")
 
 	result := run(t, exec, "SELECT dept, name, ROW_NUMBER() OVER (PARTITION BY dept ORDER BY id) AS rn FROM emp")
-	if len(result.Rows) != 5 {
-		t.Fatalf("expected 5 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 5, "expected 5 rows")
 	// eng partition: alice(1), bob(2), eve(3); sales partition: charlie(1), diana(2)
 	expected := []struct {
 		dept string
@@ -60,15 +55,9 @@ func TestWindowRowNumberPartitioned(t *testing.T) {
 		{"sales", "diana", 2},
 	}
 	for i, exp := range expected {
-		if result.Rows[i][0] != exp.dept {
-			t.Errorf("row %d dept: expected %q, got %v", i, exp.dept, result.Rows[i][0])
-		}
-		if result.Rows[i][1] != exp.name {
-			t.Errorf("row %d name: expected %q, got %v", i, exp.name, result.Rows[i][1])
-		}
-		if result.Rows[i][2] != exp.rn {
-			t.Errorf("row %d rn: expected %d, got %v", i, exp.rn, result.Rows[i][2])
-		}
+		assert.Equal(t, exp.dept, result.Rows[i][0], "row %d dept", i)
+		assert.Equal(t, exp.name, result.Rows[i][1], "row %d name", i)
+		assert.Equal(t, exp.rn, result.Rows[i][2], "row %d rn", i)
 	}
 }
 
@@ -81,9 +70,7 @@ func TestWindowRank(t *testing.T) {
 	run(t, exec, "INSERT INTO scores VALUES (4, 80)")
 
 	result := run(t, exec, "SELECT id, RANK() OVER (ORDER BY score DESC) AS r FROM scores")
-	if len(result.Rows) != 4 {
-		t.Fatalf("expected 4 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 4, "expected 4 rows")
 	// score DESC: 100,100,90,80 → ranks: 1,1,3,4
 	expected := []struct {
 		id   int64
@@ -95,12 +82,8 @@ func TestWindowRank(t *testing.T) {
 		{4, 4},
 	}
 	for i, exp := range expected {
-		if result.Rows[i][0] != exp.id {
-			t.Errorf("row %d id: expected %d, got %v", i, exp.id, result.Rows[i][0])
-		}
-		if result.Rows[i][1] != exp.rank {
-			t.Errorf("row %d rank: expected %d, got %v", i, exp.rank, result.Rows[i][1])
-		}
+		assert.Equal(t, exp.id, result.Rows[i][0], "row %d id", i)
+		assert.Equal(t, exp.rank, result.Rows[i][1], "row %d rank", i)
 	}
 }
 
@@ -113,9 +96,7 @@ func TestWindowDenseRank(t *testing.T) {
 	run(t, exec, "INSERT INTO scores VALUES (4, 80)")
 
 	result := run(t, exec, "SELECT id, DENSE_RANK() OVER (ORDER BY score DESC) AS dr FROM scores")
-	if len(result.Rows) != 4 {
-		t.Fatalf("expected 4 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 4, "expected 4 rows")
 	// score DESC: 100,100,90,80 → dense_ranks: 1,1,2,3
 	expected := []struct {
 		id        int64
@@ -127,12 +108,8 @@ func TestWindowDenseRank(t *testing.T) {
 		{4, 3},
 	}
 	for i, exp := range expected {
-		if result.Rows[i][0] != exp.id {
-			t.Errorf("row %d id: expected %d, got %v", i, exp.id, result.Rows[i][0])
-		}
-		if result.Rows[i][1] != exp.denseRank {
-			t.Errorf("row %d dense_rank: expected %d, got %v", i, exp.denseRank, result.Rows[i][1])
-		}
+		assert.Equal(t, exp.id, result.Rows[i][0], "row %d id", i)
+		assert.Equal(t, exp.denseRank, result.Rows[i][1], "row %d dense_rank", i)
 	}
 }
 
@@ -146,9 +123,7 @@ func TestWindowRankPartitioned(t *testing.T) {
 	run(t, exec, "INSERT INTO emp VALUES (5, 'sales', 90)")
 
 	result := run(t, exec, "SELECT dept, id, RANK() OVER (PARTITION BY dept ORDER BY salary DESC) AS r FROM emp")
-	if len(result.Rows) != 5 {
-		t.Fatalf("expected 5 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 5, "expected 5 rows")
 	expected := []struct {
 		dept string
 		id   int64
@@ -161,15 +136,9 @@ func TestWindowRankPartitioned(t *testing.T) {
 		{"sales", 5, 1},
 	}
 	for i, exp := range expected {
-		if result.Rows[i][0] != exp.dept {
-			t.Errorf("row %d dept: expected %q, got %v", i, exp.dept, result.Rows[i][0])
-		}
-		if result.Rows[i][1] != exp.id {
-			t.Errorf("row %d id: expected %d, got %v", i, exp.id, result.Rows[i][1])
-		}
-		if result.Rows[i][2] != exp.rank {
-			t.Errorf("row %d rank: expected %d, got %v", i, exp.rank, result.Rows[i][2])
-		}
+		assert.Equal(t, exp.dept, result.Rows[i][0], "row %d dept", i)
+		assert.Equal(t, exp.id, result.Rows[i][1], "row %d id", i)
+		assert.Equal(t, exp.rank, result.Rows[i][2], "row %d rank", i)
 	}
 }
 
@@ -181,9 +150,7 @@ func TestWindowMultipleFunctions(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (3, 90)")
 
 	result := run(t, exec, "SELECT id, ROW_NUMBER() OVER (ORDER BY score DESC) AS rn, RANK() OVER (ORDER BY score DESC) AS r, DENSE_RANK() OVER (ORDER BY score DESC) AS dr FROM t")
-	if len(result.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 3, "expected 3 rows")
 	// score DESC: 100(id=1),100(id=2),90(id=3)
 	// row_number: 1,2,3; rank: 1,1,3; dense_rank: 1,1,2
 	expected := []struct {
@@ -197,18 +164,10 @@ func TestWindowMultipleFunctions(t *testing.T) {
 		{3, 3, 3, 2},
 	}
 	for i, exp := range expected {
-		if result.Rows[i][0] != exp.id {
-			t.Errorf("row %d id: expected %d, got %v", i, exp.id, result.Rows[i][0])
-		}
-		if result.Rows[i][1] != exp.rn {
-			t.Errorf("row %d rn: expected %d, got %v", i, exp.rn, result.Rows[i][1])
-		}
-		if result.Rows[i][2] != exp.rank {
-			t.Errorf("row %d rank: expected %d, got %v", i, exp.rank, result.Rows[i][2])
-		}
-		if result.Rows[i][3] != exp.denseRank {
-			t.Errorf("row %d dense_rank: expected %d, got %v", i, exp.denseRank, result.Rows[i][3])
-		}
+		assert.Equal(t, exp.id, result.Rows[i][0], "row %d id", i)
+		assert.Equal(t, exp.rn, result.Rows[i][1], "row %d rn", i)
+		assert.Equal(t, exp.rank, result.Rows[i][2], "row %d rank", i)
+		assert.Equal(t, exp.denseRank, result.Rows[i][3], "row %d dense_rank", i)
 	}
 }
 
@@ -220,15 +179,11 @@ func TestWindowWithWhere(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (3, 'charlie', 1)")
 
 	result := run(t, exec, "SELECT name, ROW_NUMBER() OVER (ORDER BY id) AS rn FROM t WHERE active = 1")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "alice" || result.Rows[0][1] != int64(1) {
-		t.Errorf("row 0: expected (alice, 1), got (%v, %v)", result.Rows[0][0], result.Rows[0][1])
-	}
-	if result.Rows[1][0] != "charlie" || result.Rows[1][1] != int64(2) {
-		t.Errorf("row 1: expected (charlie, 2), got (%v, %v)", result.Rows[1][0], result.Rows[1][1])
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
+	assert.Equal(t, "alice", result.Rows[0][0], "row 0 name")
+	assert.Equal(t, int64(1), result.Rows[0][1], "row 0 rn")
+	assert.Equal(t, "charlie", result.Rows[1][0], "row 1 name")
+	assert.Equal(t, int64(2), result.Rows[1][1], "row 1 rn")
 }
 
 func TestWindowWithLimit(t *testing.T) {
@@ -239,15 +194,11 @@ func TestWindowWithLimit(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (3, 'charlie')")
 
 	result := run(t, exec, "SELECT name, ROW_NUMBER() OVER (ORDER BY id) AS rn FROM t LIMIT 2")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
-	if result.Rows[0][0] != "alice" || result.Rows[0][1] != int64(1) {
-		t.Errorf("row 0: expected (alice, 1), got (%v, %v)", result.Rows[0][0], result.Rows[0][1])
-	}
-	if result.Rows[1][0] != "bob" || result.Rows[1][1] != int64(2) {
-		t.Errorf("row 1: expected (bob, 2), got (%v, %v)", result.Rows[1][0], result.Rows[1][1])
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
+	assert.Equal(t, "alice", result.Rows[0][0], "row 0 name")
+	assert.Equal(t, int64(1), result.Rows[0][1], "row 0 rn")
+	assert.Equal(t, "bob", result.Rows[1][0], "row 1 name")
+	assert.Equal(t, int64(2), result.Rows[1][1], "row 1 rn")
 }
 
 func TestWindowEmptyOver(t *testing.T) {
@@ -258,19 +209,12 @@ func TestWindowEmptyOver(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (3)")
 
 	result := run(t, exec, "SELECT id, ROW_NUMBER() OVER () AS rn FROM t")
-	if len(result.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 3, "expected 3 rows")
 	// Without ORDER BY, all rows are in one partition; ROW_NUMBER assigned in scan order
 	for i, row := range result.Rows {
 		rn, ok := row[1].(int64)
-		if !ok {
-			t.Errorf("row %d rn: expected int64, got %T", i, row[1])
-			continue
-		}
-		if rn < 1 || rn > 3 {
-			t.Errorf("row %d rn: expected 1-3, got %d", i, rn)
-		}
+		require.True(t, ok, "row %d rn: expected int64, got %T", i, row[1])
+		assert.True(t, rn >= 1 && rn <= 3, "row %d rn: expected 1-3, got %d", i, rn)
 	}
 }
 
@@ -283,9 +227,7 @@ func TestWindowSumPartition(t *testing.T) {
 	run(t, exec, "INSERT INTO emp VALUES (4, 'sales', 400)")
 
 	result := run(t, exec, "SELECT dept, salary, SUM(salary) OVER (PARTITION BY dept) AS dept_total FROM emp")
-	if len(result.Rows) != 4 {
-		t.Fatalf("expected 4 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 4, "expected 4 rows")
 	// eng partition: sum=300, sales partition: sum=700
 	expected := []struct {
 		dept  string
@@ -298,15 +240,9 @@ func TestWindowSumPartition(t *testing.T) {
 		{"sales", 400, 700},
 	}
 	for i, exp := range expected {
-		if result.Rows[i][0] != exp.dept {
-			t.Errorf("row %d dept: expected %q, got %v", i, exp.dept, result.Rows[i][0])
-		}
-		if result.Rows[i][1] != exp.sal {
-			t.Errorf("row %d salary: expected %d, got %v", i, exp.sal, result.Rows[i][1])
-		}
-		if result.Rows[i][2] != exp.total {
-			t.Errorf("row %d dept_total: expected %d, got %v", i, exp.total, result.Rows[i][2])
-		}
+		assert.Equal(t, exp.dept, result.Rows[i][0], "row %d dept", i)
+		assert.Equal(t, exp.sal, result.Rows[i][1], "row %d salary", i)
+		assert.Equal(t, exp.total, result.Rows[i][2], "row %d dept_total", i)
 	}
 }
 
@@ -318,9 +254,7 @@ func TestWindowSumRunning(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (3, 30)")
 
 	result := run(t, exec, "SELECT id, SUM(val) OVER (ORDER BY id) AS running FROM t")
-	if len(result.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 3, "expected 3 rows")
 	// Running total: 10, 30, 60
 	expected := []struct {
 		id      int64
@@ -331,12 +265,8 @@ func TestWindowSumRunning(t *testing.T) {
 		{3, 60},
 	}
 	for i, exp := range expected {
-		if result.Rows[i][0] != exp.id {
-			t.Errorf("row %d id: expected %d, got %v", i, exp.id, result.Rows[i][0])
-		}
-		if result.Rows[i][1] != exp.running {
-			t.Errorf("row %d running: expected %d, got %v", i, exp.running, result.Rows[i][1])
-		}
+		assert.Equal(t, exp.id, result.Rows[i][0], "row %d id", i)
+		assert.Equal(t, exp.running, result.Rows[i][1], "row %d running", i)
 	}
 }
 
@@ -348,9 +278,7 @@ func TestWindowCountStar(t *testing.T) {
 	run(t, exec, "INSERT INTO emp VALUES (3, 'sales')")
 
 	result := run(t, exec, "SELECT dept, COUNT(*) OVER (PARTITION BY dept) AS cnt FROM emp")
-	if len(result.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 3, "expected 3 rows")
 	expected := []struct {
 		dept string
 		cnt  int64
@@ -360,12 +288,8 @@ func TestWindowCountStar(t *testing.T) {
 		{"sales", 1},
 	}
 	for i, exp := range expected {
-		if result.Rows[i][0] != exp.dept {
-			t.Errorf("row %d dept: expected %q, got %v", i, exp.dept, result.Rows[i][0])
-		}
-		if result.Rows[i][1] != exp.cnt {
-			t.Errorf("row %d cnt: expected %d, got %v", i, exp.cnt, result.Rows[i][1])
-		}
+		assert.Equal(t, exp.dept, result.Rows[i][0], "row %d dept", i)
+		assert.Equal(t, exp.cnt, result.Rows[i][1], "row %d cnt", i)
 	}
 }
 
@@ -377,9 +301,7 @@ func TestWindowAvgPartition(t *testing.T) {
 	run(t, exec, "INSERT INTO scores VALUES (3, 'b', 30)")
 
 	result := run(t, exec, "SELECT dept, AVG(score) OVER (PARTITION BY dept) AS avg_score FROM scores")
-	if len(result.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 3, "expected 3 rows")
 	// a: avg=15.0, b: avg=30.0
 	expected := []struct {
 		dept string
@@ -390,12 +312,8 @@ func TestWindowAvgPartition(t *testing.T) {
 		{"b", 30.0},
 	}
 	for i, exp := range expected {
-		if result.Rows[i][0] != exp.dept {
-			t.Errorf("row %d dept: expected %q, got %v", i, exp.dept, result.Rows[i][0])
-		}
-		if result.Rows[i][1] != exp.avg {
-			t.Errorf("row %d avg: expected %v, got %v", i, exp.avg, result.Rows[i][1])
-		}
+		assert.Equal(t, exp.dept, result.Rows[i][0], "row %d dept", i)
+		assert.Equal(t, exp.avg, result.Rows[i][1], "row %d avg", i)
 	}
 }
 
@@ -408,9 +326,7 @@ func TestWindowMinMaxPartition(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (4, 'b', 50)")
 
 	result := run(t, exec, "SELECT grp, MIN(val) OVER (PARTITION BY grp) AS mn, MAX(val) OVER (PARTITION BY grp) AS mx FROM t")
-	if len(result.Rows) != 4 {
-		t.Fatalf("expected 4 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 4, "expected 4 rows")
 	expected := []struct {
 		grp string
 		mn  int64
@@ -422,15 +338,9 @@ func TestWindowMinMaxPartition(t *testing.T) {
 		{"b", 50, 50},
 	}
 	for i, exp := range expected {
-		if result.Rows[i][0] != exp.grp {
-			t.Errorf("row %d grp: expected %q, got %v", i, exp.grp, result.Rows[i][0])
-		}
-		if result.Rows[i][1] != exp.mn {
-			t.Errorf("row %d min: expected %d, got %v", i, exp.mn, result.Rows[i][1])
-		}
-		if result.Rows[i][2] != exp.mx {
-			t.Errorf("row %d max: expected %d, got %v", i, exp.mx, result.Rows[i][2])
-		}
+		assert.Equal(t, exp.grp, result.Rows[i][0], "row %d grp", i)
+		assert.Equal(t, exp.mn, result.Rows[i][1], "row %d min", i)
+		assert.Equal(t, exp.mx, result.Rows[i][2], "row %d max", i)
 	}
 }
 
@@ -441,16 +351,10 @@ func TestWindowAggregateWithAlias(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (2, 200)")
 
 	result := run(t, exec, "SELECT id, SUM(val) OVER () AS total FROM t")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
-	if result.Columns[1] != "total" {
-		t.Errorf("expected column name 'total', got %q", result.Columns[1])
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
+	assert.Equal(t, "total", result.Columns[1], "expected column name 'total'")
 	for i, row := range result.Rows {
-		if row[1] != int64(300) {
-			t.Errorf("row %d total: expected 300, got %v", i, row[1])
-		}
+		assert.Equal(t, int64(300), row[1], "row %d total", i)
 	}
 }
 
@@ -462,14 +366,10 @@ func TestWindowAggregateWithWhere(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (3, 30, 1)")
 
 	result := run(t, exec, "SELECT id, SUM(val) OVER () AS total FROM t WHERE active = 1")
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 2, "expected 2 rows")
 	// Only active rows: val=10,30 → sum=40
 	for i, row := range result.Rows {
-		if row[1] != int64(40) {
-			t.Errorf("row %d total: expected 40, got %v", i, row[1])
-		}
+		assert.Equal(t, int64(40), row[1], "row %d total", i)
 	}
 }
 
@@ -481,9 +381,7 @@ func TestWindowMixedRankingAndAggregate(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (3, 100)")
 
 	result := run(t, exec, "SELECT id, ROW_NUMBER() OVER (ORDER BY id) AS rn, SUM(val) OVER () AS total FROM t")
-	if len(result.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 3, "expected 3 rows")
 	expected := []struct {
 		id    int64
 		rn    int64
@@ -494,15 +392,9 @@ func TestWindowMixedRankingAndAggregate(t *testing.T) {
 		{3, 3, 400},
 	}
 	for i, exp := range expected {
-		if result.Rows[i][0] != exp.id {
-			t.Errorf("row %d id: expected %d, got %v", i, exp.id, result.Rows[i][0])
-		}
-		if result.Rows[i][1] != exp.rn {
-			t.Errorf("row %d rn: expected %d, got %v", i, exp.rn, result.Rows[i][1])
-		}
-		if result.Rows[i][2] != exp.total {
-			t.Errorf("row %d total: expected %d, got %v", i, exp.total, result.Rows[i][2])
-		}
+		assert.Equal(t, exp.id, result.Rows[i][0], "row %d id", i)
+		assert.Equal(t, exp.rn, result.Rows[i][1], "row %d rn", i)
+		assert.Equal(t, exp.total, result.Rows[i][2], "row %d total", i)
 	}
 }
 
@@ -514,9 +406,7 @@ func TestNamedWindowBasic(t *testing.T) {
 	run(t, exec, "INSERT INTO emp VALUES (3, 'sales', 'charlie')")
 
 	result := run(t, exec, "SELECT name, ROW_NUMBER() OVER w AS rn FROM emp WINDOW w AS (ORDER BY id)")
-	if len(result.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 3, "expected 3 rows")
 	expected := []struct {
 		name string
 		rn   int64
@@ -526,12 +416,8 @@ func TestNamedWindowBasic(t *testing.T) {
 		{"charlie", 3},
 	}
 	for i, exp := range expected {
-		if result.Rows[i][0] != exp.name {
-			t.Errorf("row %d name: expected %q, got %v", i, exp.name, result.Rows[i][0])
-		}
-		if result.Rows[i][1] != exp.rn {
-			t.Errorf("row %d rn: expected %d, got %v", i, exp.rn, result.Rows[i][1])
-		}
+		assert.Equal(t, exp.name, result.Rows[i][0], "row %d name", i)
+		assert.Equal(t, exp.rn, result.Rows[i][1], "row %d rn", i)
 	}
 }
 
@@ -544,9 +430,7 @@ func TestNamedWindowMultiple(t *testing.T) {
 	run(t, exec, "INSERT INTO emp VALUES (4, 'sales', 400)")
 
 	result := run(t, exec, "SELECT dept, SUM(salary) OVER w1 AS dept_total, RANK() OVER w2 AS salary_rank FROM emp WINDOW w1 AS (PARTITION BY dept), w2 AS (PARTITION BY dept ORDER BY salary DESC)")
-	if len(result.Rows) != 4 {
-		t.Fatalf("expected 4 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 4, "expected 4 rows")
 	// Rows are reordered by the first window function (w1: PARTITION BY dept, no ORDER BY).
 	// Within each partition, original order is preserved.
 	// w2 ranks by salary DESC: eng(200→rank1, 100→rank2), sales(400→rank1, 300→rank2)
@@ -561,15 +445,9 @@ func TestNamedWindowMultiple(t *testing.T) {
 		{"sales", 700, 1}, // id=4, salary=400
 	}
 	for i, exp := range expected {
-		if result.Rows[i][0] != exp.dept {
-			t.Errorf("row %d dept: expected %q, got %v", i, exp.dept, result.Rows[i][0])
-		}
-		if result.Rows[i][1] != exp.total {
-			t.Errorf("row %d dept_total: expected %d, got %v", i, exp.total, result.Rows[i][1])
-		}
-		if result.Rows[i][2] != exp.rank {
-			t.Errorf("row %d salary_rank: expected %d, got %v", i, exp.rank, result.Rows[i][2])
-		}
+		assert.Equal(t, exp.dept, result.Rows[i][0], "row %d dept", i)
+		assert.Equal(t, exp.total, result.Rows[i][1], "row %d dept_total", i)
+		assert.Equal(t, exp.rank, result.Rows[i][2], "row %d salary_rank", i)
 	}
 }
 
@@ -581,9 +459,7 @@ func TestNamedWindowAggregate(t *testing.T) {
 	run(t, exec, "INSERT INTO emp VALUES (3, 'sales', 300)")
 
 	result := run(t, exec, "SELECT dept, salary, SUM(salary) OVER w AS total, COUNT(*) OVER w AS cnt FROM emp WINDOW w AS (PARTITION BY dept)")
-	if len(result.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 3, "expected 3 rows")
 	expected := []struct {
 		dept  string
 		sal   int64
@@ -595,18 +471,10 @@ func TestNamedWindowAggregate(t *testing.T) {
 		{"sales", 300, 300, 1},
 	}
 	for i, exp := range expected {
-		if result.Rows[i][0] != exp.dept {
-			t.Errorf("row %d dept: expected %q, got %v", i, exp.dept, result.Rows[i][0])
-		}
-		if result.Rows[i][1] != exp.sal {
-			t.Errorf("row %d salary: expected %d, got %v", i, exp.sal, result.Rows[i][1])
-		}
-		if result.Rows[i][2] != exp.total {
-			t.Errorf("row %d total: expected %d, got %v", i, exp.total, result.Rows[i][2])
-		}
-		if result.Rows[i][3] != exp.cnt {
-			t.Errorf("row %d cnt: expected %d, got %v", i, exp.cnt, result.Rows[i][3])
-		}
+		assert.Equal(t, exp.dept, result.Rows[i][0], "row %d dept", i)
+		assert.Equal(t, exp.sal, result.Rows[i][1], "row %d salary", i)
+		assert.Equal(t, exp.total, result.Rows[i][2], "row %d total", i)
+		assert.Equal(t, exp.cnt, result.Rows[i][3], "row %d cnt", i)
 	}
 }
 
@@ -619,9 +487,7 @@ func TestNamedWindowMixed(t *testing.T) {
 
 	// Mix named window and inline OVER clause
 	result := run(t, exec, "SELECT id, ROW_NUMBER() OVER w AS rn, SUM(val) OVER () AS total FROM t WINDOW w AS (ORDER BY id)")
-	if len(result.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
-	}
+	require.Len(t, result.Rows, 3, "expected 3 rows")
 	expected := []struct {
 		id    int64
 		rn    int64
@@ -632,14 +498,8 @@ func TestNamedWindowMixed(t *testing.T) {
 		{3, 3, 400},
 	}
 	for i, exp := range expected {
-		if result.Rows[i][0] != exp.id {
-			t.Errorf("row %d id: expected %d, got %v", i, exp.id, result.Rows[i][0])
-		}
-		if result.Rows[i][1] != exp.rn {
-			t.Errorf("row %d rn: expected %d, got %v", i, exp.rn, result.Rows[i][1])
-		}
-		if result.Rows[i][2] != exp.total {
-			t.Errorf("row %d total: expected %d, got %v", i, exp.total, result.Rows[i][2])
-		}
+		assert.Equal(t, exp.id, result.Rows[i][0], "row %d id", i)
+		assert.Equal(t, exp.rn, result.Rows[i][1], "row %d rn", i)
+		assert.Equal(t, exp.total, result.Rows[i][2], "row %d total", i)
 	}
 }

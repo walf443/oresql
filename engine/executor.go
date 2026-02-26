@@ -26,10 +26,17 @@ func WithWAL(w *WAL) Option {
 	}
 }
 
+// WithStorage sets the storage engine for the Executor.
+func WithStorage(s StorageEngine) Option {
+	return func(e *Executor) {
+		e.storage = s
+	}
+}
+
 // Executor runs SQL statements.
 type Executor struct {
 	catalog *Catalog
-	storage *Storage
+	storage StorageEngine
 	wal     *WAL
 }
 

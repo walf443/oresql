@@ -22,6 +22,56 @@ type KeyRow struct {
 	Row Row
 }
 
+// StorageEngine is the interface for storage backends.
+type StorageEngine interface {
+	// Table lifecycle
+	CreateTable(info *TableInfo)
+	DropTable(name string)
+	TruncateTable(name string)
+
+	// Row operations
+	Insert(tableName string, row Row) error
+	DeleteByKeys(tableName string, keys []int64) error
+	UpdateRow(tableName string, key int64, row Row) error
+
+	// Schema changes
+	AddColumn(tableName string, defaultVal Value) error
+	DropColumn(tableName string, colIdx int) error
+
+	// Index management
+	CreateIndex(info *IndexInfo) error
+	DropIndex(indexName string) error
+	HasIndex(indexName string) bool
+	LookupIndex(tableName string, columnIdxs []int) IndexReader
+	LookupSingleColumnIndex(tableName string, colIdx int) IndexReader
+	GetIndexes(tableName string) []IndexReader
+
+	// Query
+	Scan(tableName string) ([]Row, error)
+	ScanOrdered(tableName string, reverse bool, limit int) ([]Row, error)
+	ScanWithKeys(tableName string) ([]KeyRow, error)
+	GetByKeys(tableName string, keys []int64) ([]Row, error)
+	GetKeyRowsByKeys(tableName string, keys []int64) ([]KeyRow, error)
+	RowCount(tableName string) (int, error)
+
+	// Row iteration (replaces direct BTree access)
+	ForEachRow(tableName string, reverse bool, fn func(key int64, row Row) bool) error
+	GetRow(tableName string, key int64) (Row, bool)
+}
+
+// IndexReader is the interface for reading index data.
+type IndexReader interface {
+	GetInfo() *IndexInfo
+	Lookup(vals []Value) []int64
+	RangeScan(fromVal *Value, fromInclusive bool, toVal *Value, toInclusive bool) []int64
+	CompositeRangeScan(prefixVals []Value, fromVal *Value, fromInclusive bool, toVal *Value, toInclusive bool) []int64
+	OrderedRangeScan(fromVal *Value, fromInclusive bool, toVal *Value, toInclusive bool, reverse bool, fn func(rowKey int64) bool)
+}
+
+// Compile-time verification that concrete types satisfy the interfaces.
+var _ StorageEngine = (*Storage)(nil)
+var _ IndexReader = (*SecondaryIndex)(nil)
+
 // KeyEncoding is a binary-encoded index key.
 // Each value is prefixed with a type byte (NULL=0x00, INT=0x01, FLOAT=0x02, TEXT=0x03)
 // followed by fixed-size or length-prefixed data, making the encoding self-delimiting.
@@ -242,6 +292,11 @@ func (si *SecondaryIndex) OrderedRangeScan(
 	} else {
 		si.tree.ForEachRange(fromKey, fromInclusive, toKey, toInclusive, iterFn)
 	}
+}
+
+// GetInfo returns the index metadata.
+func (si *SecondaryIndex) GetInfo() *IndexInfo {
+	return si.Info
 }
 
 // Lookup returns the BTree keys matching the given composite values.
@@ -613,7 +668,7 @@ func (s *Storage) DropIndex(indexName string) error {
 }
 
 // LookupIndex finds a secondary index on the given table matching the given column indexes.
-func (s *Storage) LookupIndex(tableName string, columnIdxs []int) *SecondaryIndex {
+func (s *Storage) LookupIndex(tableName string, columnIdxs []int) IndexReader {
 	lower := strings.ToLower(tableName)
 	tbl, ok := s.tables[lower]
 	if !ok {
@@ -638,7 +693,7 @@ func (s *Storage) LookupIndex(tableName string, columnIdxs []int) *SecondaryInde
 }
 
 // LookupSingleColumnIndex finds a single-column index for the given table and column index.
-func (s *Storage) LookupSingleColumnIndex(tableName string, colIdx int) *SecondaryIndex {
+func (s *Storage) LookupSingleColumnIndex(tableName string, colIdx int) IndexReader {
 	lower := strings.ToLower(tableName)
 	tbl, ok := s.tables[lower]
 	if !ok {
@@ -653,13 +708,13 @@ func (s *Storage) LookupSingleColumnIndex(tableName string, colIdx int) *Seconda
 }
 
 // GetIndexes returns all secondary indexes for the given table.
-func (s *Storage) GetIndexes(tableName string) []*SecondaryIndex {
+func (s *Storage) GetIndexes(tableName string) []IndexReader {
 	lower := strings.ToLower(tableName)
 	tbl, ok := s.tables[lower]
 	if !ok {
 		return nil
 	}
-	var indexes []*SecondaryIndex
+	var indexes []IndexReader
 	for _, idx := range tbl.indexes {
 		indexes = append(indexes, idx)
 	}
@@ -775,4 +830,38 @@ func (s *Storage) ScanWithKeys(tableName string) ([]KeyRow, error) {
 		return true
 	})
 	return rows, nil
+}
+
+// ForEachRow iterates over all rows in key order, calling fn for each.
+// If reverse is true, iterates in reverse key order.
+// fn returning false stops the iteration.
+func (s *Storage) ForEachRow(tableName string, reverse bool, fn func(key int64, row Row) bool) error {
+	lower := strings.ToLower(tableName)
+	tbl, ok := s.tables[lower]
+	if !ok {
+		return fmt.Errorf("table %q does not exist in storage", tableName)
+	}
+	iterFn := func(key int64, value any) bool {
+		return fn(key, value.(Row))
+	}
+	if reverse {
+		tbl.tree.ForEachReverse(iterFn)
+	} else {
+		tbl.tree.ForEach(iterFn)
+	}
+	return nil
+}
+
+// GetRow retrieves a single row by its BTree key.
+func (s *Storage) GetRow(tableName string, key int64) (Row, bool) {
+	lower := strings.ToLower(tableName)
+	tbl, ok := s.tables[lower]
+	if !ok {
+		return nil, false
+	}
+	val, found := tbl.tree.Get(key)
+	if !found {
+		return nil, false
+	}
+	return val.(Row), true
 }

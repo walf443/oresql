@@ -610,7 +610,7 @@ func buildJoinContextFromGraph(graph *JoinGraph) *JoinContext {
 // compositeJoinPlan describes how to use a composite index for a JOIN lookup
 // combined with LocalWhere conditions on the inner table.
 type compositeJoinPlan struct {
-	index      *SecondaryIndex
+	index      IndexReader
 	eqVals     []Value         // equality values for columns after the equi-join column
 	fullLookup bool            // all index columns covered by equality → use Lookup()
 	rangeCol   *rangeCondition // range condition on the column after equality prefix (nil if none)
@@ -636,18 +636,19 @@ func (e *Executor) findCompositeJoinIndex(
 	bestCoverage := 0 // number of index columns covered (equi-join col + matched conditions)
 
 	for _, idx := range indexes {
-		if len(idx.Info.ColumnIdxs) < 2 {
+		idxInfo := idx.GetInfo()
+		if len(idxInfo.ColumnIdxs) < 2 {
 			continue // need at least 2 columns (equi-join + one more)
 		}
-		if idx.Info.ColumnIdxs[0] != equiJoinColIdx {
+		if idxInfo.ColumnIdxs[0] != equiJoinColIdx {
 			continue // first column must be the equi-join column
 		}
 
 		// Try to match subsequent columns with equality conditions
 		var eqVals []Value
 		matchedEq := 0
-		for i := 1; i < len(idx.Info.ColumnIdxs); i++ {
-			colName := strings.ToLower(idx.Info.ColumnNames[i])
+		for i := 1; i < len(idxInfo.ColumnIdxs); i++ {
+			colName := strings.ToLower(idxInfo.ColumnNames[i])
 			val, ok := eqConds[colName]
 			if !ok {
 				break
@@ -658,7 +659,7 @@ func (e *Executor) findCompositeJoinIndex(
 
 		coverage := 1 + matchedEq // equi-join col + matched equality conditions
 
-		if matchedEq == len(idx.Info.ColumnIdxs)-1 {
+		if matchedEq == len(idxInfo.ColumnIdxs)-1 {
 			// All columns after equi-join are covered by equality → full lookup
 			if coverage > bestCoverage {
 				bestCoverage = coverage
@@ -673,8 +674,8 @@ func (e *Executor) findCompositeJoinIndex(
 
 		// Check if the next unmatched column has a range condition
 		nextColIdx := 1 + matchedEq
-		if nextColIdx < len(idx.Info.ColumnIdxs) {
-			nextColName := strings.ToLower(idx.Info.ColumnNames[nextColIdx])
+		if nextColIdx < len(idxInfo.ColumnIdxs) {
+			nextColName := strings.ToLower(idxInfo.ColumnNames[nextColIdx])
 			if rc, ok := rangeConds[nextColName]; ok && (rc.fromVal != nil || rc.toVal != nil) {
 				rangeCoverage := coverage + 1
 				if rangeCoverage > bestCoverage {
@@ -808,7 +809,7 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 		// Determine equi-join column info
 		var nextEquiCol string
 		var partnerEquiColIdx int = -1
-		var nextIdx *SecondaryIndex
+		var nextIdx IndexReader
 
 		if edge != nil && len(edge.EquiJoinPairs) > 0 {
 			pair := edge.EquiJoinPairs[0]

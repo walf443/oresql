@@ -46,9 +46,10 @@ func (e *Executor) tryIndexLookup(where ast.Expr, info *TableInfo) ([]int64, boo
 	// Try all indexes on this table, pick one where all columns have equality conditions
 	indexes := e.storage.GetIndexes(info.Name)
 	for _, idx := range indexes {
-		vals := make([]Value, len(idx.Info.ColumnNames))
+		idxInfo := idx.GetInfo()
+		vals := make([]Value, len(idxInfo.ColumnNames))
 		allFound := true
-		for i, colName := range idx.Info.ColumnNames {
+		for i, colName := range idxInfo.ColumnNames {
 			val, ok := eqConds[strings.ToLower(colName)]
 			if !ok {
 				allFound = false
@@ -205,11 +206,12 @@ func (e *Executor) tryIndexInLookup(where ast.Expr, info *TableInfo) ([]int64, b
 	eqConds := extractEqualityConditions(where)
 	indexes := e.storage.GetIndexes(info.Name)
 	for _, idx := range indexes {
-		if len(idx.Info.ColumnNames) < 2 {
+		idxInfo := idx.GetInfo()
+		if len(idxInfo.ColumnNames) < 2 {
 			continue
 		}
-		prefixLen := len(idx.Info.ColumnNames) - 1
-		lastCol := strings.ToLower(idx.Info.ColumnNames[prefixLen])
+		prefixLen := len(idxInfo.ColumnNames) - 1
+		lastCol := strings.ToLower(idxInfo.ColumnNames[prefixLen])
 		inVals, hasIn := inConds[lastCol]
 		if !hasIn {
 			continue
@@ -218,7 +220,7 @@ func (e *Executor) tryIndexInLookup(where ast.Expr, info *TableInfo) ([]int64, b
 		prefixVals := make([]Value, 0, prefixLen)
 		allPrefixFound := true
 		for i := 0; i < prefixLen; i++ {
-			val, ok := eqConds[strings.ToLower(idx.Info.ColumnNames[i])]
+			val, ok := eqConds[strings.ToLower(idxInfo.ColumnNames[i])]
 			if !ok {
 				allPrefixFound = false
 				break
@@ -419,15 +421,16 @@ func (e *Executor) tryIndexRangeScan(where ast.Expr, info *TableInfo) ([]int64, 
 	eqConds := extractEqualityConditions(where)
 	indexes := e.storage.GetIndexes(info.Name)
 	for _, idx := range indexes {
-		if len(idx.Info.ColumnNames) < 2 {
+		idxInfo := idx.GetInfo()
+		if len(idxInfo.ColumnNames) < 2 {
 			continue
 		}
 		// Try from longest prefix to shortest, pick the most selective match
-		for prefixLen := len(idx.Info.ColumnNames) - 1; prefixLen >= 1; prefixLen-- {
+		for prefixLen := len(idxInfo.ColumnNames) - 1; prefixLen >= 1; prefixLen-- {
 			prefixVals := make([]Value, 0, prefixLen)
 			allPrefixFound := true
 			for i := 0; i < prefixLen; i++ {
-				val, ok := eqConds[strings.ToLower(idx.Info.ColumnNames[i])]
+				val, ok := eqConds[strings.ToLower(idxInfo.ColumnNames[i])]
 				if !ok {
 					allPrefixFound = false
 					break
@@ -438,7 +441,7 @@ func (e *Executor) tryIndexRangeScan(where ast.Expr, info *TableInfo) ([]int64, 
 				continue
 			}
 			// Check if the next column has a range condition
-			rangeCol := strings.ToLower(idx.Info.ColumnNames[prefixLen])
+			rangeCol := strings.ToLower(idxInfo.ColumnNames[prefixLen])
 			rc, ok := rangeConds[rangeCol]
 			if !ok || (rc.fromVal == nil && rc.toVal == nil) {
 				continue
@@ -456,10 +459,10 @@ func (e *Executor) tryIndexRangeScan(where ast.Expr, info *TableInfo) ([]int64, 
 
 // indexOrderResult describes how an index can satisfy ORDER BY.
 type indexOrderResult struct {
-	index     *SecondaryIndex // nil if PK ordering
-	reverse   bool            // true for DESC (first ORDER BY column direction)
-	usePK     bool            // true if ORDER BY on PK column
-	fullOrder bool            // true: no sort needed, false: only first column ordered
+	index     IndexReader // nil if PK ordering
+	reverse   bool        // true for DESC (first ORDER BY column direction)
+	usePK     bool        // true if ORDER BY on PK column
+	fullOrder bool        // true: no sort needed, false: only first column ordered
 	// WHERE range conditions combinable with this index
 	fromVal       *Value
 	fromInclusive bool

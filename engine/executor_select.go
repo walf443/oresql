@@ -207,8 +207,6 @@ func (e *Executor) scanSourceOrderedByIndex(
 	stmt *ast.SelectStmt, info *TableInfo, ior *indexOrderResult,
 ) ([]Row, ExprEvaluator, error) {
 	eval := newTableEvaluator(e, info)
-	lower := strings.ToLower(info.Name)
-	tbl := e.storage.tables[lower]
 
 	needed := 0
 	if stmt.Limit != nil {
@@ -219,16 +217,16 @@ func (e *Executor) scanSourceOrderedByIndex(
 	}
 
 	if ior.fullOrder {
-		return e.scanFullOrder(stmt, info, ior, tbl, eval, needed)
+		return e.scanFullOrder(stmt, info, ior, eval, needed)
 	}
-	return e.scanPartialOrder(stmt, info, ior, tbl, eval, needed)
+	return e.scanPartialOrder(stmt, info, ior, eval, needed)
 }
 
 // scanFullOrder handles the case where ORDER BY is a single column with an index.
 // No sort needed after scan; rows are in final order.
 func (e *Executor) scanFullOrder(
 	stmt *ast.SelectStmt, info *TableInfo, ior *indexOrderResult,
-	tbl *Table, eval ExprEvaluator, needed int,
+	eval ExprEvaluator, needed int,
 ) ([]Row, ExprEvaluator, error) {
 	cap := 64
 	if needed > 0 {
@@ -238,8 +236,7 @@ func (e *Executor) scanFullOrder(
 
 	if ior.usePK {
 		// PK order scan
-		iterFn := func(key int64, value any) bool {
-			row := value.(Row)
+		e.storage.ForEachRow(info.Name, ior.reverse, func(key int64, row Row) bool {
 			if stmt.Where != nil {
 				val, err := eval.Eval(stmt.Where, row)
 				if err != nil {
@@ -255,12 +252,7 @@ func (e *Executor) scanFullOrder(
 				return false
 			}
 			return true
-		}
-		if ior.reverse {
-			tbl.tree.ForEachReverse(iterFn)
-		} else {
-			tbl.tree.ForEach(iterFn)
-		}
+		})
 	} else {
 		// Secondary index order scan
 		ior.index.OrderedRangeScan(
@@ -268,11 +260,10 @@ func (e *Executor) scanFullOrder(
 			ior.toVal, ior.toInclusive,
 			ior.reverse,
 			func(rowKey int64) bool {
-				val, found := tbl.tree.Get(rowKey)
+				row, found := e.storage.GetRow(info.Name, rowKey)
 				if !found {
 					return true
 				}
-				row := val.(Row)
 				if stmt.Where != nil {
 					wVal, err := eval.Eval(stmt.Where, row)
 					if err != nil {
@@ -294,7 +285,7 @@ func (e *Executor) scanFullOrder(
 
 	// For non-PK, nullable columns without LIMIT: move NULLs to end
 	if !ior.usePK && ior.index != nil {
-		colIdx := ior.index.Info.ColumnIdxs[0]
+		colIdx := ior.index.GetInfo().ColumnIdxs[0]
 		col := info.Columns[colIdx]
 		if !col.NotNull && !col.PrimaryKey {
 			// Move NULL rows to end
@@ -317,7 +308,7 @@ func (e *Executor) scanFullOrder(
 // Reads rows in first-column order, applying group boundary cutoff for LIMIT optimization.
 func (e *Executor) scanPartialOrder(
 	stmt *ast.SelectStmt, info *TableInfo, ior *indexOrderResult,
-	tbl *Table, eval ExprEvaluator, needed int,
+	eval ExprEvaluator, needed int,
 ) ([]Row, ExprEvaluator, error) {
 	cap := 64
 	if needed > 0 {
@@ -334,11 +325,10 @@ func (e *Executor) scanPartialOrder(
 	firstRow := true
 
 	scanFn := func(rowKey int64) bool {
-		val, found := tbl.tree.Get(rowKey)
+		row, found := e.storage.GetRow(info.Name, rowKey)
 		if !found {
 			return true
 		}
-		row := val.(Row)
 		if stmt.Where != nil {
 			wVal, err := eval.Eval(stmt.Where, row)
 			if err != nil {
@@ -364,8 +354,7 @@ func (e *Executor) scanPartialOrder(
 	}
 
 	if ior.usePK {
-		iterFn := func(key int64, value any) bool {
-			row := value.(Row)
+		e.storage.ForEachRow(info.Name, ior.reverse, func(key int64, row Row) bool {
 			if stmt.Where != nil {
 				wVal, err := eval.Eval(stmt.Where, row)
 				if err != nil {
@@ -387,12 +376,7 @@ func (e *Executor) scanPartialOrder(
 			firstRow = false
 			rows = append(rows, row)
 			return true
-		}
-		if ior.reverse {
-			tbl.tree.ForEachReverse(iterFn)
-		} else {
-			tbl.tree.ForEach(iterFn)
-		}
+		})
 	} else {
 		ior.index.OrderedRangeScan(
 			ior.fromVal, ior.fromInclusive,

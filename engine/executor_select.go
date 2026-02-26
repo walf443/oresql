@@ -236,6 +236,12 @@ func (e *Executor) scanFullOrder(
 
 	if ior.usePK {
 		// PK order scan
+		// When there's no WHERE, we can limit collection to exactly needed rows.
+		// With WHERE, we must collect all rows because filtering may skip some.
+		forEachLimit := 0
+		if stmt.Where == nil && needed > 0 {
+			forEachLimit = needed
+		}
 		e.storage.ForEachRow(info.Name, ior.reverse, func(key int64, row Row) bool {
 			if stmt.Where != nil {
 				val, err := eval.Eval(stmt.Where, row)
@@ -252,7 +258,7 @@ func (e *Executor) scanFullOrder(
 				return false
 			}
 			return true
-		})
+		}, forEachLimit)
 	} else {
 		// Secondary index order scan
 		ior.index.OrderedRangeScan(
@@ -354,6 +360,8 @@ func (e *Executor) scanPartialOrder(
 	}
 
 	if ior.usePK {
+		// partialOrder cannot use limit because it needs to collect all rows
+		// in the same first-column value group even after reaching needed count.
 		e.storage.ForEachRow(info.Name, ior.reverse, func(key int64, row Row) bool {
 			if stmt.Where != nil {
 				wVal, err := eval.Eval(stmt.Where, row)
@@ -376,7 +384,7 @@ func (e *Executor) scanPartialOrder(
 			firstRow = false
 			rows = append(rows, row)
 			return true
-		})
+		}, 0)
 	} else {
 		ior.index.OrderedRangeScan(
 			ior.fromVal, ior.fromInclusive,

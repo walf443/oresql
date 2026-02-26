@@ -166,7 +166,7 @@ func TestConcurrentForEachRowNoDeadlock(t *testing.T) {
 						return false
 					}
 					return true
-				})
+				}, 0)
 				if err != nil {
 					errs <- err
 					return

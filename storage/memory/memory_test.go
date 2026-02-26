@@ -429,7 +429,7 @@ func TestForEachRow(t *testing.T) {
 		err := s.ForEachRow("users", false, func(key int64, row storage.Row) bool {
 			ids = append(ids, key)
 			return true
-		})
+		}, 0)
 		require.NoError(t, err)
 		assert.Equal(t, []int64{1, 2, 3}, ids)
 	})
@@ -439,7 +439,7 @@ func TestForEachRow(t *testing.T) {
 		err := s.ForEachRow("users", true, func(key int64, row storage.Row) bool {
 			ids = append(ids, key)
 			return true
-		})
+		}, 0)
 		require.NoError(t, err)
 		assert.Equal(t, []int64{3, 2, 1}, ids)
 	})
@@ -449,7 +449,17 @@ func TestForEachRow(t *testing.T) {
 		err := s.ForEachRow("users", false, func(key int64, row storage.Row) bool {
 			ids = append(ids, key)
 			return key < 2 // stop after key=2
-		})
+		}, 0)
+		require.NoError(t, err)
+		assert.Equal(t, []int64{1, 2}, ids)
+	})
+
+	t.Run("with limit", func(t *testing.T) {
+		var ids []int64
+		err := s.ForEachRow("users", false, func(key int64, row storage.Row) bool {
+			ids = append(ids, key)
+			return true
+		}, 2)
 		require.NoError(t, err)
 		assert.Equal(t, []int64{1, 2}, ids)
 	})

@@ -791,25 +791,38 @@ func (s *MemoryStorage) ScanWithKeys(tableName string) ([]storage.KeyRow, error)
 // If reverse is true, iterates in reverse key order.
 // fn returning false stops the iteration.
 //
+// limit > 0: collect at most limit rows from the B-tree (for ORDER BY + LIMIT
+// without WHERE). limit <= 0: collect all rows (safe for callbacks that re-read
+// the same table via subqueries).
+//
 // Rows are collected under tbl.mu.RLock, then the lock is released before
 // calling fn. This prevents deadlocks when fn contains subqueries that
 // re-read the same table (Go's RWMutex blocks new RLock when a writer waits).
-func (s *MemoryStorage) ForEachRow(tableName string, reverse bool, fn func(key int64, row storage.Row) bool) error {
+func (s *MemoryStorage) ForEachRow(tableName string, reverse bool, fn func(key int64, row storage.Row) bool, limit int) error {
 	tbl, ok := s.getTable(tableName)
 	if !ok {
 		return fmt.Errorf("table %q does not exist in storage", tableName)
 	}
 
-	// Collect all entries under lock
+	// Collect entries under lock
 	type entry struct {
 		key int64
 		row storage.Row
 	}
-	var entries []entry
+	cap := 64
+	if limit > 0 && limit < cap {
+		cap = limit
+	}
+	entries := make([]entry, 0, cap)
 
 	tbl.mu.RLock()
+	collected := 0
 	iterFn := func(key int64, value any) bool {
 		entries = append(entries, entry{key: key, row: value.(storage.Row)})
+		collected++
+		if limit > 0 && collected >= limit {
+			return false
+		}
 		return true
 	}
 	if reverse {

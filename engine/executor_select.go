@@ -424,7 +424,7 @@ func (e *Executor) scanSource(stmt *ast.SelectStmt, earlyLimit int) ([]Row, Expr
 // materializeSubquery executes a subquery and returns a virtual TableInfo and the rows.
 // The alias is used as the virtual table name.
 func (e *Executor) materializeSubquery(subquery ast.Statement, alias string) (*TableInfo, []Row, error) {
-	result, err := e.Execute(subquery)
+	result, err := e.executeInner(subquery)
 	if err != nil {
 		return nil, nil, err
 	}

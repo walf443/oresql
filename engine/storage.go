@@ -14,6 +14,9 @@ type IndexInfo = storage.IndexInfo
 type KeyEncoding = storage.KeyEncoding
 type StorageEngine = storage.Engine
 type IndexReader = storage.IndexReader
+type TableLockMode = storage.TableLockMode
+type TableLock = storage.TableLock
+type TableLocker = storage.TableLocker
 
 // encodeValue is a package-level alias for storage.EncodeValue,
 // preserving backward compatibility with executor files.

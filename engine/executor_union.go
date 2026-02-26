@@ -9,7 +9,7 @@ import (
 
 func (e *Executor) executeSetOp(stmt *ast.SetOpStmt) (*Result, error) {
 	// 1. Execute left side (may be *SelectStmt or *SetOpStmt for chains)
-	leftResult, err := e.Execute(stmt.Left)
+	leftResult, err := e.executeInner(stmt.Left)
 	if err != nil {
 		return nil, err
 	}

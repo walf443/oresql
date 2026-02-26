@@ -111,7 +111,7 @@ func (e *Executor) executeInsert(stmt *ast.InsertStmt) (*Result, error) {
 }
 
 func (e *Executor) executeInsertSelect(stmt *ast.InsertStmt, info *TableInfo) (*Result, error) {
-	selectResult, err := e.Execute(stmt.Select)
+	selectResult, err := e.executeInner(stmt.Select)
 	if err != nil {
 		return nil, err
 	}

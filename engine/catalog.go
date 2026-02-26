@@ -3,12 +3,14 @@ package engine
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/walf443/oresql/ast"
 )
 
 // Catalog holds all table schemas.
 type Catalog struct {
+	mu     sync.RWMutex
 	tables map[string]*TableInfo // key: lowercase table name
 }
 
@@ -17,6 +19,8 @@ func NewCatalog() *Catalog {
 }
 
 func (c *Catalog) CreateTable(name string, columnDefs []ast.ColumnDef, tablePK []string) (*TableInfo, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	lower := strings.ToLower(name)
 	if _, exists := c.tables[lower]; exists {
 		return nil, fmt.Errorf("table %q already exists", name)
@@ -124,6 +128,8 @@ func (c *Catalog) CreateTable(name string, columnDefs []ast.ColumnDef, tablePK [
 }
 
 func (c *Catalog) DropTable(name string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	lower := strings.ToLower(name)
 	if _, exists := c.tables[lower]; !exists {
 		return fmt.Errorf("table %q does not exist", name)
@@ -133,6 +139,8 @@ func (c *Catalog) DropTable(name string) error {
 }
 
 func (c *Catalog) AddColumn(tableName string, colDef ast.ColumnDef) (*TableInfo, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	lower := strings.ToLower(tableName)
 	info, ok := c.tables[lower]
 	if !ok {
@@ -199,6 +207,8 @@ func (c *Catalog) AddColumn(tableName string, colDef ast.ColumnDef) (*TableInfo,
 }
 
 func (c *Catalog) DropColumn(tableName string, columnName string) (*ColumnInfo, *TableInfo, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	lower := strings.ToLower(tableName)
 	info, ok := c.tables[lower]
 	if !ok {
@@ -262,6 +272,8 @@ func (c *Catalog) DropColumn(tableName string, columnName string) (*ColumnInfo, 
 }
 
 func (c *Catalog) GetTable(name string) (*TableInfo, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	lower := strings.ToLower(name)
 	info, ok := c.tables[lower]
 	if !ok {

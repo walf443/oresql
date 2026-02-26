@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/walf443/oresql/btree"
 	"github.com/walf443/oresql/storage"
@@ -267,6 +268,7 @@ func (si *SecondaryIndex) removeRow(key int64, row storage.Row) {
 
 // table stores rows for a single table using a BTree.
 type table struct {
+	mu        sync.RWMutex // table-level lock
 	Info      *storage.TableInfo
 	tree      *btree.BTree[int64]
 	nextRowID int64 // auto-increment for non-PK tables
@@ -275,6 +277,7 @@ type table struct {
 
 // MemoryStorage holds all table data in memory.
 type MemoryStorage struct {
+	mu         sync.RWMutex      // protects tables and indexTable maps
 	tables     map[string]*table // key: lowercase table name
 	indexTable map[string]string // index name -> table name
 }
@@ -610,6 +613,13 @@ func (s *MemoryStorage) GetIndexes(tableName string) []storage.IndexReader {
 		indexes = append(indexes, idx)
 	}
 	return indexes
+}
+
+// ResolveIndexTable returns the table name that owns the given index.
+func (s *MemoryStorage) ResolveIndexTable(indexName string) (string, bool) {
+	lowerIdx := strings.ToLower(indexName)
+	tableName, ok := s.indexTable[lowerIdx]
+	return tableName, ok
 }
 
 // HasIndex checks if an index with the given name exists.

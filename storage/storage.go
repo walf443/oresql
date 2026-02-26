@@ -64,6 +64,28 @@ type IndexInfo struct {
 // followed by fixed-size or length-prefixed data, making the encoding self-delimiting.
 type KeyEncoding string
 
+// TableLockMode represents the type of lock to acquire on a table.
+type TableLockMode int
+
+const (
+	TableLockRead  TableLockMode = iota // shared read lock (SELECT)
+	TableLockWrite                      // exclusive write lock (INSERT/UPDATE/DELETE/DDL)
+)
+
+// TableLock represents a lock request for a single table.
+type TableLock struct {
+	TableName string
+	Mode      TableLockMode
+}
+
+// TableLocker is an optional interface that storage engines can implement
+// to support table-level locking for concurrent access.
+type TableLocker interface {
+	WithTableLocks(locks []TableLock, catalogWrite bool, fn func() error) error
+	WithCatalogLock(write bool, fn func() error) error
+	ResolveIndexTable(indexName string) (string, bool)
+}
+
 // Engine is the interface for storage backends.
 type Engine interface {
 	// Table lifecycle

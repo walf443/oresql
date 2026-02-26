@@ -6,6 +6,7 @@ import (
 	"github.com/walf443/oresql/ast"
 	"github.com/walf443/oresql/lexer"
 	"github.com/walf443/oresql/parser"
+	"github.com/walf443/oresql/storage"
 	"github.com/walf443/oresql/storage/memory"
 )
 
@@ -92,6 +93,45 @@ func (e *Executor) ReplayWAL() error {
 }
 
 func (e *Executor) Execute(stmt ast.Statement) (*Result, error) {
+	locker, ok := e.storage.(storage.TableLocker)
+	if !ok {
+		return e.executeInner(stmt)
+	}
+
+	refs, catalogWrite := collectLockRefs(stmt)
+
+	// Special case: CreateTable — table doesn't exist yet, only need catalog lock
+	if _, isCreate := stmt.(*ast.CreateTableStmt); isCreate {
+		var result *Result
+		err := locker.WithCatalogLock(true, func() error {
+			var execErr error
+			result, execErr = e.executeInner(stmt)
+			return execErr
+		})
+		return result, err
+	}
+
+	// Special case: DropIndex — AST doesn't contain table name, resolve first
+	if dropIdx, isDropIdx := stmt.(*ast.DropIndexStmt); isDropIdx {
+		tableName, found := locker.ResolveIndexTable(dropIdx.IndexName)
+		if !found {
+			return nil, fmt.Errorf("index %q does not exist", dropIdx.IndexName)
+		}
+		refs = append(refs, lockRef{TableName: tableName, Mode: storage.TableLockWrite})
+	}
+
+	locks := mergeLockRefs(refs)
+
+	var result *Result
+	err := locker.WithTableLocks(locks, catalogWrite, func() error {
+		var execErr error
+		result, execErr = e.executeInner(stmt)
+		return execErr
+	})
+	return result, err
+}
+
+func (e *Executor) executeInner(stmt ast.Statement) (*Result, error) {
 	switch s := stmt.(type) {
 	case *ast.CreateTableStmt:
 		return e.executeCreateTable(s)

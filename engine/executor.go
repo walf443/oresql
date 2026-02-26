@@ -92,7 +92,26 @@ func (e *Executor) ReplayWAL() error {
 	})
 }
 
+// isDDL returns true if the statement is a DDL operation that requires
+// executor-level locking. DML statements are protected by storage-internal locks.
+func isDDL(stmt ast.Statement) bool {
+	switch stmt.(type) {
+	case *ast.CreateTableStmt, *ast.DropTableStmt, *ast.TruncateTableStmt,
+		*ast.CreateIndexStmt, *ast.DropIndexStmt,
+		*ast.AlterTableAddColumnStmt, *ast.AlterTableDropColumnStmt:
+		return true
+	default:
+		return false
+	}
+}
+
 func (e *Executor) Execute(stmt ast.Statement) (*Result, error) {
+	// DML: storage methods handle their own locking internally
+	if !isDDL(stmt) {
+		return e.executeInner(stmt)
+	}
+
+	// DDL: acquire executor-level locks
 	locker, ok := e.storage.(storage.TableLocker)
 	if !ok {
 		return e.executeInner(stmt)
@@ -100,15 +119,10 @@ func (e *Executor) Execute(stmt ast.Statement) (*Result, error) {
 
 	refs, catalogWrite := collectLockRefs(stmt)
 
-	// Special case: CreateTable — table doesn't exist yet, only need catalog lock
+	// Special case: CreateTable — table doesn't exist yet, no table locks needed.
+	// Storage methods (CreateTable, CreateIndex) handle s.mu internally.
 	if _, isCreate := stmt.(*ast.CreateTableStmt); isCreate {
-		var result *Result
-		err := locker.WithCatalogLock(true, func() error {
-			var execErr error
-			result, execErr = e.executeInner(stmt)
-			return execErr
-		})
-		return result, err
+		return e.executeInner(stmt)
 	}
 
 	// Special case: DropIndex — AST doesn't contain table name, resolve first

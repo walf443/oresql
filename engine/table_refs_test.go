@@ -91,8 +91,9 @@ func TestCollectLockRefs(t *testing.T) {
 			},
 		},
 		{
-			name: "CREATE INDEX",
-			sql:  "CREATE INDEX idx ON t (col)",
+			name:         "CREATE INDEX",
+			sql:          "CREATE INDEX idx ON t (col)",
+			catalogWrite: true,
 			wantLocks: map[string]storage.TableLockMode{
 				"t": storage.TableLockWrite,
 			},

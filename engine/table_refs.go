@@ -60,10 +60,12 @@ func collectLockRefs(stmt ast.Statement) (refs []lockRef, catalogWrite bool) {
 		refs = append(refs, lockRef{TableName: s.TableName, Mode: storage.TableLockWrite})
 
 	case *ast.CreateIndexStmt:
+		catalogWrite = true
 		refs = append(refs, lockRef{TableName: s.TableName, Mode: storage.TableLockWrite})
 
 	case *ast.DropIndexStmt:
-		// Special case: handled in executor since we need to resolve the table name
+		catalogWrite = true
+		// Special case: table lock handled in executor since we need to resolve the table name
 
 	case *ast.AlterTableAddColumnStmt:
 		catalogWrite = true

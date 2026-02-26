@@ -91,6 +91,97 @@ func TestWithTableLocksWriteBlocksRead(t *testing.T) {
 	assert.Equal(t, []string{"write", "read"}, order)
 }
 
+func TestConcurrentInsertAndScan(t *testing.T) {
+	s := NewMemoryStorage()
+	s.CreateTable(&storage.TableInfo{Name: "t", PrimaryKeyCol: -1})
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 200)
+
+	// Concurrent Inserts
+	for g := 0; g < 5; g++ {
+		wg.Add(1)
+		go func(goroutineID int) {
+			defer wg.Done()
+			for i := 0; i < 100; i++ {
+				err := s.Insert("t", storage.Row{int64(goroutineID*1000 + i), "hello"})
+				if err != nil {
+					errs <- err
+					return
+				}
+			}
+		}(g)
+	}
+
+	// Concurrent Scans
+	for g := 0; g < 5; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 100; i++ {
+				_, err := s.Scan("t")
+				if err != nil {
+					errs <- err
+					return
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
+
+	// Verify total row count
+	count, err := s.RowCount("t")
+	assert.NoError(t, err)
+	assert.Equal(t, 500, count)
+}
+
+func TestConcurrentForEachRowNoDeadlock(t *testing.T) {
+	s := NewMemoryStorage()
+	s.CreateTable(&storage.TableInfo{Name: "t", PrimaryKeyCol: -1})
+
+	// Insert some rows
+	for i := 0; i < 10; i++ {
+		err := s.Insert("t", storage.Row{int64(i), "val"})
+		assert.NoError(t, err)
+	}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 100)
+
+	// ForEachRow with callback that re-reads the same table (simulating subquery)
+	for g := 0; g < 10; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 50; i++ {
+				err := s.ForEachRow("t", false, func(key int64, row storage.Row) bool {
+					// Simulate subquery: scan the same table inside callback
+					_, scanErr := s.Scan("t")
+					if scanErr != nil {
+						return false
+					}
+					return true
+				})
+				if err != nil {
+					errs <- err
+					return
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
+}
+
 func TestWithTableLocksSortOrder(t *testing.T) {
 	s := NewMemoryStorage()
 	s.CreateTable(&storage.TableInfo{Name: "alpha", PrimaryKeyCol: -1})

@@ -220,6 +220,44 @@ func TestConcurrentDDLAndDML(t *testing.T) {
 	}
 }
 
+func TestConcurrentForEachRowSubqueryNoDeadlock(t *testing.T) {
+	e := NewExecutor()
+	_, err := e.ExecuteSQL("CREATE TABLE items (id INT PRIMARY KEY, val TEXT)")
+	require.NoError(t, err)
+	for i := 0; i < 10; i++ {
+		_, err = e.ExecuteSQL(fmt.Sprintf("INSERT INTO items VALUES (%d, 'v%d')", i, i))
+		require.NoError(t, err)
+	}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 100)
+
+	// Concurrent queries that use correlated subqueries reading the same table
+	for g := 0; g < 5; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 50; i++ {
+				result, err := e.ExecuteSQL("SELECT * FROM items WHERE id IN (SELECT id FROM items WHERE val = 'v1')")
+				if err != nil {
+					errs <- err
+					return
+				}
+				if len(result.Rows) != 1 {
+					errs <- fmt.Errorf("expected 1 row, got %d", len(result.Rows))
+					return
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
+}
+
 func TestConcurrentDeadlockPrevention(t *testing.T) {
 	e := NewExecutor()
 	_, err := e.ExecuteSQL("CREATE TABLE alpha (id INT, val TEXT)")

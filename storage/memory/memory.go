@@ -289,21 +289,34 @@ func NewMemoryStorage() *MemoryStorage {
 	}
 }
 
+// getTable looks up a table by name under s.mu.RLock.
+func (s *MemoryStorage) getTable(tableName string) (*table, bool) {
+	lower := strings.ToLower(tableName)
+	s.mu.RLock()
+	tbl, ok := s.tables[lower]
+	s.mu.RUnlock()
+	return tbl, ok
+}
+
 func (s *MemoryStorage) CreateTable(info *storage.TableInfo) {
+	s.mu.Lock()
 	s.tables[info.Name] = &table{
 		Info:      info,
 		tree:      btree.New[int64](32),
 		nextRowID: 1,
 		indexes:   make(map[string]*SecondaryIndex),
 	}
+	s.mu.Unlock()
 }
 
 func (s *MemoryStorage) Insert(tableName string, row storage.Row) error {
-	lower := strings.ToLower(tableName)
-	tbl, ok := s.tables[lower]
+	tbl, ok := s.getTable(tableName)
 	if !ok {
 		return fmt.Errorf("table %q does not exist in storage", tableName)
 	}
+
+	tbl.mu.Lock()
+	defer tbl.mu.Unlock()
 
 	// Check unique constraints before inserting
 	for _, idx := range tbl.indexes {
@@ -337,11 +350,13 @@ func (s *MemoryStorage) Insert(tableName string, row storage.Row) error {
 
 // DeleteByKeys deletes rows by their BTree keys.
 func (s *MemoryStorage) DeleteByKeys(tableName string, keys []int64) error {
-	lower := strings.ToLower(tableName)
-	tbl, ok := s.tables[lower]
+	tbl, ok := s.getTable(tableName)
 	if !ok {
 		return fmt.Errorf("table %q does not exist in storage", tableName)
 	}
+
+	tbl.mu.Lock()
+	defer tbl.mu.Unlock()
 
 	for _, key := range keys {
 		// Remove from indexes before deleting
@@ -361,11 +376,13 @@ func (s *MemoryStorage) DeleteByKeys(tableName string, keys []int64) error {
 
 // UpdateRow updates a single row by its BTree key.
 func (s *MemoryStorage) UpdateRow(tableName string, key int64, row storage.Row) error {
-	lower := strings.ToLower(tableName)
-	tbl, ok := s.tables[lower]
+	tbl, ok := s.getTable(tableName)
 	if !ok {
 		return fmt.Errorf("table %q does not exist in storage", tableName)
 	}
+
+	tbl.mu.Lock()
+	defer tbl.mu.Unlock()
 
 	// Remove old index entries
 	var oldRow storage.Row
@@ -402,9 +419,14 @@ func (s *MemoryStorage) UpdateRow(tableName string, key int64, row storage.Row) 
 	return nil
 }
 
+// TruncateTable clears all rows from a table.
+// tbl.mu must be held by the caller (via WithTableLocks) for table data access.
 func (s *MemoryStorage) TruncateTable(name string) {
 	lower := strings.ToLower(name)
-	if tbl, ok := s.tables[lower]; ok {
+	s.mu.RLock()
+	tbl, ok := s.tables[lower]
+	s.mu.RUnlock()
+	if ok {
 		tbl.tree = btree.New[int64](32)
 		tbl.nextRowID = 1
 		// Clear index entries but keep index structure
@@ -416,6 +438,7 @@ func (s *MemoryStorage) TruncateTable(name string) {
 
 func (s *MemoryStorage) DropTable(name string) {
 	lower := strings.ToLower(name)
+	s.mu.Lock()
 	if tbl, ok := s.tables[lower]; ok {
 		// Clean up index registry
 		for idxName := range tbl.indexes {
@@ -423,12 +446,16 @@ func (s *MemoryStorage) DropTable(name string) {
 		}
 		delete(s.tables, lower)
 	}
+	s.mu.Unlock()
 }
 
 // AddColumn appends a value to every row in the table.
+// tbl.mu must be held by the caller (via WithTableLocks) for table data access.
 func (s *MemoryStorage) AddColumn(tableName string, defaultVal storage.Value) error {
 	lower := strings.ToLower(tableName)
+	s.mu.RLock()
 	tbl, ok := s.tables[lower]
+	s.mu.RUnlock()
 	if !ok {
 		return fmt.Errorf("table %q does not exist in storage", tableName)
 	}
@@ -445,9 +472,12 @@ func (s *MemoryStorage) AddColumn(tableName string, defaultVal storage.Value) er
 }
 
 // DropColumn removes a column from every row and adjusts indexes.
+// tbl.mu must be held by the caller (via WithTableLocks) for table data access.
 func (s *MemoryStorage) DropColumn(tableName string, colIdx int) error {
 	lower := strings.ToLower(tableName)
+	s.mu.RLock()
 	tbl, ok := s.tables[lower]
+	s.mu.RUnlock()
 	if !ok {
 		return fmt.Errorf("table %q does not exist in storage", tableName)
 	}
@@ -470,10 +500,12 @@ func (s *MemoryStorage) DropColumn(tableName string, colIdx int) error {
 			toDelete = append(toDelete, name)
 		}
 	}
+	s.mu.Lock()
 	for _, name := range toDelete {
 		delete(tbl.indexes, name)
 		delete(s.indexTable, name)
 	}
+	s.mu.Unlock()
 
 	// Adjust ColumnIdxs for remaining indexes and track which need rebuild
 	var toRebuild []*SecondaryIndex
@@ -514,9 +546,12 @@ func (s *MemoryStorage) DropColumn(tableName string, colIdx int) error {
 }
 
 // CreateIndex creates a secondary index and builds it from existing data.
+// tbl.mu must be held by the caller (via WithTableLocks) for table data access.
 func (s *MemoryStorage) CreateIndex(info *storage.IndexInfo) error {
 	lower := strings.ToLower(info.TableName)
+	s.mu.RLock()
 	tbl, ok := s.tables[lower]
+	s.mu.RUnlock()
 	if !ok {
 		return fmt.Errorf("table %q does not exist in storage", info.TableName)
 	}
@@ -526,7 +561,7 @@ func (s *MemoryStorage) CreateIndex(info *storage.IndexInfo) error {
 		tree: btree.New[storage.KeyEncoding](32),
 	}
 
-	// Build index from existing data
+	// Build index from existing data (tbl.mu held by WithTableLocks)
 	var buildErr error
 	tbl.tree.ForEach(func(key int64, value any) bool {
 		row := value.(storage.Row)
@@ -544,30 +579,37 @@ func (s *MemoryStorage) CreateIndex(info *storage.IndexInfo) error {
 	}
 
 	tbl.indexes[strings.ToLower(info.Name)] = idx
+	s.mu.Lock()
 	s.indexTable[strings.ToLower(info.Name)] = lower
+	s.mu.Unlock()
 	return nil
 }
 
 // DropIndex removes a secondary index.
+// tbl.mu must be held by the caller (via WithTableLocks) for table data access.
 func (s *MemoryStorage) DropIndex(indexName string) error {
 	lowerIdx := strings.ToLower(indexName)
+	s.mu.Lock()
 	tableName, ok := s.indexTable[lowerIdx]
 	if !ok {
+		s.mu.Unlock()
 		return fmt.Errorf("index %q does not exist", indexName)
 	}
 	tbl := s.tables[tableName]
 	delete(tbl.indexes, lowerIdx)
 	delete(s.indexTable, lowerIdx)
+	s.mu.Unlock()
 	return nil
 }
 
 // LookupIndex finds a secondary index on the given table matching the given column indexes.
 func (s *MemoryStorage) LookupIndex(tableName string, columnIdxs []int) storage.IndexReader {
-	lower := strings.ToLower(tableName)
-	tbl, ok := s.tables[lower]
+	tbl, ok := s.getTable(tableName)
 	if !ok {
 		return nil
 	}
+	tbl.mu.RLock()
+	defer tbl.mu.RUnlock()
 	for _, idx := range tbl.indexes {
 		if len(idx.Info.ColumnIdxs) != len(columnIdxs) {
 			continue
@@ -588,11 +630,12 @@ func (s *MemoryStorage) LookupIndex(tableName string, columnIdxs []int) storage.
 
 // LookupSingleColumnIndex finds a single-column index for the given table and column index.
 func (s *MemoryStorage) LookupSingleColumnIndex(tableName string, colIdx int) storage.IndexReader {
-	lower := strings.ToLower(tableName)
-	tbl, ok := s.tables[lower]
+	tbl, ok := s.getTable(tableName)
 	if !ok {
 		return nil
 	}
+	tbl.mu.RLock()
+	defer tbl.mu.RUnlock()
 	for _, idx := range tbl.indexes {
 		if len(idx.Info.ColumnIdxs) == 1 && idx.Info.ColumnIdxs[0] == colIdx {
 			return idx
@@ -603,11 +646,12 @@ func (s *MemoryStorage) LookupSingleColumnIndex(tableName string, colIdx int) st
 
 // GetIndexes returns all secondary indexes for the given table.
 func (s *MemoryStorage) GetIndexes(tableName string) []storage.IndexReader {
-	lower := strings.ToLower(tableName)
-	tbl, ok := s.tables[lower]
+	tbl, ok := s.getTable(tableName)
 	if !ok {
 		return nil
 	}
+	tbl.mu.RLock()
+	defer tbl.mu.RUnlock()
 	var indexes []storage.IndexReader
 	for _, idx := range tbl.indexes {
 		indexes = append(indexes, idx)
@@ -618,23 +662,28 @@ func (s *MemoryStorage) GetIndexes(tableName string) []storage.IndexReader {
 // ResolveIndexTable returns the table name that owns the given index.
 func (s *MemoryStorage) ResolveIndexTable(indexName string) (string, bool) {
 	lowerIdx := strings.ToLower(indexName)
+	s.mu.RLock()
 	tableName, ok := s.indexTable[lowerIdx]
+	s.mu.RUnlock()
 	return tableName, ok
 }
 
 // HasIndex checks if an index with the given name exists.
 func (s *MemoryStorage) HasIndex(indexName string) bool {
+	s.mu.RLock()
 	_, ok := s.indexTable[strings.ToLower(indexName)]
+	s.mu.RUnlock()
 	return ok
 }
 
 // GetByKeys retrieves rows by their BTree keys.
 func (s *MemoryStorage) GetByKeys(tableName string, keys []int64) ([]storage.Row, error) {
-	lower := strings.ToLower(tableName)
-	tbl, ok := s.tables[lower]
+	tbl, ok := s.getTable(tableName)
 	if !ok {
 		return nil, fmt.Errorf("table %q does not exist in storage", tableName)
 	}
+	tbl.mu.RLock()
+	defer tbl.mu.RUnlock()
 	rows := make([]storage.Row, 0, len(keys))
 	for _, key := range keys {
 		val, found := tbl.tree.Get(key)
@@ -647,11 +696,12 @@ func (s *MemoryStorage) GetByKeys(tableName string, keys []int64) ([]storage.Row
 
 // GetKeyRowsByKeys retrieves rows with their BTree keys by their BTree keys.
 func (s *MemoryStorage) GetKeyRowsByKeys(tableName string, keys []int64) ([]storage.KeyRow, error) {
-	lower := strings.ToLower(tableName)
-	tbl, ok := s.tables[lower]
+	tbl, ok := s.getTable(tableName)
 	if !ok {
 		return nil, fmt.Errorf("table %q does not exist in storage", tableName)
 	}
+	tbl.mu.RLock()
+	defer tbl.mu.RUnlock()
 	rows := make([]storage.KeyRow, 0, len(keys))
 	for _, key := range keys {
 		val, found := tbl.tree.Get(key)
@@ -664,21 +714,23 @@ func (s *MemoryStorage) GetKeyRowsByKeys(tableName string, keys []int64) ([]stor
 
 // RowCount returns the number of rows in the table.
 func (s *MemoryStorage) RowCount(tableName string) (int, error) {
-	lower := strings.ToLower(tableName)
-	tbl, ok := s.tables[lower]
+	tbl, ok := s.getTable(tableName)
 	if !ok {
 		return 0, fmt.Errorf("table %q does not exist in storage", tableName)
 	}
+	tbl.mu.RLock()
+	defer tbl.mu.RUnlock()
 	return tbl.tree.Len(), nil
 }
 
 // Scan returns all rows in key order.
 func (s *MemoryStorage) Scan(tableName string) ([]storage.Row, error) {
-	lower := strings.ToLower(tableName)
-	tbl, ok := s.tables[lower]
+	tbl, ok := s.getTable(tableName)
 	if !ok {
 		return nil, fmt.Errorf("table %q does not exist in storage", tableName)
 	}
+	tbl.mu.RLock()
+	defer tbl.mu.RUnlock()
 	var rows []storage.Row
 	tbl.tree.ForEach(func(key int64, value any) bool {
 		rows = append(rows, value.(storage.Row))
@@ -690,11 +742,12 @@ func (s *MemoryStorage) Scan(tableName string) ([]storage.Row, error) {
 // ScanOrdered returns rows in PK order (ascending or descending).
 // limit > 0 enables early termination after limit rows.
 func (s *MemoryStorage) ScanOrdered(tableName string, reverse bool, limit int) ([]storage.Row, error) {
-	lower := strings.ToLower(tableName)
-	tbl, ok := s.tables[lower]
+	tbl, ok := s.getTable(tableName)
 	if !ok {
 		return nil, fmt.Errorf("table %q does not exist in storage", tableName)
 	}
+	tbl.mu.RLock()
+	defer tbl.mu.RUnlock()
 	cap := 64
 	if limit > 0 {
 		cap = limit
@@ -720,11 +773,12 @@ func (s *MemoryStorage) ScanOrdered(tableName string, reverse bool, limit int) (
 
 // ScanWithKeys returns all rows with their BTree keys in key order.
 func (s *MemoryStorage) ScanWithKeys(tableName string) ([]storage.KeyRow, error) {
-	lower := strings.ToLower(tableName)
-	tbl, ok := s.tables[lower]
+	tbl, ok := s.getTable(tableName)
 	if !ok {
 		return nil, fmt.Errorf("table %q does not exist in storage", tableName)
 	}
+	tbl.mu.RLock()
+	defer tbl.mu.RUnlock()
 	var rows []storage.KeyRow
 	tbl.tree.ForEach(func(key int64, value any) bool {
 		rows = append(rows, storage.KeyRow{Key: key, Row: value.(storage.Row)})
@@ -736,30 +790,52 @@ func (s *MemoryStorage) ScanWithKeys(tableName string) ([]storage.KeyRow, error)
 // ForEachRow iterates over all rows in key order, calling fn for each.
 // If reverse is true, iterates in reverse key order.
 // fn returning false stops the iteration.
+//
+// Rows are collected under tbl.mu.RLock, then the lock is released before
+// calling fn. This prevents deadlocks when fn contains subqueries that
+// re-read the same table (Go's RWMutex blocks new RLock when a writer waits).
 func (s *MemoryStorage) ForEachRow(tableName string, reverse bool, fn func(key int64, row storage.Row) bool) error {
-	lower := strings.ToLower(tableName)
-	tbl, ok := s.tables[lower]
+	tbl, ok := s.getTable(tableName)
 	if !ok {
 		return fmt.Errorf("table %q does not exist in storage", tableName)
 	}
+
+	// Collect all entries under lock
+	type entry struct {
+		key int64
+		row storage.Row
+	}
+	var entries []entry
+
+	tbl.mu.RLock()
 	iterFn := func(key int64, value any) bool {
-		return fn(key, value.(storage.Row))
+		entries = append(entries, entry{key: key, row: value.(storage.Row)})
+		return true
 	}
 	if reverse {
 		tbl.tree.ForEachReverse(iterFn)
 	} else {
 		tbl.tree.ForEach(iterFn)
 	}
+	tbl.mu.RUnlock()
+
+	// Call fn after releasing the lock
+	for _, e := range entries {
+		if !fn(e.key, e.row) {
+			break
+		}
+	}
 	return nil
 }
 
 // GetRow retrieves a single row by its BTree key.
 func (s *MemoryStorage) GetRow(tableName string, key int64) (storage.Row, bool) {
-	lower := strings.ToLower(tableName)
-	tbl, ok := s.tables[lower]
+	tbl, ok := s.getTable(tableName)
 	if !ok {
 		return nil, false
 	}
+	tbl.mu.RLock()
+	defer tbl.mu.RUnlock()
 	val, found := tbl.tree.Get(key)
 	if !found {
 		return nil, false

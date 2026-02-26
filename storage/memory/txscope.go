@@ -11,8 +11,11 @@ import (
 var _ storage.TableLocker = (*MemoryStorage)(nil)
 
 // WithTableLocks acquires table-level locks in alphabetical order, executes fn,
-// then releases locks in reverse order. catalogWrite controls whether the
-// storage-level mutex is acquired as a write lock (for DDL) or read lock (for DML).
+// then releases locks in reverse order.
+//
+// s.mu is held only briefly (RLock) for table lookup, then released before fn()
+// is called. This allows DDL storage methods inside fn() to acquire s.mu.Lock()
+// without deadlock. Table-level locks (tbl.mu) remain held for the duration of fn().
 func (s *MemoryStorage) WithTableLocks(locks []storage.TableLock, catalogWrite bool, fn func() error) error {
 	// Sort by table name for consistent ordering to prevent deadlocks
 	sorted := make([]storage.TableLock, len(locks))
@@ -21,12 +24,8 @@ func (s *MemoryStorage) WithTableLocks(locks []storage.TableLock, catalogWrite b
 		return sorted[i].TableName < sorted[j].TableName
 	})
 
-	// Acquire storage-level lock (protects tables map)
-	if catalogWrite {
-		s.mu.Lock()
-	} else {
-		s.mu.RLock()
-	}
+	// Acquire storage-level RLock briefly for table lookup
+	s.mu.RLock()
 
 	// Acquire table-level locks in sorted order
 	lockedTables := make([]*table, 0, len(sorted))
@@ -42,11 +41,7 @@ func (s *MemoryStorage) WithTableLocks(locks []storage.TableLock, catalogWrite b
 					lockedTables[i].mu.RUnlock()
 				}
 			}
-			if catalogWrite {
-				s.mu.Unlock()
-			} else {
-				s.mu.RUnlock()
-			}
+			s.mu.RUnlock()
 			return fn()
 		}
 		if lock.Mode == storage.TableLockWrite {
@@ -57,6 +52,9 @@ func (s *MemoryStorage) WithTableLocks(locks []storage.TableLock, catalogWrite b
 		lockedTables = append(lockedTables, tbl)
 		lockedModes = append(lockedModes, lock.Mode)
 	}
+
+	// Release s.mu before calling fn — DDL methods acquire s.mu.Lock() internally
+	s.mu.RUnlock()
 
 	// Execute the function
 	err := fn()
@@ -70,25 +68,12 @@ func (s *MemoryStorage) WithTableLocks(locks []storage.TableLock, catalogWrite b
 		}
 	}
 
-	// Release storage-level lock
-	if catalogWrite {
-		s.mu.Unlock()
-	} else {
-		s.mu.RUnlock()
-	}
-
 	return err
 }
 
 // WithCatalogLock acquires only the storage-level lock (no table locks).
-// Used for CreateTable where the table doesn't exist yet.
+// Used for operations where no table exists yet (e.g., CreateTable).
+// DDL storage methods handle s.mu.Lock() internally, so this is a no-op pass-through.
 func (s *MemoryStorage) WithCatalogLock(write bool, fn func() error) error {
-	if write {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-	} else {
-		s.mu.RLock()
-		defer s.mu.RUnlock()
-	}
 	return fn()
 }

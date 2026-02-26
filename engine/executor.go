@@ -6,6 +6,7 @@ import (
 	"github.com/walf443/oresql/ast"
 	"github.com/walf443/oresql/lexer"
 	"github.com/walf443/oresql/parser"
+	"github.com/walf443/oresql/storage/memory"
 )
 
 // Result holds the output of a query execution.
@@ -43,7 +44,7 @@ type Executor struct {
 func NewExecutor(opts ...Option) *Executor {
 	e := &Executor{
 		catalog: NewCatalog(),
-		storage: NewStorage(),
+		storage: memory.NewMemoryStorage(),
 	}
 	for _, opt := range opts {
 		opt(e)

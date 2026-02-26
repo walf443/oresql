@@ -7,46 +7,6 @@ import (
 	"github.com/walf443/oresql/ast"
 )
 
-// ColumnInfo describes a column in a table.
-type ColumnInfo struct {
-	Name       string
-	DataType   string // "INT" or "TEXT"
-	Index      int    // ordinal position in the row
-	NotNull    bool
-	PrimaryKey bool
-	HasDefault bool  // true if DEFAULT clause was specified
-	Default    Value // default value (nil means NULL default)
-}
-
-// TableInfo describes a table's schema.
-type TableInfo struct {
-	Name           string
-	Columns        []ColumnInfo
-	PrimaryKeyCol  int   // index of single INT PK column, -1 if no PK or composite PK
-	PrimaryKeyCols []int // all PK column indexes (nil if no PK)
-}
-
-// FindColumn returns the column info for the given name, or an error if not found.
-func (t *TableInfo) FindColumn(name string) (*ColumnInfo, error) {
-	lower := strings.ToLower(name)
-	for i := range t.Columns {
-		if strings.ToLower(t.Columns[i].Name) == lower {
-			return &t.Columns[i], nil
-		}
-	}
-	return nil, fmt.Errorf("column %q not found in table %q", name, t.Name)
-}
-
-// IndexInfo describes a secondary index on a table.
-type IndexInfo struct {
-	Name        string
-	TableName   string
-	ColumnNames []string
-	ColumnIdxs  []int
-	Type        string // "BTREE" or "HASH"
-	Unique      bool
-}
-
 // Catalog holds all table schemas.
 type Catalog struct {
 	tables map[string]*TableInfo // key: lowercase table name

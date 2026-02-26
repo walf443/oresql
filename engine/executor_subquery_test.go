@@ -422,3 +422,207 @@ func TestExistsSubquery(t *testing.T) {
 		})
 	}
 }
+
+func TestCorrelatedExists(t *testing.T) {
+	e := NewExecutor()
+
+	setup := []string{
+		"CREATE TABLE users (id INT, name TEXT)",
+		"INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Charlie')",
+		"CREATE TABLE orders (id INT, user_id INT, status TEXT)",
+		"INSERT INTO orders VALUES (1, 1, 'active'), (2, 1, 'completed'), (3, 2, 'active')",
+	}
+	for _, sql := range setup {
+		_, err := e.ExecuteSQL(sql)
+		require.NoError(t, err, "setup failed: %s", sql)
+	}
+
+	tests := []struct {
+		name     string
+		sql      string
+		wantRows int
+		wantCols []string
+		wantData [][]interface{}
+	}{
+		{
+			name:     "correlated EXISTS",
+			sql:      "SELECT * FROM users u WHERE EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id)",
+			wantRows: 2,
+			wantCols: []string{"id", "name"},
+			wantData: [][]interface{}{{int64(1), "Alice"}, {int64(2), "Bob"}},
+		},
+		{
+			name:     "correlated NOT EXISTS",
+			sql:      "SELECT * FROM users u WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id)",
+			wantRows: 1,
+			wantCols: []string{"id", "name"},
+			wantData: [][]interface{}{{int64(3), "Charlie"}},
+		},
+		{
+			name:     "correlated EXISTS with additional filter",
+			sql:      "SELECT * FROM users u WHERE EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id AND o.status = 'active')",
+			wantRows: 2,
+			wantCols: []string{"id", "name"},
+			wantData: [][]interface{}{{int64(1), "Alice"}, {int64(2), "Bob"}},
+		},
+		{
+			name:     "correlated EXISTS with completed status only",
+			sql:      "SELECT * FROM users u WHERE EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id AND o.status = 'completed')",
+			wantRows: 1,
+			wantCols: []string{"id", "name"},
+			wantData: [][]interface{}{{int64(1), "Alice"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := e.ExecuteSQL(tt.sql)
+			require.NoError(t, err, "ExecuteSQL(%q)", tt.sql)
+			assert.Len(t, result.Rows, tt.wantRows, "row count")
+			if tt.wantCols != nil {
+				require.Len(t, result.Columns, len(tt.wantCols), "column count")
+				for i, col := range tt.wantCols {
+					assert.Equal(t, col, result.Columns[i], "column[%d]", i)
+				}
+			}
+			if tt.wantData != nil {
+				for i, wantRow := range tt.wantData {
+					if i >= len(result.Rows) {
+						break
+					}
+					for j, wantVal := range wantRow {
+						if j < len(result.Rows[i]) {
+							assert.Equal(t, wantVal, result.Rows[i][j], "row[%d][%d]", i, j)
+						}
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestCorrelatedScalar(t *testing.T) {
+	e := NewExecutor()
+
+	setup := []string{
+		"CREATE TABLE users (id INT, name TEXT)",
+		"INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Charlie')",
+		"CREATE TABLE orders (id INT, user_id INT, amount INT)",
+		"INSERT INTO orders VALUES (1, 1, 100), (2, 1, 200), (3, 2, 150)",
+	}
+	for _, sql := range setup {
+		_, err := e.ExecuteSQL(sql)
+		require.NoError(t, err, "setup failed: %s", sql)
+	}
+
+	tests := []struct {
+		name     string
+		sql      string
+		wantRows int
+		wantCols []string
+		wantData [][]interface{}
+	}{
+		{
+			name:     "correlated scalar COUNT",
+			sql:      "SELECT u.name, (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id) AS order_count FROM users u",
+			wantRows: 3,
+			wantCols: []string{"name", "order_count"},
+			wantData: [][]interface{}{{"Alice", int64(2)}, {"Bob", int64(1)}, {"Charlie", int64(0)}},
+		},
+		{
+			name:     "correlated scalar SUM",
+			sql:      "SELECT u.name, (SELECT SUM(amount) FROM orders o WHERE o.user_id = u.id) AS total FROM users u",
+			wantRows: 3,
+			wantCols: []string{"name", "total"},
+			wantData: [][]interface{}{{"Alice", int64(300)}, {"Bob", int64(150)}, {"Charlie", nil}},
+		},
+		{
+			name:     "correlated scalar MAX",
+			sql:      "SELECT u.name, (SELECT MAX(amount) FROM orders o WHERE o.user_id = u.id) AS max_amount FROM users u",
+			wantRows: 3,
+			wantCols: []string{"name", "max_amount"},
+			wantData: [][]interface{}{{"Alice", int64(200)}, {"Bob", int64(150)}, {"Charlie", nil}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := e.ExecuteSQL(tt.sql)
+			require.NoError(t, err, "ExecuteSQL(%q)", tt.sql)
+			assert.Len(t, result.Rows, tt.wantRows, "row count")
+			if tt.wantCols != nil {
+				require.Len(t, result.Columns, len(tt.wantCols), "column count")
+				for i, col := range tt.wantCols {
+					assert.Equal(t, col, result.Columns[i], "column[%d]", i)
+				}
+			}
+			if tt.wantData != nil {
+				for i, wantRow := range tt.wantData {
+					if i >= len(result.Rows) {
+						break
+					}
+					for j, wantVal := range wantRow {
+						if j < len(result.Rows[i]) {
+							assert.Equal(t, wantVal, result.Rows[i][j], "row[%d][%d]", i, j)
+						}
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestCorrelatedComparison(t *testing.T) {
+	e := NewExecutor()
+
+	setup := []string{
+		"CREATE TABLE employees (id INT, name TEXT, dept TEXT, salary INT)",
+		"INSERT INTO employees VALUES (1, 'Alice', 'eng', 100), (2, 'Bob', 'eng', 120), (3, 'Charlie', 'sales', 90), (4, 'Diana', 'sales', 110)",
+	}
+	for _, sql := range setup {
+		_, err := e.ExecuteSQL(sql)
+		require.NoError(t, err, "setup failed: %s", sql)
+	}
+
+	tests := []struct {
+		name     string
+		sql      string
+		wantRows int
+		wantCols []string
+		wantData [][]interface{}
+	}{
+		{
+			name:     "correlated comparison with AVG",
+			sql:      "SELECT * FROM employees e1 WHERE e1.salary > (SELECT AVG(salary) FROM employees e2 WHERE e2.dept = e1.dept)",
+			wantRows: 2,
+			wantCols: []string{"id", "name", "dept", "salary"},
+			wantData: [][]interface{}{{int64(2), "Bob", "eng", int64(120)}, {int64(4), "Diana", "sales", int64(110)}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := e.ExecuteSQL(tt.sql)
+			require.NoError(t, err, "ExecuteSQL(%q)", tt.sql)
+			assert.Len(t, result.Rows, tt.wantRows, "row count")
+			if tt.wantCols != nil {
+				require.Len(t, result.Columns, len(tt.wantCols), "column count")
+				for i, col := range tt.wantCols {
+					assert.Equal(t, col, result.Columns[i], "column[%d]", i)
+				}
+			}
+			if tt.wantData != nil {
+				for i, wantRow := range tt.wantData {
+					if i >= len(result.Rows) {
+						break
+					}
+					for j, wantVal := range wantRow {
+						if j < len(result.Rows[i]) {
+							assert.Equal(t, wantVal, result.Rows[i][j], "row[%d][%d]", i, j)
+						}
+					}
+				}
+			}
+		})
+	}
+}

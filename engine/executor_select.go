@@ -629,9 +629,109 @@ func extractTableInfo(eval ExprEvaluator) *TableInfo {
 		return te.info
 	case *joinEvaluator:
 		return te.jc.MergedInfo
+	case *correlatedEvaluator:
+		return extractTableInfo(te.inner)
 	default:
 		return &TableInfo{Name: "unknown"}
 	}
+}
+
+// executeSelectMaybeCorrelated checks whether a subquery references the outer query
+// and dispatches to either the regular executeSelect (non-correlated) or
+// executeSelectCorrelated (correlated).
+func (e *Executor) executeSelectMaybeCorrelated(stmt *ast.SelectStmt, outerEval ExprEvaluator, outerRow Row) (*Result, error) {
+	if hasOuterReferences(stmt, outerEval) {
+		return e.executeSelectCorrelated(stmt, outerEval, outerRow)
+	}
+	return e.executeSelect(stmt)
+}
+
+// executeSelectCorrelated executes a correlated subquery for a given outer row.
+// It scans the inner table without applying WHERE, then uses a correlatedEvaluator
+// that can resolve both inner and outer column references to evaluate the full pipeline.
+func (e *Executor) executeSelectCorrelated(stmt *ast.SelectStmt, outerEval ExprEvaluator, outerRow Row) (*Result, error) {
+	// Phase 1: Source rows + inner evaluator (without WHERE)
+	info, err := e.catalog.GetTable(stmt.TableName)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := e.storage.Scan(stmt.TableName)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create inner evaluator that handles alias
+	var innerEval ExprEvaluator
+	if stmt.TableAlias != "" {
+		tables := []struct {
+			info  *TableInfo
+			alias string
+		}{{info: info, alias: stmt.TableAlias}}
+		jc := newJoinContext(tables)
+		innerEval = newJoinEvaluator(e, jc)
+	} else {
+		innerEval = newTableEvaluator(e, info)
+	}
+
+	// Create correlated evaluator
+	numInner := len(innerEval.ColumnList())
+	corrEval := newCorrelatedEvaluator(e, innerEval, outerEval, outerRow, numInner)
+
+	colTypes := resolveColumnTypes(stmt.Columns, corrEval)
+
+	// Phase 2: WHERE filter
+	rows, err = filterWhere(rows, stmt.Where, corrEval, rowIdentity)
+	if err != nil {
+		return nil, err
+	}
+
+	// Phase 3: GROUP BY / Aggregate + HAVING
+	var colNames []string
+	var colExprs []ast.Expr
+	var isStar bool
+	var projected bool
+
+	if len(stmt.GroupBy) > 0 || hasAggregate(stmt.Columns) {
+		rows, colNames, _, err = e.applyGroupBy(stmt, rows, corrEval)
+		if err != nil {
+			return nil, err
+		}
+		projected = true
+	} else {
+		colNames, colExprs, isStar, err = resolveSelectColumns(stmt.Columns, corrEval)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Phase 4: ORDER BY
+	if !projected {
+		rows, err = sortRows(rows, stmt.OrderBy, corrEval, rowIdentity)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// Phase 5: Projection
+	if !projected {
+		rows, err = projectRows(rows, colExprs, isStar, corrEval)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Phase 6: DISTINCT
+	if stmt.Distinct {
+		rows = dedup(rows)
+	}
+
+	// Phase 7: OFFSET
+	rows = applyOffset(rows, stmt.Offset)
+
+	// Phase 8: LIMIT
+	rows = applyLimit(rows, stmt.Limit)
+
+	return &Result{Columns: colNames, ColumnTypes: colTypes, Rows: rows}, nil
 }
 
 // resolveGroupByColumnNames resolves column names for GROUP BY result.

@@ -291,7 +291,7 @@ func evalExprGeneric(expr ast.Expr, row Row, eval ExprEvaluator) (Value, error) 
 			if exec == nil {
 				return nil, fmt.Errorf("IN subquery not supported in this context")
 			}
-			result, err := exec.executeSelect(e.Subquery)
+			result, err := exec.executeSelectMaybeCorrelated(e.Subquery, eval, row)
 			if err != nil {
 				return nil, err
 			}
@@ -478,7 +478,7 @@ func evalExprGeneric(expr ast.Expr, row Row, eval ExprEvaluator) (Value, error) 
 		if exec == nil {
 			return nil, fmt.Errorf("scalar subquery not supported in this context")
 		}
-		result, err := exec.executeSelect(e.Subquery)
+		result, err := exec.executeSelectMaybeCorrelated(e.Subquery, eval, row)
 		if err != nil {
 			return nil, err
 		}
@@ -494,7 +494,7 @@ func evalExprGeneric(expr ast.Expr, row Row, eval ExprEvaluator) (Value, error) 
 		if exec == nil {
 			return nil, fmt.Errorf("EXISTS subquery not supported in this context")
 		}
-		result, err := exec.executeSelect(e.Subquery)
+		result, err := exec.executeSelectMaybeCorrelated(e.Subquery, eval, row)
 		if err != nil {
 			return nil, err
 		}
@@ -512,6 +512,144 @@ func evalExprGeneric(expr ast.Expr, row Row, eval ExprEvaluator) (Value, error) 
 	default:
 		return nil, fmt.Errorf("cannot evaluate expression: %T", expr)
 	}
+}
+
+// correlatedEvaluator evaluates expressions in a correlated subquery context.
+// It wraps an inner evaluator (for the subquery's own table) and an outer evaluator
+// (for the outer query). Column resolution tries inner first, then falls back to outer
+// with an index offset. Eval builds a merged row [innerRow | outerRow].
+type correlatedEvaluator struct {
+	exec     *Executor
+	inner    ExprEvaluator
+	outer    ExprEvaluator
+	outerRow Row
+	numInner int // number of inner columns (offset for outer columns)
+}
+
+func newCorrelatedEvaluator(exec *Executor, inner, outer ExprEvaluator, outerRow Row, numInner int) *correlatedEvaluator {
+	return &correlatedEvaluator{exec: exec, inner: inner, outer: outer, outerRow: outerRow, numInner: numInner}
+}
+
+func (ce *correlatedEvaluator) GetExecutor() *Executor { return ce.exec }
+
+func (ce *correlatedEvaluator) Eval(expr ast.Expr, row Row) (Value, error) {
+	mergedRow := make(Row, len(row)+len(ce.outerRow))
+	copy(mergedRow, row)
+	copy(mergedRow[len(row):], ce.outerRow)
+	return evalExprGeneric(expr, mergedRow, ce)
+}
+
+func (ce *correlatedEvaluator) ResolveColumn(tableName, colName string) (*ColumnInfo, error) {
+	col, err := ce.inner.ResolveColumn(tableName, colName)
+	if err == nil {
+		return col, nil
+	}
+	// Fallback to outer evaluator with offset
+	col, outerErr := ce.outer.ResolveColumn(tableName, colName)
+	if outerErr != nil {
+		return nil, err // return original inner error
+	}
+	return &ColumnInfo{
+		Name:     col.Name,
+		DataType: col.DataType,
+		Index:    col.Index + ce.numInner,
+	}, nil
+}
+
+func (ce *correlatedEvaluator) ColumnList() []ColumnInfo {
+	return ce.inner.ColumnList()
+}
+
+// hasOuterReferences checks whether a subquery's AST references columns from the outer evaluator.
+// It collects inner table names and walks the AST to find IdentExpr with Table qualifiers
+// that are not inner tables but can be resolved by the outer evaluator.
+func hasOuterReferences(stmt *ast.SelectStmt, outerEval ExprEvaluator) bool {
+	// Collect inner table names/aliases
+	innerTables := make(map[string]bool)
+	if stmt.TableName != "" {
+		innerTables[strings.ToLower(stmt.TableName)] = true
+	}
+	if stmt.TableAlias != "" {
+		innerTables[strings.ToLower(stmt.TableAlias)] = true
+	}
+	for _, j := range stmt.Joins {
+		if j.TableName != "" {
+			innerTables[strings.ToLower(j.TableName)] = true
+		}
+		if j.TableAlias != "" {
+			innerTables[strings.ToLower(j.TableAlias)] = true
+		}
+	}
+
+	// Walk AST to find outer references
+	var found bool
+	var walk func(expr ast.Expr)
+	walk = func(expr ast.Expr) {
+		if expr == nil || found {
+			return
+		}
+		switch e := expr.(type) {
+		case *ast.IdentExpr:
+			if e.Table != "" && !innerTables[strings.ToLower(e.Table)] {
+				// Table qualifier not in inner tables — check if outer can resolve
+				if _, err := outerEval.ResolveColumn(e.Table, e.Name); err == nil {
+					found = true
+				}
+			}
+		case *ast.BinaryExpr:
+			walk(e.Left)
+			walk(e.Right)
+		case *ast.LogicalExpr:
+			walk(e.Left)
+			walk(e.Right)
+		case *ast.NotExpr:
+			walk(e.Expr)
+		case *ast.IsNullExpr:
+			walk(e.Expr)
+		case *ast.InExpr:
+			walk(e.Left)
+			for _, v := range e.Values {
+				walk(v)
+			}
+		case *ast.BetweenExpr:
+			walk(e.Left)
+			walk(e.Low)
+			walk(e.High)
+		case *ast.LikeExpr:
+			walk(e.Left)
+			walk(e.Pattern)
+		case *ast.ArithmeticExpr:
+			walk(e.Left)
+			walk(e.Right)
+		case *ast.AliasExpr:
+			walk(e.Expr)
+		case *ast.CallExpr:
+			for _, arg := range e.Args {
+				walk(arg)
+			}
+		case *ast.CaseExpr:
+			walk(e.Operand)
+			for _, w := range e.Whens {
+				walk(w.When)
+				walk(w.Then)
+			}
+			walk(e.Else)
+		case *ast.CastExpr:
+			walk(e.Expr)
+		case *ast.ExistsExpr:
+			// Don't recurse into nested subqueries
+		case *ast.ScalarExpr:
+			// Don't recurse into nested subqueries
+		}
+	}
+
+	// Walk WHERE, Columns, Having
+	walk(stmt.Where)
+	for _, col := range stmt.Columns {
+		walk(col)
+	}
+	walk(stmt.Having)
+	return found
 }
 
 // evalScalarFuncGeneric evaluates a scalar function call using the generic evaluator.

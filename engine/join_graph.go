@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/walf443/oresql/ast"
@@ -150,6 +151,13 @@ func classifyWhereConditionsN(
 	}
 
 	for _, cond := range conds {
+		// Conditions containing subqueries must go to crossWhere because
+		// the local WHERE path (evalExpr) cannot handle subquery expressions.
+		if containsSubquery(cond) {
+			crossWhere = append(crossWhere, cond)
+			continue
+		}
+
 		refs := collectTableRefs(cond)
 		unqualified := collectUnqualifiedIdents(cond)
 
@@ -1095,24 +1103,27 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 		joinedSet[nextName] = true
 	}
 
-	// Step 3: Apply CrossWhere conditions
+	// Step 3: Apply CrossWhere conditions (use modern evaluator for subquery support)
+	jc := buildJoinContextFromGraph(graph)
 	if len(graph.CrossWhere) > 0 {
-		jc := buildJoinContextFromGraph(graph)
 		crossFilter := combineExprsAND(graph.CrossWhere)
+		eval := newJoinEvaluator(e, jc)
 		var filtered []Row
 		for _, row := range currentRows {
-			match, mErr := evalWhereJoin(crossFilter, row, jc)
+			val, mErr := eval.Eval(crossFilter, row)
 			if mErr != nil {
 				return nil, nil, mErr
 			}
-			if match {
+			b, ok := val.(bool)
+			if !ok {
+				return nil, nil, fmt.Errorf("WHERE expression must evaluate to boolean, got %T", val)
+			}
+			if b {
 				filtered = append(filtered, row)
 			}
 		}
 		currentRows = filtered
 	}
-
-	jc := buildJoinContextFromGraph(graph)
 	return currentRows, jc, nil
 }
 

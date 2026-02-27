@@ -917,21 +917,61 @@ func (t *DiskBTree) ForEach(fn func(key int64, row storage.Row) bool) {
 	}
 }
 
-// ForEachReverse iterates over all entries in reverse key order.
-func (t *DiskBTree) ForEachReverse(fn func(key int64, row storage.Row) bool) {
-	// Collect all entries (simple approach for disk-based tree)
-	type kv struct {
-		key int64
-		row storage.Row
+// collectLeafPageIDs traverses from root to the leftmost leaf, then follows
+// the leaf chain collecting only PageIDs (no entry decoding).
+func (t *DiskBTree) collectLeafPageIDs() []pager.PageID {
+	// Find leftmost leaf
+	pageID := t.rootPageID
+	for {
+		data, err := t.pool.FetchPage(pageID)
+		if err != nil {
+			return nil
+		}
+		if isLeafPage(data) {
+			t.pool.UnpinPage(pageID, false)
+			break
+		}
+		ip := decodeInternalPage(data)
+		t.pool.UnpinPage(pageID, false)
+		pageID = ip.children[0]
 	}
-	var all []kv
-	t.ForEach(func(key int64, row storage.Row) bool {
-		all = append(all, kv{key, row})
-		return true
-	})
-	for i := len(all) - 1; i >= 0; i-- {
-		if !fn(all[i].key, all[i].row) {
+
+	// Follow leaf chain collecting only PageIDs
+	var ids []pager.PageID
+	for pageID != pager.InvalidPageID {
+		ids = append(ids, pageID)
+		data, err := t.pool.FetchPage(pageID)
+		if err != nil {
+			return ids
+		}
+		nextLeaf := pager.PageID(binary.BigEndian.Uint32(data[3:7]))
+		t.pool.UnpinPage(pageID, false)
+		pageID = nextLeaf
+	}
+	return ids
+}
+
+// ForEachReverse iterates over all entries in reverse key order.
+// It collects leaf PageIDs in a forward pass, then traverses them in reverse,
+// decoding entries only as needed. This allows early termination (LIMIT)
+// without scanning all rows.
+func (t *DiskBTree) ForEachReverse(fn func(key int64, row storage.Row) bool) {
+	ids := t.collectLeafPageIDs()
+	for i := len(ids) - 1; i >= 0; i-- {
+		data, err := t.pool.FetchPage(ids[i])
+		if err != nil {
 			return
+		}
+		lp := decodeLeafPage(data)
+		t.pool.UnpinPage(ids[i], false)
+		for j := len(lp.entries) - 1; j >= 0; j-- {
+			row, err := storage.DecodeRow(lp.entries[j].val)
+			if err != nil {
+				return
+			}
+			if !fn(lp.entries[j].key, row) {
+				return
+			}
 		}
 	}
 }

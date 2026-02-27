@@ -162,6 +162,32 @@ func TestForEachReverse(t *testing.T) {
 	}
 }
 
+func TestForEachReverseEarlyTermination(t *testing.T) {
+	bt := newTestBTree(t)
+
+	for i := int64(1); i <= 100; i++ {
+		bt.Insert(i, storage.Row{i})
+	}
+
+	count := 0
+	bt.ForEachReverse(func(key int64, row storage.Row) bool {
+		count++
+		return count < 5
+	})
+	assert.Equal(t, 5, count)
+}
+
+func TestForEachReverseEmpty(t *testing.T) {
+	bt := newTestBTree(t)
+
+	count := 0
+	bt.ForEachReverse(func(key int64, row storage.Row) bool {
+		count++
+		return true
+	})
+	assert.Equal(t, 0, count)
+}
+
 func TestForEachRange(t *testing.T) {
 	bt := newTestBTree(t)
 

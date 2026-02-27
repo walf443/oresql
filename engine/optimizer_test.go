@@ -8,66 +8,67 @@ import (
 	"github.com/walf443/oresql/parser"
 )
 
+// parseExprSQL parses a SQL expression string by wrapping it in a SELECT WHERE clause.
+// Returns the parsed Expr, or nil if inputSQL is empty.
+func parseExprSQL(t *testing.T, inputSQL string) ast.Expr {
+	t.Helper()
+	if inputSQL == "" {
+		return nil
+	}
+	l := lexer.New("SELECT * FROM _t WHERE " + inputSQL)
+	p := parser.New(l)
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("failed to parse expression %q: %v", inputSQL, err)
+	}
+	sel, ok := stmt.(*ast.SelectStmt)
+	if !ok {
+		t.Fatalf("expected SelectStmt, got %T", stmt)
+	}
+	return sel.Where
+}
+
 func TestOptimizeExpr(t *testing.T) {
 	tests := []struct {
-		name    string
-		input   ast.Expr
-		wantSQL string // expected SQL from ast.FormatSQL (empty string means nil result)
+		name     string
+		inputSQL string // SQL expression (empty means nil input)
+		wantSQL  string // expected SQL from ast.FormatSQL (empty means nil result)
 	}{
-		{name: "1 = 1 -> TRUE", input: &ast.BinaryExpr{Left: &ast.IntLitExpr{Value: 1}, Op: "=", Right: &ast.IntLitExpr{Value: 1}}, wantSQL: "TRUE"},
-		{name: "1 = 0 -> FALSE", input: &ast.BinaryExpr{Left: &ast.IntLitExpr{Value: 1}, Op: "=", Right: &ast.IntLitExpr{Value: 0}}, wantSQL: "FALSE"},
-		{name: "5 > 3 -> TRUE", input: &ast.BinaryExpr{Left: &ast.IntLitExpr{Value: 5}, Op: ">", Right: &ast.IntLitExpr{Value: 3}}, wantSQL: "TRUE"},
-		{name: "'a' = 'b' -> FALSE", input: &ast.BinaryExpr{Left: &ast.StringLitExpr{Value: "a"}, Op: "=", Right: &ast.StringLitExpr{Value: "b"}}, wantSQL: "FALSE"},
-		{name: "1 + 2 -> 3", input: &ast.ArithmeticExpr{Left: &ast.IntLitExpr{Value: 1}, Op: "+", Right: &ast.IntLitExpr{Value: 2}}, wantSQL: "3"},
-		{name: "false AND col -> FALSE", input: &ast.LogicalExpr{Left: &ast.BoolLitExpr{Value: false}, Op: "AND", Right: &ast.IdentExpr{Name: "col"}}, wantSQL: "FALSE"},
-		{name: "true AND col -> col", input: &ast.LogicalExpr{Left: &ast.BoolLitExpr{Value: true}, Op: "AND", Right: &ast.IdentExpr{Name: "col"}}, wantSQL: "col"},
-		{name: "true OR col -> TRUE", input: &ast.LogicalExpr{Left: &ast.BoolLitExpr{Value: true}, Op: "OR", Right: &ast.IdentExpr{Name: "col"}}, wantSQL: "TRUE"},
-		{name: "false OR col -> col", input: &ast.LogicalExpr{Left: &ast.BoolLitExpr{Value: false}, Op: "OR", Right: &ast.IdentExpr{Name: "col"}}, wantSQL: "col"},
-		{name: "NOT true -> FALSE", input: &ast.NotExpr{Expr: &ast.BoolLitExpr{Value: true}}, wantSQL: "FALSE"},
-		{name: "NOT false -> TRUE", input: &ast.NotExpr{Expr: &ast.BoolLitExpr{Value: false}}, wantSQL: "TRUE"},
-		{name: "NULL IS NULL -> TRUE", input: &ast.IsNullExpr{Expr: &ast.NullLitExpr{}, Not: false}, wantSQL: "TRUE"},
-		{name: "1 IS NULL -> FALSE", input: &ast.IsNullExpr{Expr: &ast.IntLitExpr{Value: 1}, Not: false}, wantSQL: "FALSE"},
-		{name: "1 IN (1,2,3) -> TRUE", input: &ast.InExpr{Left: &ast.IntLitExpr{Value: 1}, Values: []ast.Expr{&ast.IntLitExpr{Value: 1}, &ast.IntLitExpr{Value: 2}, &ast.IntLitExpr{Value: 3}}}, wantSQL: "TRUE"},
-		{name: "5 NOT IN (1,2,3) -> TRUE", input: &ast.InExpr{Left: &ast.IntLitExpr{Value: 5}, Not: true, Values: []ast.Expr{&ast.IntLitExpr{Value: 1}, &ast.IntLitExpr{Value: 2}, &ast.IntLitExpr{Value: 3}}}, wantSQL: "TRUE"},
-		{name: "5 BETWEEN 1 AND 10 -> TRUE", input: &ast.BetweenExpr{Left: &ast.IntLitExpr{Value: 5}, Low: &ast.IntLitExpr{Value: 1}, High: &ast.IntLitExpr{Value: 10}}, wantSQL: "TRUE"},
-		{name: "15 BETWEEN 1 AND 10 -> FALSE", input: &ast.BetweenExpr{Left: &ast.IntLitExpr{Value: 15}, Low: &ast.IntLitExpr{Value: 1}, High: &ast.IntLitExpr{Value: 10}}, wantSQL: "FALSE"},
-		{name: "nil -> nil", input: nil, wantSQL: ""},
-		{name: "column reference unchanged", input: &ast.IdentExpr{Name: "col"}, wantSQL: "col"},
-		{name: "col AND true -> col", input: &ast.LogicalExpr{Left: &ast.IdentExpr{Name: "col"}, Op: "AND", Right: &ast.BoolLitExpr{Value: true}}, wantSQL: "col"},
-		{name: "col OR false -> col", input: &ast.LogicalExpr{Left: &ast.IdentExpr{Name: "col"}, Op: "OR", Right: &ast.BoolLitExpr{Value: false}}, wantSQL: "col"},
-		{
-			name: "nested: 1 = 1 AND col > 5 -> (col > 5)",
-			input: &ast.LogicalExpr{
-				Left:  &ast.BinaryExpr{Left: &ast.IntLitExpr{Value: 1}, Op: "=", Right: &ast.IntLitExpr{Value: 1}},
-				Op:    "AND",
-				Right: &ast.BinaryExpr{Left: &ast.IdentExpr{Name: "col"}, Op: ">", Right: &ast.IntLitExpr{Value: 5}},
-			},
-			wantSQL: "(col > 5)",
-		},
-		{
-			name: "nested: 1 = 0 AND col > 5 -> FALSE",
-			input: &ast.LogicalExpr{
-				Left:  &ast.BinaryExpr{Left: &ast.IntLitExpr{Value: 1}, Op: "=", Right: &ast.IntLitExpr{Value: 0}},
-				Op:    "AND",
-				Right: &ast.BinaryExpr{Left: &ast.IdentExpr{Name: "col"}, Op: ">", Right: &ast.IntLitExpr{Value: 5}},
-			},
-			wantSQL: "FALSE",
-		},
+		{name: "1 = 1 -> TRUE", inputSQL: "1 = 1", wantSQL: "TRUE"},
+		{name: "1 = 0 -> FALSE", inputSQL: "1 = 0", wantSQL: "FALSE"},
+		{name: "5 > 3 -> TRUE", inputSQL: "5 > 3", wantSQL: "TRUE"},
+		{name: "'a' = 'b' -> FALSE", inputSQL: "'a' = 'b'", wantSQL: "FALSE"},
+		{name: "1 + 2 -> 3", inputSQL: "1 + 2", wantSQL: "3"},
+		{name: "(1=0) AND col -> FALSE", inputSQL: "(1=0) AND col", wantSQL: "FALSE"},
+		{name: "(1=1) AND col -> col", inputSQL: "(1=1) AND col", wantSQL: "col"},
+		{name: "(1=1) OR col -> TRUE", inputSQL: "(1=1) OR col", wantSQL: "TRUE"},
+		{name: "(1=0) OR col -> col", inputSQL: "(1=0) OR col", wantSQL: "col"},
+		{name: "NOT (1=1) -> FALSE", inputSQL: "NOT (1=1)", wantSQL: "FALSE"},
+		{name: "NOT (1=0) -> TRUE", inputSQL: "NOT (1=0)", wantSQL: "TRUE"},
+		{name: "NULL IS NULL -> TRUE", inputSQL: "NULL IS NULL", wantSQL: "TRUE"},
+		{name: "1 IS NULL -> FALSE", inputSQL: "1 IS NULL", wantSQL: "FALSE"},
+		{name: "1 IN (1,2,3) -> TRUE", inputSQL: "1 IN (1, 2, 3)", wantSQL: "TRUE"},
+		{name: "5 NOT IN (1,2,3) -> TRUE", inputSQL: "5 NOT IN (1, 2, 3)", wantSQL: "TRUE"},
+		{name: "5 BETWEEN 1 AND 10 -> TRUE", inputSQL: "5 BETWEEN 1 AND 10", wantSQL: "TRUE"},
+		{name: "15 BETWEEN 1 AND 10 -> FALSE", inputSQL: "15 BETWEEN 1 AND 10", wantSQL: "FALSE"},
+		{name: "nil -> nil", inputSQL: "", wantSQL: ""},
+		{name: "column reference unchanged", inputSQL: "col", wantSQL: "col"},
+		{name: "col AND (1=1) -> col", inputSQL: "col AND (1=1)", wantSQL: "col"},
+		{name: "col OR (1=0) -> col", inputSQL: "col OR (1=0)", wantSQL: "col"},
+		{name: "1 = 1 AND col > 5 -> (col > 5)", inputSQL: "1 = 1 AND col > 5", wantSQL: "(col > 5)"},
+		{name: "1 = 0 AND col > 5 -> FALSE", inputSQL: "1 = 0 AND col > 5", wantSQL: "FALSE"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := optimizeExpr(tt.input)
-			got := ast.FormatSQL(result)
+			input := parseExprSQL(t, tt.inputSQL)
+			got := ast.FormatSQL(optimizeExpr(input))
 			if got != tt.wantSQL {
-				t.Fatalf("optimizeExpr() = %q, want %q", got, tt.wantSQL)
+				t.Fatalf("optimizeExpr(%q) = %q, want %q", tt.inputSQL, got, tt.wantSQL)
 			}
 		})
 	}
 }
-
-func boolPtr(b bool) *bool    { return &b }
-func int64Ptr(n int64) *int64 { return &n }
 
 // optimizerExecSQL parses and executes a SQL statement, fatally failing on error.
 func optimizerExecSQL(t *testing.T, exec *Executor, sql string) *Result {
@@ -276,26 +277,30 @@ func TestConstantFoldingFormatExpr(t *testing.T) {
 }
 
 func TestOptimizeCaseExpr(t *testing.T) {
-	// CASE WHEN false THEN 1 WHEN true THEN 2 ELSE 3 END → 2
-	expr := &ast.CaseExpr{
-		Whens: []ast.CaseWhen{
-			{When: &ast.BoolLitExpr{Value: false}, Then: &ast.IntLitExpr{Value: 1}},
-			{When: &ast.BoolLitExpr{Value: true}, Then: &ast.IntLitExpr{Value: 2}},
+	tests := []struct {
+		name     string
+		inputSQL string
+		wantSQL  string
+	}{
+		{
+			name:     "CASE WHEN false THEN 1 WHEN true THEN 2 ELSE 3 END -> 2",
+			inputSQL: "CASE WHEN 1=0 THEN 1 WHEN 1=1 THEN 2 ELSE 3 END",
+			wantSQL:  "2",
 		},
-		Else: &ast.IntLitExpr{Value: 3},
-	}
-	if got := ast.FormatSQL(optimizeExpr(expr)); got != "2" {
-		t.Fatalf("expected %q, got %q", "2", got)
+		{
+			name:     "CASE WHEN false THEN 1 ELSE 3 END -> 3",
+			inputSQL: "CASE WHEN 1=0 THEN 1 ELSE 3 END",
+			wantSQL:  "3",
+		},
 	}
 
-	// CASE WHEN false THEN 1 ELSE 3 END → 3
-	expr2 := &ast.CaseExpr{
-		Whens: []ast.CaseWhen{
-			{When: &ast.BoolLitExpr{Value: false}, Then: &ast.IntLitExpr{Value: 1}},
-		},
-		Else: &ast.IntLitExpr{Value: 3},
-	}
-	if got := ast.FormatSQL(optimizeExpr(expr2)); got != "3" {
-		t.Fatalf("expected %q, got %q", "3", got)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := parseExprSQL(t, tt.inputSQL)
+			got := ast.FormatSQL(optimizeExpr(input))
+			if got != tt.wantSQL {
+				t.Fatalf("optimizeExpr(%q) = %q, want %q", tt.inputSQL, got, tt.wantSQL)
+			}
+		})
 	}
 }

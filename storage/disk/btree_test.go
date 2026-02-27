@@ -523,6 +523,48 @@ func TestGetByKeysSorted(t *testing.T) {
 		assert.Equal(t, int64(3), result[1].Key)
 		assert.Equal(t, int64(5), result[2].Key)
 	})
+
+	t.Run("dense keys all match", func(t *testing.T) {
+		bt := newTestBTree(t)
+		n := 1000
+		for i := int64(0); i < int64(n); i++ {
+			bt.Insert(i, storage.Row{i, fmt.Sprintf("val-%d", i)})
+		}
+
+		// Query a contiguous block of 100 keys — all should match
+		var keys []int64
+		for i := int64(100); i < 200; i++ {
+			keys = append(keys, i)
+		}
+		result := bt.GetByKeysSorted(keys)
+		require.Len(t, result, 100)
+		for i, kr := range result {
+			assert.Equal(t, keys[i], kr.Key)
+			assert.Equal(t, fmt.Sprintf("val-%d", keys[i]), kr.Row[1])
+		}
+	})
+
+	t.Run("alternating hits", func(t *testing.T) {
+		bt := newTestBTree(t)
+		// Insert only even keys
+		for i := int64(0); i < 1000; i += 2 {
+			bt.Insert(i, storage.Row{i, fmt.Sprintf("val-%d", i)})
+		}
+
+		// Query with consecutive keys (mix of hits and misses)
+		var keys []int64
+		for i := int64(0); i < 100; i++ {
+			keys = append(keys, i)
+		}
+		result := bt.GetByKeysSorted(keys)
+		// Only even keys should match: 0,2,4,...,98 = 50 entries
+		require.Len(t, result, 50)
+		for i, kr := range result {
+			expected := int64(i * 2)
+			assert.Equal(t, expected, kr.Key)
+			assert.Equal(t, fmt.Sprintf("val-%d", expected), kr.Row[1])
+		}
+	})
 }
 
 func TestPrevLeafIntegrity(t *testing.T) {

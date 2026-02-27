@@ -327,13 +327,17 @@ func (t *DiskBTree) GetByKeysSorted(sortedKeys []int64) []storage.KeyRow {
 			continue
 		}
 
-		// Match possible — decode all entries
-		lp := decodeLeafPage(data)
-		t.pool.UnpinPage(pageID, false)
+		// Match possible — scan entries inline, decode only matching vals
+		entryCount, nextLeaf, _ := decodeLeafHeader(data)
 		consecutiveSkips = 0
 
-		for i := 0; i < int(lp.entryCount) && keyIdx < len(sortedKeys); i++ {
-			entryKey := lp.entries[i].key
+		pos := leafHdrSize
+		for i := 0; i < int(entryCount) && keyIdx < len(sortedKeys); i++ {
+			entryKey := int64(binary.BigEndian.Uint64(data[pos : pos+8]))
+			pos += 8
+			valLen := int(binary.BigEndian.Uint16(data[pos : pos+2]))
+			pos += 2
+
 			for keyIdx < len(sortedKeys) && sortedKeys[keyIdx] < entryKey {
 				keyIdx++
 			}
@@ -341,15 +345,19 @@ func (t *DiskBTree) GetByKeysSorted(sortedKeys []int64) []storage.KeyRow {
 				break
 			}
 			if sortedKeys[keyIdx] == entryKey {
-				row, err := storage.DecodeRow(lp.entries[i].val)
+				// DecodeRow while page is pinned — safe because DecodeRow copies all values
+				row, err := storage.DecodeRow(data[pos : pos+valLen])
 				if err != nil {
+					t.pool.UnpinPage(pageID, false)
 					return result
 				}
 				result = append(result, storage.KeyRow{Key: entryKey, Row: row})
 				keyIdx++
 			}
+			pos += valLen
 		}
-		pageID = lp.nextLeaf
+		t.pool.UnpinPage(pageID, false)
+		pageID = nextLeaf
 	}
 	return result
 }

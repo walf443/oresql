@@ -10,185 +10,57 @@ import (
 
 func TestOptimizeExpr(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    ast.Expr
-		wantType string // expected node type
-		wantBool *bool  // expected BoolLitExpr value (nil if not BoolLitExpr)
-		wantInt  *int64 // expected IntLitExpr value (nil if not IntLitExpr)
+		name    string
+		input   ast.Expr
+		wantSQL string // expected SQL from ast.FormatSQL (empty string means nil result)
 	}{
+		{name: "1 = 1 -> TRUE", input: &ast.BinaryExpr{Left: &ast.IntLitExpr{Value: 1}, Op: "=", Right: &ast.IntLitExpr{Value: 1}}, wantSQL: "TRUE"},
+		{name: "1 = 0 -> FALSE", input: &ast.BinaryExpr{Left: &ast.IntLitExpr{Value: 1}, Op: "=", Right: &ast.IntLitExpr{Value: 0}}, wantSQL: "FALSE"},
+		{name: "5 > 3 -> TRUE", input: &ast.BinaryExpr{Left: &ast.IntLitExpr{Value: 5}, Op: ">", Right: &ast.IntLitExpr{Value: 3}}, wantSQL: "TRUE"},
+		{name: "'a' = 'b' -> FALSE", input: &ast.BinaryExpr{Left: &ast.StringLitExpr{Value: "a"}, Op: "=", Right: &ast.StringLitExpr{Value: "b"}}, wantSQL: "FALSE"},
+		{name: "1 + 2 -> 3", input: &ast.ArithmeticExpr{Left: &ast.IntLitExpr{Value: 1}, Op: "+", Right: &ast.IntLitExpr{Value: 2}}, wantSQL: "3"},
+		{name: "false AND col -> FALSE", input: &ast.LogicalExpr{Left: &ast.BoolLitExpr{Value: false}, Op: "AND", Right: &ast.IdentExpr{Name: "col"}}, wantSQL: "FALSE"},
+		{name: "true AND col -> col", input: &ast.LogicalExpr{Left: &ast.BoolLitExpr{Value: true}, Op: "AND", Right: &ast.IdentExpr{Name: "col"}}, wantSQL: "col"},
+		{name: "true OR col -> TRUE", input: &ast.LogicalExpr{Left: &ast.BoolLitExpr{Value: true}, Op: "OR", Right: &ast.IdentExpr{Name: "col"}}, wantSQL: "TRUE"},
+		{name: "false OR col -> col", input: &ast.LogicalExpr{Left: &ast.BoolLitExpr{Value: false}, Op: "OR", Right: &ast.IdentExpr{Name: "col"}}, wantSQL: "col"},
+		{name: "NOT true -> FALSE", input: &ast.NotExpr{Expr: &ast.BoolLitExpr{Value: true}}, wantSQL: "FALSE"},
+		{name: "NOT false -> TRUE", input: &ast.NotExpr{Expr: &ast.BoolLitExpr{Value: false}}, wantSQL: "TRUE"},
+		{name: "NULL IS NULL -> TRUE", input: &ast.IsNullExpr{Expr: &ast.NullLitExpr{}, Not: false}, wantSQL: "TRUE"},
+		{name: "1 IS NULL -> FALSE", input: &ast.IsNullExpr{Expr: &ast.IntLitExpr{Value: 1}, Not: false}, wantSQL: "FALSE"},
+		{name: "1 IN (1,2,3) -> TRUE", input: &ast.InExpr{Left: &ast.IntLitExpr{Value: 1}, Values: []ast.Expr{&ast.IntLitExpr{Value: 1}, &ast.IntLitExpr{Value: 2}, &ast.IntLitExpr{Value: 3}}}, wantSQL: "TRUE"},
+		{name: "5 NOT IN (1,2,3) -> TRUE", input: &ast.InExpr{Left: &ast.IntLitExpr{Value: 5}, Not: true, Values: []ast.Expr{&ast.IntLitExpr{Value: 1}, &ast.IntLitExpr{Value: 2}, &ast.IntLitExpr{Value: 3}}}, wantSQL: "TRUE"},
+		{name: "5 BETWEEN 1 AND 10 -> TRUE", input: &ast.BetweenExpr{Left: &ast.IntLitExpr{Value: 5}, Low: &ast.IntLitExpr{Value: 1}, High: &ast.IntLitExpr{Value: 10}}, wantSQL: "TRUE"},
+		{name: "15 BETWEEN 1 AND 10 -> FALSE", input: &ast.BetweenExpr{Left: &ast.IntLitExpr{Value: 15}, Low: &ast.IntLitExpr{Value: 1}, High: &ast.IntLitExpr{Value: 10}}, wantSQL: "FALSE"},
+		{name: "nil -> nil", input: nil, wantSQL: ""},
+		{name: "column reference unchanged", input: &ast.IdentExpr{Name: "col"}, wantSQL: "col"},
+		{name: "col AND true -> col", input: &ast.LogicalExpr{Left: &ast.IdentExpr{Name: "col"}, Op: "AND", Right: &ast.BoolLitExpr{Value: true}}, wantSQL: "col"},
+		{name: "col OR false -> col", input: &ast.LogicalExpr{Left: &ast.IdentExpr{Name: "col"}, Op: "OR", Right: &ast.BoolLitExpr{Value: false}}, wantSQL: "col"},
 		{
-			name:     "1 = 1 -> true",
-			input:    &ast.BinaryExpr{Left: &ast.IntLitExpr{Value: 1}, Op: "=", Right: &ast.IntLitExpr{Value: 1}},
-			wantType: "BoolLit",
-			wantBool: boolPtr(true),
-		},
-		{
-			name:     "1 = 0 -> false",
-			input:    &ast.BinaryExpr{Left: &ast.IntLitExpr{Value: 1}, Op: "=", Right: &ast.IntLitExpr{Value: 0}},
-			wantType: "BoolLit",
-			wantBool: boolPtr(false),
-		},
-		{
-			name:     "5 > 3 -> true",
-			input:    &ast.BinaryExpr{Left: &ast.IntLitExpr{Value: 5}, Op: ">", Right: &ast.IntLitExpr{Value: 3}},
-			wantType: "BoolLit",
-			wantBool: boolPtr(true),
-		},
-		{
-			name:     "'a' = 'b' -> false",
-			input:    &ast.BinaryExpr{Left: &ast.StringLitExpr{Value: "a"}, Op: "=", Right: &ast.StringLitExpr{Value: "b"}},
-			wantType: "BoolLit",
-			wantBool: boolPtr(false),
-		},
-		{
-			name:     "1 + 2 -> 3",
-			input:    &ast.ArithmeticExpr{Left: &ast.IntLitExpr{Value: 1}, Op: "+", Right: &ast.IntLitExpr{Value: 2}},
-			wantType: "IntLit",
-			wantInt:  int64Ptr(3),
-		},
-		{
-			name:     "false AND col -> false",
-			input:    &ast.LogicalExpr{Left: &ast.BoolLitExpr{Value: false}, Op: "AND", Right: &ast.IdentExpr{Name: "col"}},
-			wantType: "BoolLit",
-			wantBool: boolPtr(false),
-		},
-		{
-			name:     "true AND col -> col",
-			input:    &ast.LogicalExpr{Left: &ast.BoolLitExpr{Value: true}, Op: "AND", Right: &ast.IdentExpr{Name: "col"}},
-			wantType: "Ident",
-		},
-		{
-			name:     "true OR col -> true",
-			input:    &ast.LogicalExpr{Left: &ast.BoolLitExpr{Value: true}, Op: "OR", Right: &ast.IdentExpr{Name: "col"}},
-			wantType: "BoolLit",
-			wantBool: boolPtr(true),
-		},
-		{
-			name:     "false OR col -> col",
-			input:    &ast.LogicalExpr{Left: &ast.BoolLitExpr{Value: false}, Op: "OR", Right: &ast.IdentExpr{Name: "col"}},
-			wantType: "Ident",
-		},
-		{
-			name:     "NOT true -> false",
-			input:    &ast.NotExpr{Expr: &ast.BoolLitExpr{Value: true}},
-			wantType: "BoolLit",
-			wantBool: boolPtr(false),
-		},
-		{
-			name:     "NOT false -> true",
-			input:    &ast.NotExpr{Expr: &ast.BoolLitExpr{Value: false}},
-			wantType: "BoolLit",
-			wantBool: boolPtr(true),
-		},
-		{
-			name:     "NULL IS NULL -> true",
-			input:    &ast.IsNullExpr{Expr: &ast.NullLitExpr{}, Not: false},
-			wantType: "BoolLit",
-			wantBool: boolPtr(true),
-		},
-		{
-			name:     "1 IS NULL -> false",
-			input:    &ast.IsNullExpr{Expr: &ast.IntLitExpr{Value: 1}, Not: false},
-			wantType: "BoolLit",
-			wantBool: boolPtr(false),
-		},
-		{
-			name:     "1 IN (1,2,3) -> true",
-			input:    &ast.InExpr{Left: &ast.IntLitExpr{Value: 1}, Values: []ast.Expr{&ast.IntLitExpr{Value: 1}, &ast.IntLitExpr{Value: 2}, &ast.IntLitExpr{Value: 3}}},
-			wantType: "BoolLit",
-			wantBool: boolPtr(true),
-		},
-		{
-			name:     "5 NOT IN (1,2,3) -> true",
-			input:    &ast.InExpr{Left: &ast.IntLitExpr{Value: 5}, Not: true, Values: []ast.Expr{&ast.IntLitExpr{Value: 1}, &ast.IntLitExpr{Value: 2}, &ast.IntLitExpr{Value: 3}}},
-			wantType: "BoolLit",
-			wantBool: boolPtr(true),
-		},
-		{
-			name:     "5 BETWEEN 1 AND 10 -> true",
-			input:    &ast.BetweenExpr{Left: &ast.IntLitExpr{Value: 5}, Low: &ast.IntLitExpr{Value: 1}, High: &ast.IntLitExpr{Value: 10}},
-			wantType: "BoolLit",
-			wantBool: boolPtr(true),
-		},
-		{
-			name:     "15 BETWEEN 1 AND 10 -> false",
-			input:    &ast.BetweenExpr{Left: &ast.IntLitExpr{Value: 15}, Low: &ast.IntLitExpr{Value: 1}, High: &ast.IntLitExpr{Value: 10}},
-			wantType: "BoolLit",
-			wantBool: boolPtr(false),
-		},
-		{
-			name:     "nil -> nil",
-			input:    nil,
-			wantType: "",
-		},
-		{
-			name:     "column reference unchanged",
-			input:    &ast.IdentExpr{Name: "col"},
-			wantType: "Ident",
-		},
-		{
-			name:     "col AND true -> col",
-			input:    &ast.LogicalExpr{Left: &ast.IdentExpr{Name: "col"}, Op: "AND", Right: &ast.BoolLitExpr{Value: true}},
-			wantType: "Ident",
-		},
-		{
-			name:     "col OR false -> col",
-			input:    &ast.LogicalExpr{Left: &ast.IdentExpr{Name: "col"}, Op: "OR", Right: &ast.BoolLitExpr{Value: false}},
-			wantType: "Ident",
-		},
-		{
-			name: "nested: 1 = 1 AND col > 5 -> col > 5",
+			name: "nested: 1 = 1 AND col > 5 -> (col > 5)",
 			input: &ast.LogicalExpr{
 				Left:  &ast.BinaryExpr{Left: &ast.IntLitExpr{Value: 1}, Op: "=", Right: &ast.IntLitExpr{Value: 1}},
 				Op:    "AND",
 				Right: &ast.BinaryExpr{Left: &ast.IdentExpr{Name: "col"}, Op: ">", Right: &ast.IntLitExpr{Value: 5}},
 			},
-			wantType: "Binary",
+			wantSQL: "(col > 5)",
 		},
 		{
-			name: "nested: 1 = 0 AND col > 5 -> false",
+			name: "nested: 1 = 0 AND col > 5 -> FALSE",
 			input: &ast.LogicalExpr{
 				Left:  &ast.BinaryExpr{Left: &ast.IntLitExpr{Value: 1}, Op: "=", Right: &ast.IntLitExpr{Value: 0}},
 				Op:    "AND",
 				Right: &ast.BinaryExpr{Left: &ast.IdentExpr{Name: "col"}, Op: ">", Right: &ast.IntLitExpr{Value: 5}},
 			},
-			wantType: "BoolLit",
-			wantBool: boolPtr(false),
+			wantSQL: "FALSE",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := optimizeExpr(tt.input)
-			if tt.wantType == "" {
-				if result != nil {
-					t.Fatalf("expected nil, got %T", result)
-				}
-				return
-			}
-			if result == nil {
-				t.Fatalf("expected %s, got nil", tt.wantType)
-			}
-			if result.NodeType() != tt.wantType {
-				t.Fatalf("expected node type %s, got %s (%T)", tt.wantType, result.NodeType(), result)
-			}
-			if tt.wantBool != nil {
-				b, ok := result.(*ast.BoolLitExpr)
-				if !ok {
-					t.Fatalf("expected BoolLitExpr, got %T", result)
-				}
-				if b.Value != *tt.wantBool {
-					t.Fatalf("expected %v, got %v", *tt.wantBool, b.Value)
-				}
-			}
-			if tt.wantInt != nil {
-				n, ok := result.(*ast.IntLitExpr)
-				if !ok {
-					t.Fatalf("expected IntLitExpr, got %T", result)
-				}
-				if n.Value != *tt.wantInt {
-					t.Fatalf("expected %d, got %d", *tt.wantInt, n.Value)
-				}
+			got := ast.FormatSQL(result)
+			if got != tt.wantSQL {
+				t.Fatalf("optimizeExpr() = %q, want %q", got, tt.wantSQL)
 			}
 		})
 	}
@@ -412,13 +284,8 @@ func TestOptimizeCaseExpr(t *testing.T) {
 		},
 		Else: &ast.IntLitExpr{Value: 3},
 	}
-	result := optimizeExpr(expr)
-	intLit, ok := result.(*ast.IntLitExpr)
-	if !ok {
-		t.Fatalf("expected IntLitExpr, got %T", result)
-	}
-	if intLit.Value != 2 {
-		t.Fatalf("expected 2, got %d", intLit.Value)
+	if got := ast.FormatSQL(optimizeExpr(expr)); got != "2" {
+		t.Fatalf("expected %q, got %q", "2", got)
 	}
 
 	// CASE WHEN false THEN 1 ELSE 3 END → 3
@@ -428,12 +295,7 @@ func TestOptimizeCaseExpr(t *testing.T) {
 		},
 		Else: &ast.IntLitExpr{Value: 3},
 	}
-	result2 := optimizeExpr(expr2)
-	intLit2, ok := result2.(*ast.IntLitExpr)
-	if !ok {
-		t.Fatalf("expected IntLitExpr, got %T", result2)
-	}
-	if intLit2.Value != 3 {
-		t.Fatalf("expected 3, got %d", intLit2.Value)
+	if got := ast.FormatSQL(optimizeExpr(expr2)); got != "3" {
+		t.Fatalf("expected %q, got %q", "3", got)
 	}
 }

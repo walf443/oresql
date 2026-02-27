@@ -124,6 +124,15 @@ func decodeLeafPage(data []byte) leafPage {
 	return lp
 }
 
+// decodeLeafHeader reads only the leaf page header (19 bytes) without
+// decoding entries. Used to check highKey for skip decisions.
+func decodeLeafHeader(data []byte) (entryCount uint16, nextLeaf pager.PageID, highKey int64) {
+	entryCount = binary.BigEndian.Uint16(data[1:3])
+	nextLeaf = binary.BigEndian.Uint32(data[3:7])
+	highKey = int64(binary.BigEndian.Uint64(data[11:19]))
+	return
+}
+
 func encodeLeafPage(lp leafPage, data []byte) {
 	for i := range data {
 		data[i] = 0
@@ -273,7 +282,8 @@ func searchLeaf(entries []leafEntry, key int64) int {
 
 // GetByKeysSorted retrieves rows for pre-sorted keys using a single findLeaf
 // call followed by a leaf-chain traversal with two-pointer matching.
-// This is O(H + L') page fetches instead of O(K × H) for individual Get calls.
+// Optimized with header-only skip (highKey check) and gap jump (findLeaf after
+// consecutive skips) to avoid decoding pages that cannot contain any queried keys.
 func (t *DiskBTree) GetByKeysSorted(sortedKeys []int64) []storage.KeyRow {
 	if len(sortedKeys) == 0 {
 		return nil
@@ -286,14 +296,41 @@ func (t *DiskBTree) GetByKeysSorted(sortedKeys []int64) []storage.KeyRow {
 	keyIdx := 0
 	pageID := leafID
 
+	const maxConsecutiveSkips = 4
+	consecutiveSkips := 0
+
 	for pageID != pager.InvalidPageID && keyIdx < len(sortedKeys) {
 		data, err := t.pool.FetchPage(pageID)
 		if err != nil {
 			return result
 		}
+
+		// Read header only to check highKey
+		_, hdrNextLeaf, highKey := decodeLeafHeader(data)
+
+		if sortedKeys[keyIdx] >= highKey {
+			// No match possible — skip without decoding entries
+			t.pool.UnpinPage(pageID, false)
+			consecutiveSkips++
+
+			if consecutiveSkips > maxConsecutiveSkips {
+				// Gap jump: use findLeaf to go directly to the target leaf
+				jumpTarget, err := t.findLeaf(sortedKeys[keyIdx])
+				if err != nil {
+					return result
+				}
+				pageID = jumpTarget
+				consecutiveSkips = 0
+			} else {
+				pageID = hdrNextLeaf
+			}
+			continue
+		}
+
+		// Match possible — decode all entries
 		lp := decodeLeafPage(data)
-		nextLeaf := lp.nextLeaf
 		t.pool.UnpinPage(pageID, false)
+		consecutiveSkips = 0
 
 		for i := 0; i < int(lp.entryCount) && keyIdx < len(sortedKeys); i++ {
 			entryKey := lp.entries[i].key
@@ -312,7 +349,7 @@ func (t *DiskBTree) GetByKeysSorted(sortedKeys []int64) []storage.KeyRow {
 				keyIdx++
 			}
 		}
-		pageID = nextLeaf
+		pageID = lp.nextLeaf
 	}
 	return result
 }

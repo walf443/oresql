@@ -475,6 +475,54 @@ func TestGetByKeysSorted(t *testing.T) {
 		assert.Equal(t, int64(42), result[0].Key)
 		assert.Equal(t, "answer", result[0].Row[1])
 	})
+
+	t.Run("sparse keys with header skip", func(t *testing.T) {
+		bt := newTestBTree(t)
+		n := 10000
+		for i := int64(0); i < int64(n); i++ {
+			bt.Insert(i, storage.Row{i, fmt.Sprintf("val-%d", i)})
+		}
+
+		// Sparse keys spread across the key space — most pages should be skipped
+		sparseKeys := []int64{50, 500, 501, 5000, 5001, 5099}
+		result := bt.GetByKeysSorted(sparseKeys)
+		require.Len(t, result, len(sparseKeys))
+		for i, kr := range result {
+			assert.Equal(t, sparseKeys[i], kr.Key)
+			assert.Equal(t, fmt.Sprintf("val-%d", sparseKeys[i]), kr.Row[1])
+		}
+	})
+
+	t.Run("gap jump with large gaps", func(t *testing.T) {
+		bt := newTestBTree(t)
+		n := 10000
+		for i := int64(0); i < int64(n); i++ {
+			bt.Insert(i, storage.Row{i, fmt.Sprintf("val-%d", i)})
+		}
+
+		// Keys with large gaps — should trigger gap jump (findLeaf)
+		gapKeys := []int64{10, 11, 12, 4990, 4991, 4992}
+		result := bt.GetByKeysSorted(gapKeys)
+		require.Len(t, result, len(gapKeys))
+		for i, kr := range result {
+			assert.Equal(t, gapKeys[i], kr.Key)
+			assert.Equal(t, fmt.Sprintf("val-%d", gapKeys[i]), kr.Row[1])
+		}
+	})
+
+	t.Run("single page all entries", func(t *testing.T) {
+		bt := newTestBTree(t)
+		// Insert few entries that fit in a single leaf page
+		for i := int64(1); i <= 5; i++ {
+			bt.Insert(i, storage.Row{i, fmt.Sprintf("val-%d", i)})
+		}
+
+		result := bt.GetByKeysSorted([]int64{1, 3, 5})
+		require.Len(t, result, 3)
+		assert.Equal(t, int64(1), result[0].Key)
+		assert.Equal(t, int64(3), result[1].Key)
+		assert.Equal(t, int64(5), result[2].Key)
+	})
 }
 
 func TestPrevLeafIntegrity(t *testing.T) {

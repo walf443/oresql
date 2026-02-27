@@ -12,8 +12,8 @@ import (
 // Page layout constants
 const (
 	flagLeaf        byte = 0x01
-	leafHdrSize          = 1 + 2 + 4 + 8 // flags(1) + entryCount(2) + nextLeaf(4) + highKey(8)
-	internalHdrSize      = 1 + 2         // flags(1) + entryCount(2)
+	leafHdrSize          = 1 + 2 + 4 + 4 + 8 // flags(1) + entryCount(2) + nextLeaf(4) + prevLeaf(4) + highKey(8)
+	internalHdrSize      = 1 + 2             // flags(1) + entryCount(2)
 )
 
 // leafEntry is a key-value pair stored in a leaf page.
@@ -27,6 +27,7 @@ type leafEntry struct {
 type leafPage struct {
 	entryCount uint16
 	nextLeaf   pager.PageID
+	prevLeaf   pager.PageID
 	highKey    int64
 	entries    []leafEntry
 }
@@ -54,9 +55,10 @@ func NewDiskBTree(pool *pager.BufferPool) (*DiskBTree, error) {
 	}
 	// Initialize as empty leaf
 	data[0] = flagLeaf
-	binary.BigEndian.PutUint16(data[1:3], 0)                           // entryCount
-	binary.BigEndian.PutUint32(data[3:7], uint32(pager.InvalidPageID)) // nextLeaf
-	binary.BigEndian.PutUint64(data[7:15], uint64(math.MaxInt64))      // highKey
+	binary.BigEndian.PutUint16(data[1:3], 0)                            // entryCount
+	binary.BigEndian.PutUint32(data[3:7], uint32(pager.InvalidPageID))  // nextLeaf
+	binary.BigEndian.PutUint32(data[7:11], uint32(pager.InvalidPageID)) // prevLeaf
+	binary.BigEndian.PutUint64(data[11:19], uint64(math.MaxInt64))      // highKey
 	pool.UnpinPage(id, true)
 
 	return &DiskBTree{
@@ -104,7 +106,8 @@ func decodeLeafPage(data []byte) leafPage {
 	lp := leafPage{
 		entryCount: binary.BigEndian.Uint16(data[1:3]),
 		nextLeaf:   binary.BigEndian.Uint32(data[3:7]),
-		highKey:    int64(binary.BigEndian.Uint64(data[7:15])),
+		prevLeaf:   binary.BigEndian.Uint32(data[7:11]),
+		highKey:    int64(binary.BigEndian.Uint64(data[11:19])),
 	}
 	pos := leafHdrSize
 	lp.entries = make([]leafEntry, lp.entryCount)
@@ -128,7 +131,8 @@ func encodeLeafPage(lp leafPage, data []byte) {
 	data[0] = flagLeaf
 	binary.BigEndian.PutUint16(data[1:3], lp.entryCount)
 	binary.BigEndian.PutUint32(data[3:7], lp.nextLeaf)
-	binary.BigEndian.PutUint64(data[7:15], uint64(lp.highKey))
+	binary.BigEndian.PutUint32(data[7:11], lp.prevLeaf)
+	binary.BigEndian.PutUint64(data[11:19], uint64(lp.highKey))
 	pos := leafHdrSize
 	for _, e := range lp.entries {
 		binary.BigEndian.PutUint64(data[pos:pos+8], uint64(e.key))
@@ -434,14 +438,25 @@ func (t *DiskBTree) insertRecursive(pageID pager.PageID, entry leafEntry) (int64
 		copy(leftEntries, lp.entries[:mid])
 
 		// New right leaf
+		oldNext := lp.nextLeaf
 		newLP := leafPage{
 			entryCount: uint16(len(rightEntries)),
-			nextLeaf:   lp.nextLeaf,
+			nextLeaf:   oldNext,
+			prevLeaf:   pageID,
 			highKey:    lp.highKey,
 			entries:    rightEntries,
 		}
 		encodeLeafPage(newLP, newLeafData)
 		t.pool.UnpinPage(newLeafID, true)
+
+		// Update prevLeaf of the old next leaf
+		if oldNext != pager.InvalidPageID {
+			oldNextData, err := t.pool.FetchPage(oldNext)
+			if err == nil {
+				binary.BigEndian.PutUint32(oldNextData[7:11], newLeafID)
+				t.pool.UnpinPage(oldNext, true)
+			}
+		}
 
 		// Update left leaf
 		lp.entries = leftEntries
@@ -895,6 +910,16 @@ func (t *DiskBTree) mergeChildren(parentID pager.PageID, ip *internalPage, leftI
 		encodeLeafPage(leftLP, leftData)
 		t.pool.UnpinPage(ip.children[leftIdx], true)
 		t.pool.UnpinPage(ip.children[leftIdx+1], false)
+
+		// Update prevLeaf of the page after right
+		afterRight := rightLP.nextLeaf
+		if afterRight != pager.InvalidPageID {
+			afterRightData, err := t.pool.FetchPage(afterRight)
+			if err == nil {
+				binary.BigEndian.PutUint32(afterRightData[7:11], ip.children[leftIdx])
+				t.pool.UnpinPage(afterRight, true)
+			}
+		}
 	} else {
 		leftIP := decodeInternalPage(leftData)
 		rightIP := decodeInternalPage(rightData)
@@ -963,53 +988,41 @@ func (t *DiskBTree) ForEach(fn func(key int64, row storage.Row) bool) {
 	}
 }
 
-// collectLeafPageIDs traverses from root to the leftmost leaf, then follows
-// the leaf chain collecting only PageIDs (no entry decoding).
-func (t *DiskBTree) collectLeafPageIDs() []pager.PageID {
-	// Find leftmost leaf
+// findRightmostLeaf returns the PageID of the rightmost leaf page.
+func (t *DiskBTree) findRightmostLeaf() (pager.PageID, error) {
 	pageID := t.rootPageID
 	for {
 		data, err := t.pool.FetchPage(pageID)
 		if err != nil {
-			return nil
+			return pager.InvalidPageID, err
 		}
 		if isLeafPage(data) {
 			t.pool.UnpinPage(pageID, false)
-			break
+			return pageID, nil
 		}
 		ip := decodeInternalPage(data)
 		t.pool.UnpinPage(pageID, false)
-		pageID = ip.children[0]
+		pageID = ip.children[ip.entryCount] // rightmost child
 	}
-
-	// Follow leaf chain collecting only PageIDs
-	var ids []pager.PageID
-	for pageID != pager.InvalidPageID {
-		ids = append(ids, pageID)
-		data, err := t.pool.FetchPage(pageID)
-		if err != nil {
-			return ids
-		}
-		nextLeaf := pager.PageID(binary.BigEndian.Uint32(data[3:7]))
-		t.pool.UnpinPage(pageID, false)
-		pageID = nextLeaf
-	}
-	return ids
 }
 
 // ForEachReverse iterates over all entries in reverse key order.
-// It collects leaf PageIDs in a forward pass, then traverses them in reverse,
-// decoding entries only as needed. This allows early termination (LIMIT)
-// without scanning all rows.
+// It finds the rightmost leaf and follows prevLeaf back-pointers, allowing
+// early termination (LIMIT) with O(H + needed leaves) page fetches.
 func (t *DiskBTree) ForEachReverse(fn func(key int64, row storage.Row) bool) {
-	ids := t.collectLeafPageIDs()
-	for i := len(ids) - 1; i >= 0; i-- {
-		data, err := t.pool.FetchPage(ids[i])
+	pageID, err := t.findRightmostLeaf()
+	if err != nil {
+		return
+	}
+	for pageID != pager.InvalidPageID {
+		data, err := t.pool.FetchPage(pageID)
 		if err != nil {
 			return
 		}
 		lp := decodeLeafPage(data)
-		t.pool.UnpinPage(ids[i], false)
+		prev := lp.prevLeaf
+		t.pool.UnpinPage(pageID, false)
+
 		for j := len(lp.entries) - 1; j >= 0; j-- {
 			row, err := storage.DecodeRow(lp.entries[j].val)
 			if err != nil {
@@ -1019,6 +1032,7 @@ func (t *DiskBTree) ForEachReverse(fn func(key int64, row storage.Row) bool) {
 				return
 			}
 		}
+		pageID = prev
 	}
 }
 

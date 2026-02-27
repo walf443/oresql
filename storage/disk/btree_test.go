@@ -477,6 +477,161 @@ func TestGetByKeysSorted(t *testing.T) {
 	})
 }
 
+func TestPrevLeafIntegrity(t *testing.T) {
+	bt := newTestBTree(t)
+
+	// Insert enough keys to cause multiple splits
+	for i := int64(0); i < 500; i++ {
+		bt.Insert(i, storage.Row{i, fmt.Sprintf("val-%d", i)})
+	}
+
+	// Forward traverse: collect all leaf pageIDs and their nextLeaf/prevLeaf
+	type leafInfo struct {
+		pageID   pager.PageID
+		prevLeaf pager.PageID
+		nextLeaf pager.PageID
+	}
+
+	// Find leftmost leaf
+	pageID := bt.rootPageID
+	for {
+		data, err := bt.pool.FetchPage(pageID)
+		require.NoError(t, err)
+		if isLeafPage(data) {
+			bt.pool.UnpinPage(pageID, false)
+			break
+		}
+		ip := decodeInternalPage(data)
+		bt.pool.UnpinPage(pageID, false)
+		pageID = ip.children[0]
+	}
+
+	// Collect leaf chain forward
+	var leaves []leafInfo
+	for pageID != pager.InvalidPageID {
+		data, err := bt.pool.FetchPage(pageID)
+		require.NoError(t, err)
+		lp := decodeLeafPage(data)
+		leaves = append(leaves, leafInfo{
+			pageID:   pageID,
+			prevLeaf: lp.prevLeaf,
+			nextLeaf: lp.nextLeaf,
+		})
+		bt.pool.UnpinPage(pageID, false)
+		pageID = lp.nextLeaf
+	}
+
+	require.Greater(t, len(leaves), 1, "need multiple leaves for meaningful test")
+
+	// Verify: first leaf has prevLeaf == InvalidPageID
+	assert.Equal(t, pager.InvalidPageID, leaves[0].prevLeaf, "first leaf prevLeaf should be InvalidPageID")
+
+	// Verify: last leaf has nextLeaf == InvalidPageID
+	assert.Equal(t, pager.InvalidPageID, leaves[len(leaves)-1].nextLeaf, "last leaf nextLeaf should be InvalidPageID")
+
+	// Verify symmetry: for each pair of adjacent leaves, nextLeaf/prevLeaf match
+	for i := 0; i < len(leaves)-1; i++ {
+		assert.Equal(t, leaves[i+1].pageID, leaves[i].nextLeaf,
+			"leaf %d nextLeaf should point to leaf %d", i, i+1)
+		assert.Equal(t, leaves[i].pageID, leaves[i+1].prevLeaf,
+			"leaf %d prevLeaf should point to leaf %d", i+1, i)
+	}
+
+	// Verify backward traversal via prevLeaf produces same leaves in reverse
+	rightmostID, err := bt.findRightmostLeaf()
+	require.NoError(t, err)
+	assert.Equal(t, leaves[len(leaves)-1].pageID, rightmostID)
+
+	var backwardIDs []pager.PageID
+	pageID = rightmostID
+	for pageID != pager.InvalidPageID {
+		backwardIDs = append(backwardIDs, pageID)
+		data, err := bt.pool.FetchPage(pageID)
+		require.NoError(t, err)
+		lp := decodeLeafPage(data)
+		bt.pool.UnpinPage(pageID, false)
+		pageID = lp.prevLeaf
+	}
+
+	require.Len(t, backwardIDs, len(leaves))
+	for i, id := range backwardIDs {
+		assert.Equal(t, leaves[len(leaves)-1-i].pageID, id,
+			"backward traversal mismatch at position %d", i)
+	}
+}
+
+func TestPrevLeafAfterDelete(t *testing.T) {
+	bt := newTestBTree(t)
+
+	// Insert enough keys to cause splits
+	n := 200
+	for i := int64(0); i < int64(n); i++ {
+		bt.Insert(i, storage.Row{i, fmt.Sprintf("val-%d", i)})
+	}
+
+	// Delete half to trigger merges
+	for i := int64(0); i < int64(n); i += 2 {
+		bt.Delete(i)
+	}
+
+	// Verify prevLeaf/nextLeaf symmetry after merges
+	pageID := bt.rootPageID
+	for {
+		data, err := bt.pool.FetchPage(pageID)
+		require.NoError(t, err)
+		if isLeafPage(data) {
+			bt.pool.UnpinPage(pageID, false)
+			break
+		}
+		ip := decodeInternalPage(data)
+		bt.pool.UnpinPage(pageID, false)
+		pageID = ip.children[0]
+	}
+
+	type leafInfo struct {
+		pageID   pager.PageID
+		prevLeaf pager.PageID
+		nextLeaf pager.PageID
+	}
+	var leaves []leafInfo
+	for pageID != pager.InvalidPageID {
+		data, err := bt.pool.FetchPage(pageID)
+		require.NoError(t, err)
+		lp := decodeLeafPage(data)
+		leaves = append(leaves, leafInfo{
+			pageID:   pageID,
+			prevLeaf: lp.prevLeaf,
+			nextLeaf: lp.nextLeaf,
+		})
+		bt.pool.UnpinPage(pageID, false)
+		pageID = lp.nextLeaf
+	}
+
+	if len(leaves) > 1 {
+		assert.Equal(t, pager.InvalidPageID, leaves[0].prevLeaf)
+		assert.Equal(t, pager.InvalidPageID, leaves[len(leaves)-1].nextLeaf)
+
+		for i := 0; i < len(leaves)-1; i++ {
+			assert.Equal(t, leaves[i+1].pageID, leaves[i].nextLeaf,
+				"leaf %d nextLeaf mismatch after delete", i)
+			assert.Equal(t, leaves[i].pageID, leaves[i+1].prevLeaf,
+				"leaf %d prevLeaf mismatch after delete", i+1)
+		}
+	}
+
+	// Verify ForEachReverse still produces correct results
+	var keys []int64
+	bt.ForEachReverse(func(key int64, row storage.Row) bool {
+		keys = append(keys, key)
+		return true
+	})
+
+	require.Equal(t, bt.Len(), len(keys))
+	for i := 1; i < len(keys); i++ {
+		assert.Greater(t, keys[i-1], keys[i], "keys not in descending order after delete")
+	}
+}
+
 func ptr(v int64) *int64 {
 	return &v
 }

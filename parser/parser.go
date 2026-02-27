@@ -1642,6 +1642,12 @@ func (p *Parser) parsePrimary() (ast.Expr, error) {
 	case token.NULL:
 		p.nextToken()
 		return &ast.NullLitExpr{}, nil
+	case token.TRUE:
+		p.nextToken()
+		return &ast.BoolLitExpr{Value: true}, nil
+	case token.FALSE:
+		p.nextToken()
+		return &ast.BoolLitExpr{Value: false}, nil
 	case token.MINUS:
 		p.nextToken() // skip -
 		operand, err := p.parsePrimary()

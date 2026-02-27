@@ -1605,3 +1605,43 @@ func TestParseUnqualifiedTableStillWorks(t *testing.T) {
 	assert.Equal(t, "", s.DatabaseName)
 	assert.Equal(t, "users", s.TableName)
 }
+
+func TestParseBoolLiteralTrue(t *testing.T) {
+	stmt := parse(t, "SELECT * FROM t WHERE TRUE")
+	require.IsType(t, &ast.SelectStmt{}, stmt)
+	s := stmt.(*ast.SelectStmt)
+	require.IsType(t, &ast.BoolLitExpr{}, s.Where)
+	assert.Equal(t, true, s.Where.(*ast.BoolLitExpr).Value)
+}
+
+func TestParseBoolLiteralFalse(t *testing.T) {
+	stmt := parse(t, "SELECT * FROM t WHERE FALSE")
+	require.IsType(t, &ast.SelectStmt{}, stmt)
+	s := stmt.(*ast.SelectStmt)
+	require.IsType(t, &ast.BoolLitExpr{}, s.Where)
+	assert.Equal(t, false, s.Where.(*ast.BoolLitExpr).Value)
+}
+
+func TestParseBoolLiteralCaseInsensitive(t *testing.T) {
+	stmt := parse(t, "SELECT * FROM t WHERE true AND false")
+	require.IsType(t, &ast.SelectStmt{}, stmt)
+	s := stmt.(*ast.SelectStmt)
+	require.IsType(t, &ast.LogicalExpr{}, s.Where)
+	l := s.Where.(*ast.LogicalExpr)
+	assert.Equal(t, "AND", l.Op)
+	require.IsType(t, &ast.BoolLitExpr{}, l.Left)
+	assert.Equal(t, true, l.Left.(*ast.BoolLitExpr).Value)
+	require.IsType(t, &ast.BoolLitExpr{}, l.Right)
+	assert.Equal(t, false, l.Right.(*ast.BoolLitExpr).Value)
+}
+
+func TestParseBoolLiteralInSelect(t *testing.T) {
+	stmt := parse(t, "SELECT TRUE, FALSE")
+	require.IsType(t, &ast.SelectStmt{}, stmt)
+	s := stmt.(*ast.SelectStmt)
+	require.Len(t, s.Columns, 2)
+	require.IsType(t, &ast.BoolLitExpr{}, s.Columns[0])
+	assert.Equal(t, true, s.Columns[0].(*ast.BoolLitExpr).Value)
+	require.IsType(t, &ast.BoolLitExpr{}, s.Columns[1])
+	assert.Equal(t, false, s.Columns[1].(*ast.BoolLitExpr).Value)
+}

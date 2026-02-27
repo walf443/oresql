@@ -68,7 +68,7 @@
 
 ## データ型
 
-- [ ] BOOLEAN
+- [x] BOOLEAN
 - [x] FLOAT / REAL / DOUBLE
 - [ ] DECIMAL / NUMERIC
 - [ ] DATE / TIME / TIMESTAMP

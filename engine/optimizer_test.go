@@ -39,12 +39,12 @@ func TestOptimizeExpr(t *testing.T) {
 		{name: "5 > 3 -> TRUE", inputSQL: "5 > 3", wantSQL: "TRUE"},
 		{name: "'a' = 'b' -> FALSE", inputSQL: "'a' = 'b'", wantSQL: "FALSE"},
 		{name: "1 + 2 -> 3", inputSQL: "1 + 2", wantSQL: "3"},
-		{name: "(1=0) AND col -> FALSE", inputSQL: "(1=0) AND col", wantSQL: "FALSE"},
-		{name: "(1=1) AND col -> col", inputSQL: "(1=1) AND col", wantSQL: "col"},
-		{name: "(1=1) OR col -> TRUE", inputSQL: "(1=1) OR col", wantSQL: "TRUE"},
-		{name: "(1=0) OR col -> col", inputSQL: "(1=0) OR col", wantSQL: "col"},
-		{name: "NOT (1=1) -> FALSE", inputSQL: "NOT (1=1)", wantSQL: "FALSE"},
-		{name: "NOT (1=0) -> TRUE", inputSQL: "NOT (1=0)", wantSQL: "TRUE"},
+		{name: "FALSE AND col -> FALSE", inputSQL: "FALSE AND col", wantSQL: "FALSE"},
+		{name: "TRUE AND col -> col", inputSQL: "TRUE AND col", wantSQL: "col"},
+		{name: "TRUE OR col -> TRUE", inputSQL: "TRUE OR col", wantSQL: "TRUE"},
+		{name: "FALSE OR col -> col", inputSQL: "FALSE OR col", wantSQL: "col"},
+		{name: "NOT TRUE -> FALSE", inputSQL: "NOT TRUE", wantSQL: "FALSE"},
+		{name: "NOT FALSE -> TRUE", inputSQL: "NOT FALSE", wantSQL: "TRUE"},
 		{name: "NULL IS NULL -> TRUE", inputSQL: "NULL IS NULL", wantSQL: "TRUE"},
 		{name: "1 IS NULL -> FALSE", inputSQL: "1 IS NULL", wantSQL: "FALSE"},
 		{name: "1 IN (1,2,3) -> TRUE", inputSQL: "1 IN (1, 2, 3)", wantSQL: "TRUE"},
@@ -53,8 +53,8 @@ func TestOptimizeExpr(t *testing.T) {
 		{name: "15 BETWEEN 1 AND 10 -> FALSE", inputSQL: "15 BETWEEN 1 AND 10", wantSQL: "FALSE"},
 		{name: "nil -> nil", inputSQL: "", wantSQL: ""},
 		{name: "column reference unchanged", inputSQL: "col", wantSQL: "col"},
-		{name: "col AND (1=1) -> col", inputSQL: "col AND (1=1)", wantSQL: "col"},
-		{name: "col OR (1=0) -> col", inputSQL: "col OR (1=0)", wantSQL: "col"},
+		{name: "col AND TRUE -> col", inputSQL: "col AND TRUE", wantSQL: "col"},
+		{name: "col OR FALSE -> col", inputSQL: "col OR FALSE", wantSQL: "col"},
 		{name: "1 = 1 AND col > 5 -> (col > 5)", inputSQL: "1 = 1 AND col > 5", wantSQL: "(col > 5)"},
 		{name: "1 = 0 AND col > 5 -> FALSE", inputSQL: "1 = 0 AND col > 5", wantSQL: "FALSE"},
 	}
@@ -283,13 +283,13 @@ func TestOptimizeCaseExpr(t *testing.T) {
 		wantSQL  string
 	}{
 		{
-			name:     "CASE WHEN false THEN 1 WHEN true THEN 2 ELSE 3 END -> 2",
-			inputSQL: "CASE WHEN 1=0 THEN 1 WHEN 1=1 THEN 2 ELSE 3 END",
+			name:     "CASE WHEN FALSE THEN 1 WHEN TRUE THEN 2 ELSE 3 END -> 2",
+			inputSQL: "CASE WHEN FALSE THEN 1 WHEN TRUE THEN 2 ELSE 3 END",
 			wantSQL:  "2",
 		},
 		{
-			name:     "CASE WHEN false THEN 1 ELSE 3 END -> 3",
-			inputSQL: "CASE WHEN 1=0 THEN 1 ELSE 3 END",
+			name:     "CASE WHEN FALSE THEN 1 ELSE 3 END -> 3",
+			inputSQL: "CASE WHEN FALSE THEN 1 ELSE 3 END",
 			wantSQL:  "3",
 		},
 	}

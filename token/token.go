@@ -55,6 +55,8 @@ const (
 	MAX       // MAX aggregate function
 	IS        // IS keyword
 	NULL      // NULL keyword
+	TRUE      // TRUE keyword
+	FALSE     // FALSE keyword
 	AS        // AS keyword
 	UPDATE    // UPDATE keyword
 	SET       // SET keyword
@@ -174,6 +176,8 @@ var tokenNames = map[TokenType]string{
 	MAX:          "MAX",
 	IS:           "IS",
 	NULL:         "NULL",
+	TRUE:         "TRUE",
+	FALSE:        "FALSE",
 	AS:           "AS",
 	UPDATE:       "UPDATE",
 	SET:          "SET",
@@ -279,6 +283,8 @@ var keywords = map[string]TokenType{
 	"MAX":        MAX,
 	"IS":         IS,
 	"NULL":       NULL,
+	"TRUE":       TRUE,
+	"FALSE":      FALSE,
 	"AS":         AS,
 	"UPDATE":     UPDATE,
 	"SET":        SET,

@@ -874,6 +874,73 @@ func (s *MemoryStorage) GetRow(tableName string, key int64) (storage.Row, bool) 
 	return val.(storage.Row), true
 }
 
+// GetPrimaryTree returns the primary BTree for a table.
+func (s *MemoryStorage) GetPrimaryTree(tableName string) *btree.BTree[int64] {
+	lower := strings.ToLower(tableName)
+	s.mu.RLock()
+	tbl, ok := s.tables[lower]
+	s.mu.RUnlock()
+	if !ok {
+		return nil
+	}
+	return tbl.tree
+}
+
+// SetPrimaryTree replaces the primary BTree for a table.
+func (s *MemoryStorage) SetPrimaryTree(tableName string, tree *btree.BTree[int64]) {
+	lower := strings.ToLower(tableName)
+	s.mu.RLock()
+	tbl, ok := s.tables[lower]
+	s.mu.RUnlock()
+	if !ok {
+		return
+	}
+	tbl.tree = tree
+}
+
+// GetAllSecondaryTrees returns all secondary index trees for a table.
+func (s *MemoryStorage) GetAllSecondaryTrees(tableName string) map[string]*SecondaryIndex {
+	lower := strings.ToLower(tableName)
+	s.mu.RLock()
+	tbl, ok := s.tables[lower]
+	s.mu.RUnlock()
+	if !ok {
+		return nil
+	}
+	return tbl.indexes
+}
+
+// Tree returns the BTree of a secondary index.
+func (si *SecondaryIndex) Tree() *btree.BTree[storage.KeyEncoding] {
+	return si.tree
+}
+
+// SetTree replaces the BTree of a secondary index.
+func (si *SecondaryIndex) SetTree(tree *btree.BTree[storage.KeyEncoding]) {
+	si.tree = tree
+}
+
+// CreateIndexEmpty creates a secondary index entry without building from existing data.
+// Used for restoring index structures from disk snapshots.
+func (s *MemoryStorage) CreateIndexEmpty(info *storage.IndexInfo) {
+	lower := strings.ToLower(info.TableName)
+	s.mu.RLock()
+	tbl, ok := s.tables[lower]
+	s.mu.RUnlock()
+	if !ok {
+		return
+	}
+
+	idx := &SecondaryIndex{
+		Info: info,
+		tree: btree.New[storage.KeyEncoding](32),
+	}
+	tbl.indexes[strings.ToLower(info.Name)] = idx
+	s.mu.Lock()
+	s.indexTable[strings.ToLower(info.Name)] = lower
+	s.mu.Unlock()
+}
+
 // InsertWithKey inserts a row with a specific BTree key (used for restoring state from disk).
 // Unlike Insert, this does not auto-generate a rowID.
 func (s *MemoryStorage) InsertWithKey(tableName string, key int64, row storage.Row) error {

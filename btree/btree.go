@@ -1,6 +1,9 @@
 package btree
 
-import "cmp"
+import (
+	"cmp"
+	"math"
+)
 
 // BTree is a B-tree with ordered keys and any values.
 type BTree[K cmp.Ordered] struct {
@@ -512,4 +515,94 @@ func (n *node[K]) forEach(fn func(key K, value any) bool) bool {
 		return n.children[len(n.entries)].forEach(fn)
 	}
 	return true
+}
+
+// --- Serialization support ---
+
+// EntryData is an exported key-value pair for serialization.
+type EntryData[K cmp.Ordered] struct {
+	Key   K
+	Value any
+}
+
+// NodeData is an exported node representation for serialization.
+type NodeData[K cmp.Ordered] struct {
+	Leaf     bool
+	Entries  []EntryData[K]
+	Children []uint32 // child page IDs (nil for leaf nodes)
+}
+
+// Degree returns the minimum degree (t) of the tree.
+func (t *BTree[K]) Degree() int {
+	return t.degree
+}
+
+// WalkNodes performs a post-order traversal of the tree, calling fn for each node.
+// fn receives the node data and returns a page ID to assign to that node.
+// Returns the root page ID and whether the tree has a root (is non-empty).
+func (t *BTree[K]) WalkNodes(fn func(data NodeData[K]) uint32) (rootPageID uint32, hasRoot bool) {
+	if t.root == nil || (t.root.leaf && len(t.root.entries) == 0) {
+		return math.MaxUint32, false
+	}
+	id := walkNode(t.root, fn)
+	return id, true
+}
+
+func walkNode[K cmp.Ordered](n *node[K], fn func(data NodeData[K]) uint32) uint32 {
+	data := NodeData[K]{
+		Leaf: n.leaf,
+	}
+
+	// Convert entries
+	data.Entries = make([]EntryData[K], len(n.entries))
+	for i, e := range n.entries {
+		data.Entries[i] = EntryData[K]{Key: e.key, Value: e.value}
+	}
+
+	// Process children first (post-order) and collect page IDs
+	if !n.leaf {
+		data.Children = make([]uint32, len(n.children))
+		for i, child := range n.children {
+			data.Children[i] = walkNode(child, fn)
+		}
+	}
+
+	return fn(data)
+}
+
+// BuildFromNodes reconstructs a BTree from serialized node data.
+// loadNode is called to load the node data for a given page ID.
+func BuildFromNodes[K cmp.Ordered](degree int, length int, rootPageID uint32, loadNode func(pageID uint32) NodeData[K]) *BTree[K] {
+	if degree < 2 {
+		degree = 2
+	}
+	t := &BTree[K]{
+		degree: degree,
+		length: length,
+	}
+	t.root = buildNode(rootPageID, loadNode)
+	return t
+}
+
+func buildNode[K cmp.Ordered](pageID uint32, loadNode func(pageID uint32) NodeData[K]) *node[K] {
+	data := loadNode(pageID)
+	n := &node[K]{
+		leaf: data.Leaf,
+	}
+
+	// Convert entries
+	n.entries = make([]entry[K], len(data.Entries))
+	for i, e := range data.Entries {
+		n.entries[i] = entry[K]{key: e.Key, value: e.Value}
+	}
+
+	// Build children
+	if !data.Leaf && len(data.Children) > 0 {
+		n.children = make([]*node[K], len(data.Children))
+		for i, childID := range data.Children {
+			n.children[i] = buildNode(childID, loadNode)
+		}
+	}
+
+	return n
 }

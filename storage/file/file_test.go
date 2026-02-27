@@ -382,6 +382,225 @@ func TestListTablesAndLoadTableMeta(t *testing.T) {
 	assert.Equal(t, "t1", loadedInfo.Name)
 }
 
+func TestV2PersistenceReload(t *testing.T) {
+	dir := t.TempDir()
+
+	// Phase 1: Create table, insert, and force v2 write
+	fs1, err := NewFileStorage(dir)
+	require.NoError(t, err)
+
+	info := &storage.TableInfo{
+		Name: "users",
+		Columns: []storage.ColumnInfo{
+			{Name: "id", DataType: "INT", Index: 0, PrimaryKey: true},
+			{Name: "name", DataType: "TEXT", Index: 1},
+			{Name: "score", DataType: "FLOAT", Index: 2},
+		},
+		PrimaryKeyCol:  0,
+		PrimaryKeyCols: []int{0},
+	}
+	fs1.CreateTable(info)
+	require.NoError(t, fs1.Insert("users", storage.Row{int64(1), "alice", float64(95.5)}))
+	require.NoError(t, fs1.Insert("users", storage.Row{int64(2), "bob", nil}))
+	require.NoError(t, fs1.Insert("users", storage.Row{int64(3), "charlie", float64(-1.0)}))
+
+	// Phase 2: Reload from v2
+	fs2, err := NewFileStorage(dir)
+	require.NoError(t, err)
+	require.NoError(t, fs2.LoadAll())
+
+	rows, err := fs2.Scan("users")
+	require.NoError(t, err)
+	require.Len(t, rows, 3)
+	assert.Equal(t, int64(1), rows[0][0])
+	assert.Equal(t, "alice", rows[0][1])
+	assert.Equal(t, float64(95.5), rows[0][2])
+	assert.Equal(t, int64(2), rows[1][0])
+	assert.Equal(t, "bob", rows[1][1])
+	assert.Nil(t, rows[1][2])
+	assert.Equal(t, int64(3), rows[2][0])
+	assert.Equal(t, "charlie", rows[2][1])
+	assert.Equal(t, float64(-1.0), rows[2][2])
+}
+
+func TestV2WithSecondaryIndex(t *testing.T) {
+	dir := t.TempDir()
+
+	// Phase 1: Create table with index
+	fs1, err := NewFileStorage(dir)
+	require.NoError(t, err)
+
+	info := &storage.TableInfo{
+		Name: "users",
+		Columns: []storage.ColumnInfo{
+			{Name: "id", DataType: "INT", Index: 0, PrimaryKey: true},
+			{Name: "name", DataType: "TEXT", Index: 1},
+		},
+		PrimaryKeyCol:  0,
+		PrimaryKeyCols: []int{0},
+	}
+	fs1.CreateTable(info)
+	require.NoError(t, fs1.Insert("users", storage.Row{int64(1), "alice"}))
+	require.NoError(t, fs1.Insert("users", storage.Row{int64(2), "bob"}))
+	require.NoError(t, fs1.Insert("users", storage.Row{int64(3), "alice"})) // duplicate name
+
+	idxInfo := &storage.IndexInfo{
+		Name:        "idx_name",
+		TableName:   "users",
+		ColumnNames: []string{"name"},
+		ColumnIdxs:  []int{1},
+		Type:        "BTREE",
+		Unique:      false,
+	}
+	require.NoError(t, fs1.CreateIndex(idxInfo))
+
+	// Phase 2: Reload
+	fs2, err := NewFileStorage(dir)
+	require.NoError(t, err)
+	require.NoError(t, fs2.LoadAll())
+
+	assert.True(t, fs2.HasIndex("idx_name"))
+	idx := fs2.LookupSingleColumnIndex("users", 1)
+	require.NotNil(t, idx)
+
+	// Verify index lookups
+	aliceKeys := idx.Lookup([]storage.Value{"alice"})
+	assert.Len(t, aliceKeys, 2)
+	bobKeys := idx.Lookup([]storage.Value{"bob"})
+	assert.Len(t, bobKeys, 1)
+	assert.Equal(t, int64(2), bobKeys[0])
+}
+
+func TestV2IncrementalWriteAndReload(t *testing.T) {
+	dir := t.TempDir()
+
+	// Phase 1: Create table with v2 snapshot
+	fs1, err := NewFileStorage(dir)
+	require.NoError(t, err)
+
+	info := &storage.TableInfo{
+		Name: "users",
+		Columns: []storage.ColumnInfo{
+			{Name: "id", DataType: "INT", Index: 0, PrimaryKey: true},
+			{Name: "name", DataType: "TEXT", Index: 1},
+		},
+		PrimaryKeyCol:  0,
+		PrimaryKeyCols: []int{0},
+	}
+	fs1.CreateTable(info)
+	require.NoError(t, fs1.Insert("users", storage.Row{int64(1), "alice"}))
+
+	// Phase 2: Reload, then add more data (incremental append-only log)
+	fs2, err := NewFileStorage(dir)
+	require.NoError(t, err)
+	require.NoError(t, fs2.LoadAll())
+	require.NoError(t, fs2.Insert("users", storage.Row{int64(2), "bob"}))
+
+	// Phase 3: Reload again - should have both rows (snapshot + log replay)
+	fs3, err := NewFileStorage(dir)
+	require.NoError(t, err)
+	require.NoError(t, fs3.LoadAll())
+
+	rows, err := fs3.Scan("users")
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	assert.Equal(t, int64(1), rows[0][0])
+	assert.Equal(t, "alice", rows[0][1])
+	assert.Equal(t, int64(2), rows[1][0])
+	assert.Equal(t, "bob", rows[1][1])
+}
+
+func TestV1ToV2Migration(t *testing.T) {
+	dir := t.TempDir()
+
+	// Phase 1: Manually create a v1 file
+	info := &storage.TableInfo{
+		Name: "legacy",
+		Columns: []storage.ColumnInfo{
+			{Name: "id", DataType: "INT", Index: 0, PrimaryKey: true},
+			{Name: "val", DataType: "TEXT", Index: 1},
+		},
+		PrimaryKeyCol:  0,
+		PrimaryKeyCols: []int{0},
+	}
+	keyRows := []storage.KeyRow{
+		{Key: 1, Row: storage.Row{int64(1), "one"}},
+		{Key: 2, Row: storage.Row{int64(2), "two"}},
+	}
+	v1Path := filepath.Join(dir, "legacy.dat")
+	require.NoError(t, writeFullFileV1(v1Path, info, nil, 3, keyRows))
+
+	// Verify it's v1
+	data, err := os.ReadFile(v1Path)
+	require.NoError(t, err)
+	assert.Equal(t, byte(0x01), data[6], "should be v1 before migration")
+
+	// Phase 2: Load (should auto-migrate to v2)
+	fs, err := NewFileStorage(dir)
+	require.NoError(t, err)
+	require.NoError(t, fs.LoadAll())
+
+	rows, err := fs.Scan("legacy")
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	assert.Equal(t, int64(1), rows[0][0])
+	assert.Equal(t, "one", rows[0][1])
+	assert.Equal(t, int64(2), rows[1][0])
+	assert.Equal(t, "two", rows[1][1])
+
+	// Verify file is now v2
+	data, err = os.ReadFile(v1Path)
+	require.NoError(t, err)
+	assert.Equal(t, byte(0x02), data[6], "should be v2 after migration")
+
+	// Phase 3: Reload from v2 and verify data intact
+	fs2, err := NewFileStorage(dir)
+	require.NoError(t, err)
+	require.NoError(t, fs2.LoadAll())
+
+	rows, err = fs2.Scan("legacy")
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	assert.Equal(t, int64(1), rows[0][0])
+	assert.Equal(t, "one", rows[0][1])
+}
+
+func TestV2AutoIncrementReload(t *testing.T) {
+	dir := t.TempDir()
+
+	// Phase 1: Create table without PK (auto-increment)
+	fs1, err := NewFileStorage(dir)
+	require.NoError(t, err)
+
+	info := &storage.TableInfo{
+		Name: "items",
+		Columns: []storage.ColumnInfo{
+			{Name: "a", DataType: "TEXT", Index: 0},
+			{Name: "b", DataType: "INT", Index: 1},
+		},
+		PrimaryKeyCol: -1,
+	}
+	fs1.CreateTable(info)
+	require.NoError(t, fs1.Insert("items", storage.Row{"x", int64(10)}))
+	require.NoError(t, fs1.Insert("items", storage.Row{"y", int64(20)}))
+
+	// Phase 2: Reload
+	fs2, err := NewFileStorage(dir)
+	require.NoError(t, err)
+	require.NoError(t, fs2.LoadAll())
+
+	rows, err := fs2.Scan("items")
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+
+	// Insert more data to check auto-increment continues
+	require.NoError(t, fs2.Insert("items", storage.Row{"z", int64(30)}))
+
+	rows, err = fs2.Scan("items")
+	require.NoError(t, err)
+	require.Len(t, rows, 3)
+}
+
 func TestMultipleTablesReload(t *testing.T) {
 	dir := t.TempDir()
 

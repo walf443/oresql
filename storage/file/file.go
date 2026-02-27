@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/walf443/oresql/btree"
 	"github.com/walf443/oresql/storage"
 	"github.com/walf443/oresql/storage/memory"
 )
@@ -23,9 +24,12 @@ const (
 	statusDeleted byte = 0x00
 
 	fileMagic       = "ORESQL"
-	fileVersion     = byte(0x01)
-	nextRowIDOffset = 7  // offset of nextRowID field in file
-	headerFixedSize = 19 // magic(6) + version(1) + nextRowID(8) + metaLength(4)
+	fileVersionV1   = byte(0x01)
+	fileVersionV2   = byte(0x02)
+	fileVersion     = fileVersionV2 // current version for new files
+	nextRowIDOffset = 7             // offset of nextRowID field in file
+	headerFixedSize = 19            // magic(6) + version(1) + nextRowID(8) + metaLength(4)
+	noRootPageID    = uint32(0xFFFFFFFF)
 )
 
 // FileStorage provides persistent storage backed by files on disk.
@@ -381,13 +385,13 @@ func decodeMeta(data []byte) (*storage.TableInfo, []*storage.IndexInfo, error) {
 
 // --- File-level read/write functions ---
 
-// writeFullFile writes a complete .dat file (header + metadata + all row entries).
-func writeFullFile(path string, info *storage.TableInfo, indexes []*storage.IndexInfo, nextRowID int64, keyRows []storage.KeyRow) error {
+// writeFullFileV1 writes a complete v1 .dat file (header + metadata + all row entries).
+func writeFullFileV1(path string, info *storage.TableInfo, indexes []*storage.IndexInfo, nextRowID int64, keyRows []storage.KeyRow) error {
 	metaBytes := encodeMeta(info, indexes)
 
 	var header [headerFixedSize]byte
 	copy(header[0:6], fileMagic)
-	header[6] = fileVersion
+	header[6] = fileVersionV1
 	binary.BigEndian.PutUint64(header[7:15], uint64(nextRowID))
 	binary.BigEndian.PutUint32(header[15:19], uint32(len(metaBytes)))
 
@@ -422,29 +426,208 @@ func writeFullFile(path string, info *storage.TableInfo, indexes []*storage.Inde
 	return f.Sync()
 }
 
-// readFile reads a .dat file and returns the table info, indexes, nextRowID, and raw row data bytes.
+// btreeMetaInfo holds BTree metadata for serialization.
+type btreeMetaInfo struct {
+	rootPageID uint32
+	degree     byte
+	length     uint32
+}
+
+// secondaryTreeMeta holds secondary index BTree metadata.
+type secondaryTreeMeta struct {
+	indexName  string
+	rootPageID uint32
+	degree     byte
+	length     uint32
+}
+
+// writeFullFileV2 writes a complete v2 .dat file with BTree snapshots.
+// Format: [Header v2][Metadata + BTree root info][Page Directory][Page Data][Empty Log]
+func writeFullFileV2(path string, info *storage.TableInfo, indexes []*storage.IndexInfo,
+	nextRowID int64, primaryTree *btree.BTree[int64],
+	secondaryIndexes map[string]*memory.SecondaryIndex) error {
+
+	// Collect all pages from BTree walks
+	var pages [][]byte // page data
+	nextPageID := uint32(0)
+
+	allocPage := func(data []byte) uint32 {
+		id := nextPageID
+		nextPageID++
+		pages = append(pages, data)
+		return id
+	}
+
+	// Walk primary tree
+	var primaryMeta btreeMetaInfo
+	if primaryTree != nil {
+		rootID, hasRoot := primaryTree.WalkNodes(func(data btree.NodeData[int64]) uint32 {
+			return allocPage(encodePrimaryPage(data))
+		})
+		if hasRoot {
+			primaryMeta.rootPageID = rootID
+		} else {
+			primaryMeta.rootPageID = noRootPageID
+		}
+		primaryMeta.degree = byte(primaryTree.Degree())
+		primaryMeta.length = uint32(primaryTree.Len())
+	} else {
+		primaryMeta.rootPageID = noRootPageID
+		primaryMeta.degree = 32
+		primaryMeta.length = 0
+	}
+
+	// Walk secondary trees
+	var secondaryMetas []secondaryTreeMeta
+	if secondaryIndexes != nil {
+		for _, idxInfo := range indexes {
+			lowerName := strings.ToLower(idxInfo.Name)
+			si, ok := secondaryIndexes[lowerName]
+			if !ok {
+				continue
+			}
+			tree := si.Tree()
+			meta := secondaryTreeMeta{indexName: idxInfo.Name}
+			if tree != nil {
+				rootID, hasRoot := tree.WalkNodes(func(data btree.NodeData[storage.KeyEncoding]) uint32 {
+					return allocPage(encodeSecondaryPage(data))
+				})
+				if hasRoot {
+					meta.rootPageID = rootID
+				} else {
+					meta.rootPageID = noRootPageID
+				}
+				meta.degree = byte(tree.Degree())
+				meta.length = uint32(tree.Len())
+			} else {
+				meta.rootPageID = noRootPageID
+				meta.degree = 32
+				meta.length = 0
+			}
+			secondaryMetas = append(secondaryMetas, meta)
+		}
+	}
+
+	// Encode metadata (existing schema + index defs)
+	metaBytes := encodeMeta(info, indexes)
+
+	// Encode BTree meta section (appended after existing metadata)
+	var btreeMeta []byte
+
+	// Primary tree info
+	var primaryRootBuf [4]byte
+	binary.BigEndian.PutUint32(primaryRootBuf[:], primaryMeta.rootPageID)
+	btreeMeta = append(btreeMeta, primaryRootBuf[:]...)
+	btreeMeta = append(btreeMeta, primaryMeta.degree)
+	var primaryLenBuf [4]byte
+	binary.BigEndian.PutUint32(primaryLenBuf[:], primaryMeta.length)
+	btreeMeta = append(btreeMeta, primaryLenBuf[:]...)
+
+	// Secondary trees
+	var numSecBuf [2]byte
+	binary.BigEndian.PutUint16(numSecBuf[:], uint16(len(secondaryMetas)))
+	btreeMeta = append(btreeMeta, numSecBuf[:]...)
+
+	for _, sm := range secondaryMetas {
+		putString(&btreeMeta, sm.indexName)
+		var rootBuf [4]byte
+		binary.BigEndian.PutUint32(rootBuf[:], sm.rootPageID)
+		btreeMeta = append(btreeMeta, rootBuf[:]...)
+		btreeMeta = append(btreeMeta, sm.degree)
+		var lenBuf [4]byte
+		binary.BigEndian.PutUint32(lenBuf[:], sm.length)
+		btreeMeta = append(btreeMeta, lenBuf[:]...)
+	}
+
+	// Combine metadata
+	fullMeta := append(metaBytes, btreeMeta...)
+
+	// Page directory
+	var pageDir []byte
+	var pageCountBuf [4]byte
+	binary.BigEndian.PutUint32(pageCountBuf[:], uint32(len(pages)))
+	pageDir = append(pageDir, pageCountBuf[:]...)
+
+	// Calculate page offsets (relative to start of page data section)
+	offset := uint32(0)
+	for _, p := range pages {
+		var offsetBuf [4]byte
+		binary.BigEndian.PutUint32(offsetBuf[:], offset)
+		pageDir = append(pageDir, offsetBuf[:]...)
+		var sizeBuf [4]byte
+		binary.BigEndian.PutUint32(sizeBuf[:], uint32(len(p)))
+		pageDir = append(pageDir, sizeBuf[:]...)
+		offset += uint32(len(p))
+	}
+
+	// Write file
+	var header [headerFixedSize]byte
+	copy(header[0:6], fileMagic)
+	header[6] = fileVersionV2
+	binary.BigEndian.PutUint64(header[7:15], uint64(nextRowID))
+	binary.BigEndian.PutUint32(header[15:19], uint32(len(fullMeta)))
+
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	if _, err := f.Write(header[:]); err != nil {
+		return err
+	}
+	if _, err := f.Write(fullMeta); err != nil {
+		return err
+	}
+	if _, err := f.Write(pageDir); err != nil {
+		return err
+	}
+	for _, p := range pages {
+		if _, err := f.Write(p); err != nil {
+			return err
+		}
+	}
+
+	// No append-only log entries (clean snapshot)
+	return f.Sync()
+}
+
+// writeFullFile writes a complete .dat file in current version (v2) format.
+func writeFullFile(path string, info *storage.TableInfo, indexes []*storage.IndexInfo, nextRowID int64, keyRows []storage.KeyRow) error {
+	// For simple callers that don't have BTree access (CreateTable, TruncateTable),
+	// use v1 format as the trees will be rebuilt anyway.
+	return writeFullFileV1(path, info, indexes, nextRowID, keyRows)
+}
+
+// readFileHeader reads just the header to determine the version.
+func readFileHeader(data []byte) (version byte, nextRowID int64, metaLength int, err error) {
+	if len(data) < headerFixedSize {
+		return 0, 0, 0, fmt.Errorf("file too short: %d bytes", len(data))
+	}
+	if string(data[0:6]) != fileMagic {
+		return 0, 0, 0, fmt.Errorf("invalid magic: %q", string(data[0:6]))
+	}
+	version = data[6]
+	nextRowID = int64(binary.BigEndian.Uint64(data[7:15]))
+	metaLength = int(binary.BigEndian.Uint32(data[15:19]))
+	return version, nextRowID, metaLength, nil
+}
+
+// readFile reads a v1 .dat file and returns the table info, indexes, nextRowID, and raw row data bytes.
 func readFile(path string) (*storage.TableInfo, []*storage.IndexInfo, int64, []byte, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, nil, 0, nil, err
 	}
 
-	if len(data) < headerFixedSize {
-		return nil, nil, 0, nil, fmt.Errorf("file too short: %d bytes", len(data))
+	version, nextRowID, metaLength, err := readFileHeader(data)
+	if err != nil {
+		return nil, nil, 0, nil, err
 	}
 
-	// Verify magic
-	if string(data[0:6]) != fileMagic {
-		return nil, nil, 0, nil, fmt.Errorf("invalid magic: %q", string(data[0:6]))
+	if version != fileVersionV1 {
+		return nil, nil, 0, nil, fmt.Errorf("expected v1 but got version: %d", version)
 	}
-
-	// Check version
-	if data[6] != fileVersion {
-		return nil, nil, 0, nil, fmt.Errorf("unsupported version: %d", data[6])
-	}
-
-	nextRowID := int64(binary.BigEndian.Uint64(data[7:15]))
-	metaLength := int(binary.BigEndian.Uint32(data[15:19]))
 
 	if headerFixedSize+metaLength > len(data) {
 		return nil, nil, 0, nil, fmt.Errorf("file too short for metadata: need %d, have %d", headerFixedSize+metaLength, len(data))
@@ -458,6 +641,233 @@ func readFile(path string) (*storage.TableInfo, []*storage.IndexInfo, int64, []b
 
 	rowData := data[headerFixedSize+metaLength:]
 	return info, indexes, nextRowID, rowData, nil
+}
+
+// readFileV2 reads a v2 .dat file and restores BTree snapshots into memory storage.
+func readFileV2(path string, mem *memory.MemoryStorage) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+
+	version, nextRowID, metaLength, err := readFileHeader(data)
+	if err != nil {
+		return err
+	}
+	if version != fileVersionV2 {
+		return fmt.Errorf("expected v2 but got version: %d", version)
+	}
+
+	if headerFixedSize+metaLength > len(data) {
+		return fmt.Errorf("file too short for metadata: need %d, have %d", headerFixedSize+metaLength, len(data))
+	}
+
+	fullMeta := data[headerFixedSize : headerFixedSize+metaLength]
+
+	// Decode the standard metadata first
+	info, indexes, err := decodeMeta(fullMeta)
+	if err != nil {
+		return fmt.Errorf("failed to decode metadata: %w", err)
+	}
+
+	// Find where standard metadata ends by re-encoding and checking length
+	standardMeta := encodeMeta(info, indexes)
+	btreeMetaStart := len(standardMeta)
+
+	if btreeMetaStart+9 > len(fullMeta) {
+		return fmt.Errorf("metadata too short for BTree info")
+	}
+
+	btreeMetaData := fullMeta[btreeMetaStart:]
+	pos := 0
+
+	// Primary tree info
+	primaryRootPageID := binary.BigEndian.Uint32(btreeMetaData[pos : pos+4])
+	pos += 4
+	primaryDegree := int(btreeMetaData[pos])
+	pos++
+	primaryLength := int(binary.BigEndian.Uint32(btreeMetaData[pos : pos+4]))
+	pos += 4
+
+	// Secondary trees
+	if pos+2 > len(btreeMetaData) {
+		return fmt.Errorf("metadata too short for secondary tree count")
+	}
+	numSecondary := int(binary.BigEndian.Uint16(btreeMetaData[pos : pos+2]))
+	pos += 2
+
+	type secMeta struct {
+		indexName  string
+		rootPageID uint32
+		degree     int
+		length     int
+	}
+	secMetas := make([]secMeta, numSecondary)
+	for i := 0; i < numSecondary; i++ {
+		name, newPos, err := getString(btreeMetaData, pos)
+		if err != nil {
+			return fmt.Errorf("reading secondary tree name: %w", err)
+		}
+		pos = newPos
+
+		if pos+9 > len(btreeMetaData) {
+			return fmt.Errorf("metadata too short for secondary tree %d info", i)
+		}
+		rootPageID := binary.BigEndian.Uint32(btreeMetaData[pos : pos+4])
+		pos += 4
+		degree := int(btreeMetaData[pos])
+		pos++
+		length := int(binary.BigEndian.Uint32(btreeMetaData[pos : pos+4]))
+		pos += 4
+
+		secMetas[i] = secMeta{name, rootPageID, degree, length}
+	}
+
+	// Read page directory
+	afterMeta := headerFixedSize + metaLength
+	if afterMeta+4 > len(data) {
+		return fmt.Errorf("file too short for page directory")
+	}
+
+	pageDirStart := afterMeta
+	pageCount := int(binary.BigEndian.Uint32(data[pageDirStart : pageDirStart+4]))
+	pageDirEnd := pageDirStart + 4 + pageCount*8 // 4 bytes offset + 4 bytes size per page
+
+	if pageDirEnd > len(data) {
+		return fmt.Errorf("file too short for page directory entries")
+	}
+
+	type pageEntry struct {
+		offset uint32
+		size   uint32
+	}
+	pageEntries := make([]pageEntry, pageCount)
+	dirPos := pageDirStart + 4
+	for i := 0; i < pageCount; i++ {
+		pageEntries[i].offset = binary.BigEndian.Uint32(data[dirPos : dirPos+4])
+		dirPos += 4
+		pageEntries[i].size = binary.BigEndian.Uint32(data[dirPos : dirPos+4])
+		dirPos += 4
+	}
+
+	pageDataStart := pageDirEnd
+
+	getPageData := func(pageID uint32) []byte {
+		if int(pageID) >= pageCount {
+			return nil
+		}
+		pe := pageEntries[pageID]
+		start := pageDataStart + int(pe.offset)
+		end := start + int(pe.size)
+		if end > len(data) {
+			return nil
+		}
+		return data[start:end]
+	}
+
+	// Create table in memory
+	mem.CreateTable(info)
+
+	// Restore primary BTree
+	if primaryRootPageID != noRootPageID {
+		primaryTree := btree.BuildFromNodes[int64](primaryDegree, primaryLength, primaryRootPageID,
+			func(pageID uint32) btree.NodeData[int64] {
+				pageData := getPageData(pageID)
+				if pageData == nil {
+					return btree.NodeData[int64]{Leaf: true}
+				}
+				nd, err := decodePrimaryPage(pageData)
+				if err != nil {
+					return btree.NodeData[int64]{Leaf: true}
+				}
+				return nd
+			})
+		mem.SetPrimaryTree(info.Name, primaryTree)
+	}
+
+	// Restore secondary indexes
+	for _, idxInfo := range indexes {
+		mem.CreateIndexEmpty(idxInfo)
+	}
+
+	for _, sm := range secMetas {
+		if sm.rootPageID == noRootPageID {
+			continue
+		}
+		secondaryTree := btree.BuildFromNodes[storage.KeyEncoding](sm.degree, sm.length, sm.rootPageID,
+			func(pageID uint32) btree.NodeData[storage.KeyEncoding] {
+				pageData := getPageData(pageID)
+				if pageData == nil {
+					return btree.NodeData[storage.KeyEncoding]{Leaf: true}
+				}
+				nd, err := decodeSecondaryPage(pageData)
+				if err != nil {
+					return btree.NodeData[storage.KeyEncoding]{Leaf: true}
+				}
+				return nd
+			})
+
+		allIndexes := mem.GetAllSecondaryTrees(info.Name)
+		if si, ok := allIndexes[strings.ToLower(sm.indexName)]; ok {
+			si.SetTree(secondaryTree)
+		}
+	}
+
+	// Restore nextRowID
+	mem.SetNextRowID(info.Name, nextRowID)
+
+	// Replay any append-only log entries after the page data
+	totalPageDataSize := 0
+	for _, pe := range pageEntries {
+		totalPageDataSize += int(pe.size)
+	}
+	logStart := pageDataStart + totalPageDataSize
+
+	if logStart < len(data) {
+		logData := data[logStart:]
+		if err := replayLog(info, mem, logData); err != nil {
+			return fmt.Errorf("failed to replay log: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// replayLog replays append-only log entries into memory storage.
+func replayLog(info *storage.TableInfo, mem *memory.MemoryStorage, logData []byte) error {
+	pos := 0
+	for pos < len(logData) {
+		if pos+1+8+4 > len(logData) {
+			break
+		}
+		status := logData[pos]
+		pos++
+		key := int64(binary.BigEndian.Uint64(logData[pos : pos+8]))
+		pos += 8
+		dataLen := int(binary.BigEndian.Uint32(logData[pos : pos+4]))
+		pos += 4
+		if pos+dataLen > len(logData) {
+			break
+		}
+		rowBytes := logData[pos : pos+dataLen]
+		pos += dataLen
+
+		if status == statusActive {
+			row, err := storage.DecodeRow(rowBytes)
+			if err != nil {
+				return fmt.Errorf("failed to decode log row (key=%d): %w", key, err)
+			}
+			if info.PrimaryKeyCol >= 0 {
+				// For PK tables, use Put semantics (insert or update)
+				mem.InsertWithKey(info.Name, key, row)
+			} else {
+				mem.InsertWithKey(info.Name, key, row)
+			}
+		} else {
+			mem.DeleteByKeys(info.Name, []int64{key})
+		}
+	}
+	return nil
 }
 
 // updateNextRowID writes the nextRowID at offset 7 in the .dat file.
@@ -505,6 +915,30 @@ func (fs *FileStorage) LoadAll() error {
 // loadTable loads a single table from its .dat file into memory.
 func (fs *FileStorage) loadTable(tableName string) error {
 	path := fs.tablePath(tableName)
+
+	// Read the file header to determine version
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("failed to read %s: %w", path, err)
+	}
+
+	version, _, _, err := readFileHeader(data)
+	if err != nil {
+		return fmt.Errorf("failed to read header of %s: %w", path, err)
+	}
+
+	switch version {
+	case fileVersionV2:
+		return fs.loadTableV2(path)
+	case fileVersionV1:
+		return fs.loadTableV1(path)
+	default:
+		return fmt.Errorf("unsupported file version: %d", version)
+	}
+}
+
+// loadTableV1 loads a table from a v1 .dat file (append-only log replay).
+func (fs *FileStorage) loadTableV1(path string) error {
 	info, indexes, nextRowID, rowsData, err := readFile(path)
 	if err != nil {
 		return fmt.Errorf("failed to read %s: %w", path, err)
@@ -546,18 +980,18 @@ func (fs *FileStorage) loadTable(tableName string) error {
 	// Insert active rows into memory storage
 	for key, row := range activeRows {
 		if info.PrimaryKeyCol >= 0 {
-			if err := fs.mem.Insert(tableName, row); err != nil {
+			if err := fs.mem.Insert(info.Name, row); err != nil {
 				return fmt.Errorf("failed to restore row (key=%d): %w", key, err)
 			}
 		} else {
-			if err := fs.mem.InsertWithKey(tableName, key, row); err != nil {
+			if err := fs.mem.InsertWithKey(info.Name, key, row); err != nil {
 				return fmt.Errorf("failed to restore row (key=%d): %w", key, err)
 			}
 		}
 	}
 
 	// Restore nextRowID
-	fs.mem.SetNextRowID(tableName, nextRowID)
+	fs.mem.SetNextRowID(info.Name, nextRowID)
 
 	// Create indexes
 	for _, idxInfo := range indexes {
@@ -566,7 +1000,14 @@ func (fs *FileStorage) loadTable(tableName string) error {
 		}
 	}
 
-	return nil
+	// Migrate to v2 on load
+	tableName := info.Name
+	return fs.rewriteTableV2(tableName)
+}
+
+// loadTableV2 loads a table from a v2 .dat file (BTree snapshot + optional log replay).
+func (fs *FileStorage) loadTableV2(path string) error {
+	return readFileV2(path, fs.mem)
 }
 
 // ListTables returns all table names from the data directory.
@@ -591,10 +1032,26 @@ func (fs *FileStorage) ListTables() []string {
 // LoadTableMeta loads the metadata for a single table from disk.
 func (fs *FileStorage) LoadTableMeta(name string) (*storage.TableInfo, []*storage.IndexInfo, int64, error) {
 	path := fs.tablePath(name)
-	info, indexes, nextRowID, _, err := readFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, nil, 0, fmt.Errorf("failed to read %s: %w", path, err)
 	}
+
+	_, nextRowID, metaLength, err := readFileHeader(data)
+	if err != nil {
+		return nil, nil, 0, fmt.Errorf("failed to read header of %s: %w", path, err)
+	}
+
+	if headerFixedSize+metaLength > len(data) {
+		return nil, nil, 0, fmt.Errorf("file too short for metadata")
+	}
+
+	metaData := data[headerFixedSize : headerFixedSize+metaLength]
+	info, indexes, err := decodeMeta(metaData)
+	if err != nil {
+		return nil, nil, 0, fmt.Errorf("failed to decode metadata: %w", err)
+	}
+
 	return info, indexes, nextRowID, nil
 }
 
@@ -651,77 +1108,27 @@ func (fs *FileStorage) getTableMeta(tableName string) (*storage.TableInfo, []*st
 // Used after schema changes (AddColumn, DropColumn) that modify all rows.
 // Uses ScanWithKeysNoLock because the caller (via WithTableLocks) already holds the table lock.
 func (fs *FileStorage) rewriteTable(tableName string) error {
-	keyRows, err := fs.mem.ScanWithKeysNoLock(tableName)
-	if err != nil {
-		return err
-	}
-
-	info, indexes, nextRowID := fs.getTableMeta(tableName)
-	if info == nil {
-		return nil
-	}
-
-	return writeFullFile(fs.tablePath(tableName), info, indexes, nextRowID, keyRows)
+	return fs.rewriteTableV2(tableName)
 }
 
-// rewriteTableMetaOnly rewrites the .dat file with updated metadata but preserves
-// the raw row data from disk. Used for CreateIndex/DropIndex where only metadata changes.
-func (fs *FileStorage) rewriteTableMetaOnly(tableName string) error {
-	path := fs.tablePath(tableName)
-
-	// Read the current file to get raw row data
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-
-	if len(data) < headerFixedSize {
-		return fmt.Errorf("file too short: %d bytes", len(data))
-	}
-
-	// Get the old metadata length to find where row data starts
-	oldMetaLen := int(binary.BigEndian.Uint32(data[15:19]))
-	rowDataStart := headerFixedSize + oldMetaLen
-	var rawRowData []byte
-	if rowDataStart <= len(data) {
-		rawRowData = data[rowDataStart:]
-	}
-
-	// Get current metadata from memory
+// rewriteTableV2 rewrites the entire .dat file using v2 format with BTree snapshots.
+func (fs *FileStorage) rewriteTableV2(tableName string) error {
 	info, indexes, nextRowID := fs.getTableMeta(tableName)
 	if info == nil {
 		return nil
 	}
 
-	// Encode new metadata
-	metaBytes := encodeMeta(info, indexes)
+	primaryTree := fs.mem.GetPrimaryTree(tableName)
+	secondaryIndexes := fs.mem.GetAllSecondaryTrees(tableName)
 
-	// Write new file
-	var header [headerFixedSize]byte
-	copy(header[0:6], fileMagic)
-	header[6] = fileVersion
-	binary.BigEndian.PutUint64(header[7:15], uint64(nextRowID))
-	binary.BigEndian.PutUint32(header[15:19], uint32(len(metaBytes)))
+	return writeFullFileV2(fs.tablePath(tableName), info, indexes, nextRowID,
+		primaryTree, secondaryIndexes)
+}
 
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	if _, err := f.Write(header[:]); err != nil {
-		return err
-	}
-	if _, err := f.Write(metaBytes); err != nil {
-		return err
-	}
-	if len(rawRowData) > 0 {
-		if _, err := f.Write(rawRowData); err != nil {
-			return err
-		}
-	}
-
-	return f.Sync()
+// rewriteTableMetaOnly rewrites the .dat file with updated metadata.
+// For v2, this does a full v2 rewrite since metadata includes BTree info.
+func (fs *FileStorage) rewriteTableMetaOnly(tableName string) error {
+	return fs.rewriteTableV2(tableName)
 }
 
 // --- storage.Engine implementation ---
@@ -730,8 +1137,8 @@ func (fs *FileStorage) CreateTable(info *storage.TableInfo) {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 	fs.mem.CreateTable(info)
-	// Write .dat file with header+metadata only (no rows)
-	writeFullFile(fs.tablePath(info.Name), info, nil, 1, nil)
+	// Write .dat file with v2 format (empty BTree snapshot)
+	writeFullFileV2(fs.tablePath(info.Name), info, nil, 1, nil, nil)
 }
 
 func (fs *FileStorage) DropTable(name string) {
@@ -745,10 +1152,10 @@ func (fs *FileStorage) TruncateTable(name string) {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 	fs.mem.TruncateTable(name)
-	// Rewrite .dat file with header+metadata only (no rows)
+	// Rewrite .dat file with v2 format (empty BTree snapshot)
 	info, indexes, nextRowID := fs.getTableMeta(name)
 	if info != nil {
-		writeFullFile(fs.tablePath(name), info, indexes, nextRowID, nil)
+		writeFullFileV2(fs.tablePath(name), info, indexes, nextRowID, nil, nil)
 	}
 }
 

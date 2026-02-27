@@ -489,6 +489,164 @@ func ptr[T any](v T) *T {
 	return &v
 }
 
+// --- WalkNodes / BuildFromNodes round-trip tests ---
+
+func TestWalkAndRebuildEmpty(t *testing.T) {
+	tree := New[int64](4)
+
+	_, hasRoot := tree.WalkNodes(func(data NodeData[int64]) uint32 {
+		t.Fatal("should not be called for empty tree")
+		return 0
+	})
+	assert.False(t, hasRoot, "empty tree should have no root")
+}
+
+func TestWalkAndRebuildSingleEntry(t *testing.T) {
+	tree := New[int64](4)
+	tree.Insert(42, "hello")
+
+	// Walk and store pages
+	pages := make(map[uint32]NodeData[int64])
+	nextID := uint32(0)
+	rootID, hasRoot := tree.WalkNodes(func(data NodeData[int64]) uint32 {
+		id := nextID
+		nextID++
+		pages[id] = data
+		return id
+	})
+	require.True(t, hasRoot)
+
+	// Rebuild
+	rebuilt := BuildFromNodes[int64](tree.Degree(), tree.Len(), rootID, func(pageID uint32) NodeData[int64] {
+		return pages[pageID]
+	})
+
+	assert.Equal(t, 1, rebuilt.Len())
+	val, ok := rebuilt.Get(42)
+	assert.True(t, ok)
+	assert.Equal(t, "hello", val)
+}
+
+func TestWalkAndRebuildMultiLevel(t *testing.T) {
+	tree := New[int64](3) // small degree to force multiple levels
+
+	// Insert enough to create multiple levels
+	n := 50
+	for i := 0; i < n; i++ {
+		tree.Insert(int64(i), i*10)
+	}
+
+	// Walk and store pages
+	pages := make(map[uint32]NodeData[int64])
+	nextID := uint32(0)
+	rootID, hasRoot := tree.WalkNodes(func(data NodeData[int64]) uint32 {
+		id := nextID
+		nextID++
+		pages[id] = data
+		return id
+	})
+	require.True(t, hasRoot)
+	assert.True(t, len(pages) > 1, "expected multiple pages for multi-level tree")
+
+	// Rebuild
+	rebuilt := BuildFromNodes[int64](tree.Degree(), tree.Len(), rootID, func(pageID uint32) NodeData[int64] {
+		return pages[pageID]
+	})
+
+	assert.Equal(t, n, rebuilt.Len())
+
+	// Verify all entries
+	for i := 0; i < n; i++ {
+		val, ok := rebuilt.Get(int64(i))
+		require.True(t, ok, "Get(%d)", i)
+		assert.Equal(t, i*10, val, "Get(%d)", i)
+	}
+
+	// Verify sorted order
+	var prev int64 = -1
+	rebuilt.ForEach(func(key int64, value any) bool {
+		assert.Greater(t, key, prev, "keys must be in order")
+		prev = key
+		return true
+	})
+}
+
+func TestWalkAndRebuildStringKeys(t *testing.T) {
+	tree := New[string](3)
+	words := []string{"apple", "banana", "cherry", "date", "elderberry", "fig", "grape"}
+	for _, w := range words {
+		tree.Put(w, len(w))
+	}
+
+	pages := make(map[uint32]NodeData[string])
+	nextID := uint32(0)
+	rootID, hasRoot := tree.WalkNodes(func(data NodeData[string]) uint32 {
+		id := nextID
+		nextID++
+		pages[id] = data
+		return id
+	})
+	require.True(t, hasRoot)
+
+	rebuilt := BuildFromNodes[string](tree.Degree(), tree.Len(), rootID, func(pageID uint32) NodeData[string] {
+		return pages[pageID]
+	})
+
+	assert.Equal(t, len(words), rebuilt.Len())
+	for _, w := range words {
+		val, ok := rebuilt.Get(w)
+		require.True(t, ok, "Get(%s)", w)
+		assert.Equal(t, len(w), val, "Get(%s)", w)
+	}
+}
+
+func TestDegree(t *testing.T) {
+	tree := New[int64](16)
+	assert.Equal(t, 16, tree.Degree())
+}
+
+func TestWalkAndRebuildPreservesInsertDelete(t *testing.T) {
+	tree := New[int64](4)
+	for i := int64(0); i < 100; i++ {
+		tree.Insert(i, i*10)
+	}
+	// Delete some entries
+	for i := int64(0); i < 50; i += 2 {
+		tree.Delete(i)
+	}
+
+	pages := make(map[uint32]NodeData[int64])
+	nextID := uint32(0)
+	rootID, hasRoot := tree.WalkNodes(func(data NodeData[int64]) uint32 {
+		id := nextID
+		nextID++
+		pages[id] = data
+		return id
+	})
+	require.True(t, hasRoot)
+
+	rebuilt := BuildFromNodes[int64](tree.Degree(), tree.Len(), rootID, func(pageID uint32) NodeData[int64] {
+		return pages[pageID]
+	})
+
+	assert.Equal(t, tree.Len(), rebuilt.Len())
+
+	// Compare all entries
+	var origKeys []int64
+	tree.ForEach(func(key int64, value any) bool {
+		origKeys = append(origKeys, key)
+		return true
+	})
+
+	var rebuildKeys []int64
+	rebuilt.ForEach(func(key int64, value any) bool {
+		rebuildKeys = append(rebuildKeys, key)
+		return true
+	})
+
+	require.Equal(t, origKeys, rebuildKeys)
+}
+
 // --- ForEachReverse tests ---
 
 func TestForEachReverse(t *testing.T) {

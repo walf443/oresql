@@ -429,7 +429,7 @@ func (e *Executor) scanSource(stmt *ast.SelectStmt, earlyLimit int) ([]Row, Expr
 	if len(stmt.Joins) > 0 || stmt.TableAlias != "" {
 		return e.scanSourceJoin(stmt, earlyLimit)
 	}
-	return e.scanSourceSingle(stmt)
+	return e.scanSourceSingle(stmt, earlyLimit)
 }
 
 // materializeSubquery executes a subquery and returns a virtual TableInfo and the rows.
@@ -473,7 +473,7 @@ func (e *Executor) scanSourceSubquery(stmt *ast.SelectStmt, earlyLimit int) ([]R
 }
 
 // scanSourceSingle scans a single table with optional index optimization.
-func (e *Executor) scanSourceSingle(stmt *ast.SelectStmt) ([]Row, ExprEvaluator, error) {
+func (e *Executor) scanSourceSingle(stmt *ast.SelectStmt, earlyLimit int) ([]Row, ExprEvaluator, error) {
 	db, info, err := e.resolveTable(stmt.DatabaseName, stmt.TableName)
 	if err != nil {
 		return nil, nil, err
@@ -482,6 +482,11 @@ func (e *Executor) scanSourceSingle(stmt *ast.SelectStmt) ([]Row, ExprEvaluator,
 	var rows []Row
 	if keys, indexUsed := e.tryIndexScan(stmt.Where, info); indexUsed {
 		rows, err = db.storage.GetByKeys(info.Name, keys)
+		if err != nil {
+			return nil, nil, err
+		}
+	} else if earlyLimit > 0 && stmt.Where == nil {
+		rows, err = db.storage.ScanOrdered(stmt.TableName, false, earlyLimit)
 		if err != nil {
 			return nil, nil, err
 		}

@@ -373,14 +373,13 @@ func (ds *DiskStorage) UpdateRow(tableName string, key int64, row storage.Row) e
 
 // --- Schema changes ---
 
+// AddColumn adds a column to all rows.
+// tbl.mu must be held by the caller (via WithTableLocks).
 func (ds *DiskStorage) AddColumn(tableName string, defaultVal storage.Value) error {
 	tbl, ok := ds.getTable(tableName)
 	if !ok {
 		return fmt.Errorf("table %q does not exist", tableName)
 	}
-
-	tbl.mu.Lock()
-	defer tbl.mu.Unlock()
 
 	// Update all rows
 	type kv struct {
@@ -405,14 +404,13 @@ func (ds *DiskStorage) AddColumn(tableName string, defaultVal storage.Value) err
 	return tbl.pool.FlushAll()
 }
 
+// DropColumn removes a column from all rows.
+// tbl.mu must be held by the caller (via WithTableLocks).
 func (ds *DiskStorage) DropColumn(tableName string, colIdx int) error {
 	tbl, ok := ds.getTable(tableName)
 	if !ok {
 		return fmt.Errorf("table %q does not exist", tableName)
 	}
-
-	tbl.mu.Lock()
-	defer tbl.mu.Unlock()
 
 	// Check composite indexes
 	for _, idx := range tbl.indexes {
@@ -499,14 +497,13 @@ func (ds *DiskStorage) DropColumn(tableName string, colIdx int) error {
 
 // --- Index management ---
 
+// CreateIndex creates a secondary index and builds it from existing data.
+// tbl.mu must be held by the caller (via WithTableLocks).
 func (ds *DiskStorage) CreateIndex(info *storage.IndexInfo) error {
 	tbl, ok := ds.getTable(info.TableName)
 	if !ok {
 		return fmt.Errorf("table %q does not exist", info.TableName)
 	}
-
-	tbl.mu.Lock()
-	defer tbl.mu.Unlock()
 
 	idx := &memory.SecondaryIndex{
 		Info: info,

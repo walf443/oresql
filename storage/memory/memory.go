@@ -787,6 +787,24 @@ func (s *MemoryStorage) ScanWithKeys(tableName string) ([]storage.KeyRow, error)
 	return rows, nil
 }
 
+// ScanWithKeysNoLock is like ScanWithKeys but does not acquire the table lock.
+// The caller must ensure proper synchronization (e.g., via WithTableLocks).
+func (s *MemoryStorage) ScanWithKeysNoLock(tableName string) ([]storage.KeyRow, error) {
+	lower := strings.ToLower(tableName)
+	s.mu.RLock()
+	tbl, ok := s.tables[lower]
+	s.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("table %q does not exist in storage", tableName)
+	}
+	var rows []storage.KeyRow
+	tbl.tree.ForEach(func(key int64, value any) bool {
+		rows = append(rows, storage.KeyRow{Key: key, Row: value.(storage.Row)})
+		return true
+	})
+	return rows, nil
+}
+
 // ForEachRow iterates over all rows in key order, calling fn for each.
 // If reverse is true, iterates in reverse key order.
 // fn returning false stops the iteration.
@@ -854,4 +872,57 @@ func (s *MemoryStorage) GetRow(tableName string, key int64) (storage.Row, bool) 
 		return nil, false
 	}
 	return val.(storage.Row), true
+}
+
+// InsertWithKey inserts a row with a specific BTree key (used for restoring state from disk).
+// Unlike Insert, this does not auto-generate a rowID.
+func (s *MemoryStorage) InsertWithKey(tableName string, key int64, row storage.Row) error {
+	tbl, ok := s.getTable(tableName)
+	if !ok {
+		return fmt.Errorf("table %q does not exist in storage", tableName)
+	}
+
+	tbl.mu.Lock()
+	defer tbl.mu.Unlock()
+
+	tbl.tree.Put(key, row)
+
+	// Update secondary indexes
+	for _, idx := range tbl.indexes {
+		idx.addRow(key, row)
+	}
+
+	return nil
+}
+
+// SetNextRowID sets the auto-increment counter for a table (used for restoring state from disk).
+func (s *MemoryStorage) SetNextRowID(tableName string, nextRowID int64) {
+	tbl, ok := s.getTable(tableName)
+	if !ok {
+		return
+	}
+	tbl.mu.Lock()
+	defer tbl.mu.Unlock()
+	tbl.nextRowID = nextRowID
+}
+
+// GetTableMeta returns the table info, index infos, and nextRowID for a table.
+// Note: This method only acquires s.mu.RLock for table lookup but does NOT acquire
+// tbl.mu. The caller must ensure thread-safety — either by holding tbl.mu via
+// WithTableLocks (DDL path) or via the FileStorage mutex (DML path).
+func (s *MemoryStorage) GetTableMeta(tableName string) (*storage.TableInfo, []*storage.IndexInfo, int64) {
+	lower := strings.ToLower(tableName)
+	s.mu.RLock()
+	tbl, ok := s.tables[lower]
+	s.mu.RUnlock()
+	if !ok {
+		return nil, nil, 0
+	}
+
+	var indexes []*storage.IndexInfo
+	for _, idx := range tbl.indexes {
+		indexes = append(indexes, idx.Info)
+	}
+
+	return tbl.Info, indexes, tbl.nextRowID
 }

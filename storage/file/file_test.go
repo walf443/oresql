@@ -1,0 +1,429 @@
+package file
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/walf443/oresql/storage"
+)
+
+func newTestStorage(t *testing.T) *FileStorage {
+	t.Helper()
+	dir := t.TempDir()
+	fs, err := NewFileStorage(dir)
+	require.NoError(t, err)
+	return fs
+}
+
+func TestCreateTableAndInsert(t *testing.T) {
+	fs := newTestStorage(t)
+
+	info := &storage.TableInfo{
+		Name: "users",
+		Columns: []storage.ColumnInfo{
+			{Name: "id", DataType: "INT", Index: 0, PrimaryKey: true},
+			{Name: "name", DataType: "TEXT", Index: 1},
+		},
+		PrimaryKeyCol:  0,
+		PrimaryKeyCols: []int{0},
+	}
+	fs.CreateTable(info)
+
+	err := fs.Insert("users", storage.Row{int64(1), "alice"})
+	require.NoError(t, err)
+	err = fs.Insert("users", storage.Row{int64(2), "bob"})
+	require.NoError(t, err)
+
+	rows, err := fs.Scan("users")
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	assert.Equal(t, int64(1), rows[0][0])
+	assert.Equal(t, "alice", rows[0][1])
+	assert.Equal(t, int64(2), rows[1][0])
+	assert.Equal(t, "bob", rows[1][1])
+}
+
+func TestPersistenceReload(t *testing.T) {
+	dir := t.TempDir()
+
+	// Phase 1: Create table and insert data
+	fs1, err := NewFileStorage(dir)
+	require.NoError(t, err)
+
+	info := &storage.TableInfo{
+		Name: "users",
+		Columns: []storage.ColumnInfo{
+			{Name: "id", DataType: "INT", Index: 0, PrimaryKey: true},
+			{Name: "name", DataType: "TEXT", Index: 1},
+		},
+		PrimaryKeyCol:  0,
+		PrimaryKeyCols: []int{0},
+	}
+	fs1.CreateTable(info)
+	require.NoError(t, fs1.Insert("users", storage.Row{int64(1), "alice"}))
+	require.NoError(t, fs1.Insert("users", storage.Row{int64(2), "bob"}))
+
+	// Verify .dat file exists
+	datPath := filepath.Join(dir, "users.dat")
+	_, err = os.Stat(datPath)
+	require.NoError(t, err, "users.dat should exist")
+
+	// Phase 2: Create new FileStorage and load from disk
+	fs2, err := NewFileStorage(dir)
+	require.NoError(t, err)
+	require.NoError(t, fs2.LoadAll())
+
+	rows, err := fs2.Scan("users")
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	assert.Equal(t, int64(1), rows[0][0])
+	assert.Equal(t, "alice", rows[0][1])
+	assert.Equal(t, int64(2), rows[1][0])
+	assert.Equal(t, "bob", rows[1][1])
+}
+
+func TestPersistenceWithAutoIncrement(t *testing.T) {
+	dir := t.TempDir()
+
+	// Phase 1: Create table with composite PK (auto-increment keys)
+	fs1, err := NewFileStorage(dir)
+	require.NoError(t, err)
+
+	info := &storage.TableInfo{
+		Name: "items",
+		Columns: []storage.ColumnInfo{
+			{Name: "a", DataType: "TEXT", Index: 0},
+			{Name: "b", DataType: "INT", Index: 1},
+		},
+		PrimaryKeyCol: -1, // no single INT PK → auto-increment
+	}
+	fs1.CreateTable(info)
+	require.NoError(t, fs1.Insert("items", storage.Row{"x", int64(10)}))
+	require.NoError(t, fs1.Insert("items", storage.Row{"y", int64(20)}))
+
+	// Phase 2: Reload
+	fs2, err := NewFileStorage(dir)
+	require.NoError(t, err)
+	require.NoError(t, fs2.LoadAll())
+
+	rows, err := fs2.Scan("items")
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+
+	// Insert more data to check auto-increment continues
+	require.NoError(t, fs2.Insert("items", storage.Row{"z", int64(30)}))
+
+	rows, err = fs2.Scan("items")
+	require.NoError(t, err)
+	require.Len(t, rows, 3)
+}
+
+func TestDeletePersistence(t *testing.T) {
+	dir := t.TempDir()
+
+	// Phase 1: Create, insert, delete
+	fs1, err := NewFileStorage(dir)
+	require.NoError(t, err)
+
+	info := &storage.TableInfo{
+		Name: "users",
+		Columns: []storage.ColumnInfo{
+			{Name: "id", DataType: "INT", Index: 0, PrimaryKey: true},
+			{Name: "name", DataType: "TEXT", Index: 1},
+		},
+		PrimaryKeyCol:  0,
+		PrimaryKeyCols: []int{0},
+	}
+	fs1.CreateTable(info)
+	require.NoError(t, fs1.Insert("users", storage.Row{int64(1), "alice"}))
+	require.NoError(t, fs1.Insert("users", storage.Row{int64(2), "bob"}))
+	require.NoError(t, fs1.Insert("users", storage.Row{int64(3), "charlie"}))
+	require.NoError(t, fs1.DeleteByKeys("users", []int64{2}))
+
+	// Phase 2: Reload and verify deletion persisted
+	fs2, err := NewFileStorage(dir)
+	require.NoError(t, err)
+	require.NoError(t, fs2.LoadAll())
+
+	rows, err := fs2.Scan("users")
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	assert.Equal(t, int64(1), rows[0][0])
+	assert.Equal(t, int64(3), rows[1][0])
+}
+
+func TestUpdatePersistence(t *testing.T) {
+	dir := t.TempDir()
+
+	// Phase 1: Create, insert, update
+	fs1, err := NewFileStorage(dir)
+	require.NoError(t, err)
+
+	info := &storage.TableInfo{
+		Name: "users",
+		Columns: []storage.ColumnInfo{
+			{Name: "id", DataType: "INT", Index: 0, PrimaryKey: true},
+			{Name: "name", DataType: "TEXT", Index: 1},
+		},
+		PrimaryKeyCol:  0,
+		PrimaryKeyCols: []int{0},
+	}
+	fs1.CreateTable(info)
+	require.NoError(t, fs1.Insert("users", storage.Row{int64(1), "alice"}))
+	require.NoError(t, fs1.UpdateRow("users", 1, storage.Row{int64(1), "ALICE"}))
+
+	// Phase 2: Reload and verify update persisted
+	fs2, err := NewFileStorage(dir)
+	require.NoError(t, err)
+	require.NoError(t, fs2.LoadAll())
+
+	rows, err := fs2.Scan("users")
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "ALICE", rows[0][1])
+}
+
+func TestDropTablePersistence(t *testing.T) {
+	dir := t.TempDir()
+
+	// Phase 1: Create table, then drop it
+	fs1, err := NewFileStorage(dir)
+	require.NoError(t, err)
+
+	info := &storage.TableInfo{
+		Name: "temp",
+		Columns: []storage.ColumnInfo{
+			{Name: "id", DataType: "INT", Index: 0},
+		},
+		PrimaryKeyCol: -1,
+	}
+	fs1.CreateTable(info)
+	require.NoError(t, fs1.Insert("temp", storage.Row{int64(1)}))
+	fs1.DropTable("temp")
+
+	// Verify .dat file is gone
+	datPath := filepath.Join(dir, "temp.dat")
+	_, err = os.Stat(datPath)
+	assert.True(t, os.IsNotExist(err))
+
+	// Phase 2: Reload - should have no tables
+	fs2, err := NewFileStorage(dir)
+	require.NoError(t, err)
+	require.NoError(t, fs2.LoadAll())
+
+	tables := fs2.ListTables()
+	assert.Empty(t, tables)
+}
+
+func TestTruncateTablePersistence(t *testing.T) {
+	dir := t.TempDir()
+
+	// Phase 1: Create, insert, truncate
+	fs1, err := NewFileStorage(dir)
+	require.NoError(t, err)
+
+	info := &storage.TableInfo{
+		Name: "users",
+		Columns: []storage.ColumnInfo{
+			{Name: "id", DataType: "INT", Index: 0, PrimaryKey: true},
+			{Name: "name", DataType: "TEXT", Index: 1},
+		},
+		PrimaryKeyCol:  0,
+		PrimaryKeyCols: []int{0},
+	}
+	fs1.CreateTable(info)
+	require.NoError(t, fs1.Insert("users", storage.Row{int64(1), "alice"}))
+	fs1.TruncateTable("users")
+
+	// Phase 2: Reload and verify table is empty
+	fs2, err := NewFileStorage(dir)
+	require.NoError(t, err)
+	require.NoError(t, fs2.LoadAll())
+
+	rows, err := fs2.Scan("users")
+	require.NoError(t, err)
+	assert.Empty(t, rows)
+}
+
+func TestIndexPersistence(t *testing.T) {
+	dir := t.TempDir()
+
+	// Phase 1: Create table with index
+	fs1, err := NewFileStorage(dir)
+	require.NoError(t, err)
+
+	info := &storage.TableInfo{
+		Name: "users",
+		Columns: []storage.ColumnInfo{
+			{Name: "id", DataType: "INT", Index: 0, PrimaryKey: true},
+			{Name: "name", DataType: "TEXT", Index: 1},
+		},
+		PrimaryKeyCol:  0,
+		PrimaryKeyCols: []int{0},
+	}
+	fs1.CreateTable(info)
+	require.NoError(t, fs1.Insert("users", storage.Row{int64(1), "alice"}))
+	require.NoError(t, fs1.Insert("users", storage.Row{int64(2), "bob"}))
+
+	idxInfo := &storage.IndexInfo{
+		Name:        "idx_name",
+		TableName:   "users",
+		ColumnNames: []string{"name"},
+		ColumnIdxs:  []int{1},
+		Type:        "BTREE",
+		Unique:      false,
+	}
+	require.NoError(t, fs1.CreateIndex(idxInfo))
+
+	// Phase 2: Reload and verify index works
+	fs2, err := NewFileStorage(dir)
+	require.NoError(t, err)
+	require.NoError(t, fs2.LoadAll())
+
+	assert.True(t, fs2.HasIndex("idx_name"))
+	idx := fs2.LookupSingleColumnIndex("users", 1)
+	require.NotNil(t, idx)
+	keys := idx.Lookup([]storage.Value{"alice"})
+	require.Len(t, keys, 1)
+	assert.Equal(t, int64(1), keys[0])
+}
+
+func TestNullValuePersistence(t *testing.T) {
+	dir := t.TempDir()
+
+	// Phase 1: Create table with nullable columns
+	fs1, err := NewFileStorage(dir)
+	require.NoError(t, err)
+
+	info := &storage.TableInfo{
+		Name: "data",
+		Columns: []storage.ColumnInfo{
+			{Name: "id", DataType: "INT", Index: 0, PrimaryKey: true},
+			{Name: "value", DataType: "TEXT", Index: 1},
+		},
+		PrimaryKeyCol:  0,
+		PrimaryKeyCols: []int{0},
+	}
+	fs1.CreateTable(info)
+	require.NoError(t, fs1.Insert("data", storage.Row{int64(1), nil}))
+	require.NoError(t, fs1.Insert("data", storage.Row{int64(2), "hello"}))
+
+	// Phase 2: Reload and verify nulls are preserved
+	fs2, err := NewFileStorage(dir)
+	require.NoError(t, err)
+	require.NoError(t, fs2.LoadAll())
+
+	rows, err := fs2.Scan("data")
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	assert.Nil(t, rows[0][1])
+	assert.Equal(t, "hello", rows[1][1])
+}
+
+func TestFloatValuePersistence(t *testing.T) {
+	dir := t.TempDir()
+
+	fs1, err := NewFileStorage(dir)
+	require.NoError(t, err)
+
+	info := &storage.TableInfo{
+		Name: "measures",
+		Columns: []storage.ColumnInfo{
+			{Name: "id", DataType: "INT", Index: 0, PrimaryKey: true},
+			{Name: "value", DataType: "FLOAT", Index: 1},
+		},
+		PrimaryKeyCol:  0,
+		PrimaryKeyCols: []int{0},
+	}
+	fs1.CreateTable(info)
+	require.NoError(t, fs1.Insert("measures", storage.Row{int64(1), float64(3.14)}))
+	require.NoError(t, fs1.Insert("measures", storage.Row{int64(2), float64(-2.71)}))
+
+	// Reload
+	fs2, err := NewFileStorage(dir)
+	require.NoError(t, err)
+	require.NoError(t, fs2.LoadAll())
+
+	rows, err := fs2.Scan("measures")
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	assert.Equal(t, float64(3.14), rows[0][1])
+	assert.Equal(t, float64(-2.71), rows[1][1])
+}
+
+func TestListTablesAndLoadTableMeta(t *testing.T) {
+	fs := newTestStorage(t)
+
+	info1 := &storage.TableInfo{
+		Name: "t1",
+		Columns: []storage.ColumnInfo{
+			{Name: "id", DataType: "INT", Index: 0},
+		},
+		PrimaryKeyCol: -1,
+	}
+	info2 := &storage.TableInfo{
+		Name: "t2",
+		Columns: []storage.ColumnInfo{
+			{Name: "id", DataType: "INT", Index: 0},
+		},
+		PrimaryKeyCol: -1,
+	}
+	fs.CreateTable(info1)
+	fs.CreateTable(info2)
+
+	tables := fs.ListTables()
+	assert.Len(t, tables, 2)
+
+	loadedInfo, _, _, err := fs.LoadTableMeta("t1")
+	require.NoError(t, err)
+	assert.Equal(t, "t1", loadedInfo.Name)
+}
+
+func TestMultipleTablesReload(t *testing.T) {
+	dir := t.TempDir()
+
+	// Phase 1: Create two tables
+	fs1, err := NewFileStorage(dir)
+	require.NoError(t, err)
+
+	info1 := &storage.TableInfo{
+		Name: "users",
+		Columns: []storage.ColumnInfo{
+			{Name: "id", DataType: "INT", Index: 0, PrimaryKey: true},
+			{Name: "name", DataType: "TEXT", Index: 1},
+		},
+		PrimaryKeyCol:  0,
+		PrimaryKeyCols: []int{0},
+	}
+	info2 := &storage.TableInfo{
+		Name: "orders",
+		Columns: []storage.ColumnInfo{
+			{Name: "id", DataType: "INT", Index: 0, PrimaryKey: true},
+			{Name: "amount", DataType: "INT", Index: 1},
+		},
+		PrimaryKeyCol:  0,
+		PrimaryKeyCols: []int{0},
+	}
+	fs1.CreateTable(info1)
+	fs1.CreateTable(info2)
+	require.NoError(t, fs1.Insert("users", storage.Row{int64(1), "alice"}))
+	require.NoError(t, fs1.Insert("orders", storage.Row{int64(100), int64(500)}))
+
+	// Phase 2: Reload
+	fs2, err := NewFileStorage(dir)
+	require.NoError(t, err)
+	require.NoError(t, fs2.LoadAll())
+
+	users, err := fs2.Scan("users")
+	require.NoError(t, err)
+	require.Len(t, users, 1)
+	assert.Equal(t, "alice", users[0][1])
+
+	orders, err := fs2.Scan("orders")
+	require.NoError(t, err)
+	require.Len(t, orders, 1)
+	assert.Equal(t, int64(500), orders[0][1])
+}

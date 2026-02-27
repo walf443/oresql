@@ -36,7 +36,9 @@ func (p *Parser) Parse() (ast.Statement, error) {
 
 	switch p.curToken.Type {
 	case token.CREATE:
-		if p.peekToken.Type == token.INDEX || p.peekToken.Type == token.UNIQUE {
+		if p.peekToken.Type == token.DATABASE {
+			stmt, err = p.parseCreateDatabase()
+		} else if p.peekToken.Type == token.INDEX || p.peekToken.Type == token.UNIQUE {
 			stmt, err = p.parseCreateIndex()
 		} else {
 			stmt, err = p.parseCreateTable()
@@ -56,11 +58,17 @@ func (p *Parser) Parse() (ast.Statement, error) {
 	case token.DELETE:
 		stmt, err = p.parseDelete()
 	case token.DROP:
-		if p.peekToken.Type == token.INDEX {
+		if p.peekToken.Type == token.DATABASE {
+			stmt, err = p.parseDropDatabase()
+		} else if p.peekToken.Type == token.INDEX {
 			stmt, err = p.parseDropIndex()
 		} else {
 			stmt, err = p.parseDropTable()
 		}
+	case token.USE:
+		stmt, err = p.parseUseDatabase()
+	case token.SHOW:
+		stmt, err = p.parseShowDatabases()
 	case token.TRUNCATE:
 		stmt, err = p.parseTruncateTable()
 	case token.ALTER:
@@ -540,6 +548,75 @@ func (p *Parser) parseDropTable() (*ast.DropTableStmt, error) {
 	p.nextToken()
 
 	return &ast.DropTableStmt{TableName: tableName}, nil
+}
+
+// isNameToken returns true if the current token can be used as a name
+// (identifier or keyword — allows USE default, CREATE DATABASE test, etc.).
+func (p *Parser) isNameToken() bool {
+	return p.isIdent() || token.IsKeyword(p.curToken.Type)
+}
+
+// parseCreateDatabase parses: CREATE DATABASE <name>
+func (p *Parser) parseCreateDatabase() (*ast.CreateDatabaseStmt, error) {
+	if err := p.expectToken(token.CREATE); err != nil {
+		return nil, err
+	}
+	if err := p.expectToken(token.DATABASE); err != nil {
+		return nil, err
+	}
+
+	if !p.isNameToken() {
+		return nil, fmt.Errorf("expected database name, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+	}
+	name := p.curToken.Literal
+	p.nextToken()
+
+	return &ast.CreateDatabaseStmt{DatabaseName: name}, nil
+}
+
+// parseDropDatabase parses: DROP DATABASE <name>
+func (p *Parser) parseDropDatabase() (*ast.DropDatabaseStmt, error) {
+	if err := p.expectToken(token.DROP); err != nil {
+		return nil, err
+	}
+	if err := p.expectToken(token.DATABASE); err != nil {
+		return nil, err
+	}
+
+	if !p.isNameToken() {
+		return nil, fmt.Errorf("expected database name, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+	}
+	name := p.curToken.Literal
+	p.nextToken()
+
+	return &ast.DropDatabaseStmt{DatabaseName: name}, nil
+}
+
+// parseUseDatabase parses: USE <name>
+func (p *Parser) parseUseDatabase() (*ast.UseDatabaseStmt, error) {
+	if err := p.expectToken(token.USE); err != nil {
+		return nil, err
+	}
+
+	if !p.isNameToken() {
+		return nil, fmt.Errorf("expected database name, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+	}
+	name := p.curToken.Literal
+	p.nextToken()
+
+	return &ast.UseDatabaseStmt{DatabaseName: name}, nil
+}
+
+// parseShowDatabases parses: SHOW DATABASES
+func (p *Parser) parseShowDatabases() (*ast.ShowDatabasesStmt, error) {
+	if err := p.expectToken(token.SHOW); err != nil {
+		return nil, err
+	}
+	if err := p.expectToken(token.DATABASES); err != nil {
+		return nil, err
+	}
+
+	return &ast.ShowDatabasesStmt{}, nil
 }
 
 // parseTruncateTable parses: TRUNCATE TABLE <name>

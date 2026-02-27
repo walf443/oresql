@@ -29,7 +29,7 @@ func main() {
 	}
 
 	rl, err := readline.NewEx(&readline.Config{
-		Prompt:       "oresql> ",
+		Prompt:       "oresql(default)> ",
 		HistoryFile:  historyFile,
 		HistoryLimit: 1000,
 	})
@@ -50,12 +50,15 @@ func main() {
 		execOpts = append(execOpts, engine.WithWAL(wal))
 	}
 
-	var dbOpts []engine.DatabaseOption
+	mgr := engine.NewDatabaseManager(*dataDir)
 	if *dataDir != "" {
-		dbOpts = append(dbOpts, engine.WithDataDir(*dataDir))
+		if err := mgr.LoadExistingDatabases(); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to load databases: %s\n", err)
+			os.Exit(1)
+		}
 	}
-
-	db := engine.NewDatabase("default", dbOpts...)
+	db, _ := mgr.GetDatabase("default")
+	execOpts = append(execOpts, engine.WithDatabaseManager(mgr))
 	exec := engine.NewExecutor(db, execOpts...)
 
 	if err := exec.ReplayWAL(); err != nil {
@@ -91,5 +94,8 @@ func main() {
 		}
 
 		writer.PrintResult(result)
+
+		// Update prompt to reflect current database
+		rl.SetPrompt(fmt.Sprintf("oresql(%s)> ", exec.CurrentDatabaseName()))
 	}
 }

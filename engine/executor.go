@@ -27,10 +27,18 @@ func WithWAL(w *WAL) Option {
 	}
 }
 
+// WithDatabaseManager sets the DatabaseManager for the Executor.
+func WithDatabaseManager(mgr *DatabaseManager) Option {
+	return func(e *Executor) {
+		e.dbManager = mgr
+	}
+}
+
 // Executor runs SQL statements.
 type Executor struct {
-	db  *Database
-	wal *WAL
+	db        *Database
+	dbManager *DatabaseManager
+	wal       *WAL
 }
 
 // NewExecutor creates a new Executor for the given Database.
@@ -40,6 +48,11 @@ func NewExecutor(db *Database, opts ...Option) *Executor {
 		opt(e)
 	}
 	return e
+}
+
+// CurrentDatabaseName returns the name of the currently active database.
+func (e *Executor) CurrentDatabaseName() string {
+	return e.db.Name
 }
 
 // ExecuteSQL parses and executes a SQL string, logging mutating statements to WAL.
@@ -57,7 +70,8 @@ func (e *Executor) ExecuteSQL(sql string) (*Result, error) {
 	if e.wal != nil {
 		_, isSelect := stmt.(*ast.SelectStmt)
 		_, isSetOp := stmt.(*ast.SetOpStmt)
-		if !isSelect && !isSetOp {
+		_, isShowDBs := stmt.(*ast.ShowDatabasesStmt)
+		if !isSelect && !isSetOp && !isShowDBs {
 			if err := e.wal.Append(sql); err != nil {
 				return nil, fmt.Errorf("WAL write error: %w", err)
 			}
@@ -160,6 +174,14 @@ func (e *Executor) executeInner(stmt ast.Statement) (*Result, error) {
 		return e.executeAlterTableDropColumn(s)
 	case *ast.SetOpStmt:
 		return e.executeSetOp(s)
+	case *ast.CreateDatabaseStmt:
+		return e.executeCreateDatabase(s)
+	case *ast.DropDatabaseStmt:
+		return e.executeDropDatabase(s)
+	case *ast.UseDatabaseStmt:
+		return e.executeUseDatabase(s)
+	case *ast.ShowDatabasesStmt:
+		return e.executeShowDatabases(s)
 	default:
 		return nil, fmt.Errorf("unknown statement type: %T", stmt)
 	}

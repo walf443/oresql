@@ -87,6 +87,12 @@
 - [ ] BEGIN / COMMIT / ROLLBACK
 - [ ] SAVEPOINT
 
+## データベース管理
+
+- [x] CREATE DATABASE / DROP DATABASE
+- [x] USE DATABASE
+- [x] SHOW DATABASES
+
 ## その他
 
 - [ ] VIEW（CREATE VIEW / DROP VIEW）

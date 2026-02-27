@@ -398,3 +398,33 @@ type ScalarExpr struct {
 
 func (e *ScalarExpr) NodeType() string { return "Scalar" }
 func (e *ScalarExpr) exprNode()        {}
+
+// CreateDatabaseStmt represents CREATE DATABASE <name>.
+type CreateDatabaseStmt struct {
+	DatabaseName string
+}
+
+func (s *CreateDatabaseStmt) NodeType() string { return "CreateDatabase" }
+func (s *CreateDatabaseStmt) statementNode()   {}
+
+// DropDatabaseStmt represents DROP DATABASE <name>.
+type DropDatabaseStmt struct {
+	DatabaseName string
+}
+
+func (s *DropDatabaseStmt) NodeType() string { return "DropDatabase" }
+func (s *DropDatabaseStmt) statementNode()   {}
+
+// UseDatabaseStmt represents USE <name>.
+type UseDatabaseStmt struct {
+	DatabaseName string
+}
+
+func (s *UseDatabaseStmt) NodeType() string { return "UseDatabase" }
+func (s *UseDatabaseStmt) statementNode()   {}
+
+// ShowDatabasesStmt represents SHOW DATABASES.
+type ShowDatabasesStmt struct{}
+
+func (s *ShowDatabasesStmt) NodeType() string { return "ShowDatabases" }
+func (s *ShowDatabasesStmt) statementNode()   {}

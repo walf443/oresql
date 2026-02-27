@@ -121,6 +121,12 @@ const (
 	OVER       // OVER keyword
 	PARTITION  // PARTITION keyword
 	WINDOW     // WINDOW keyword
+
+	// Database management keywords
+	DATABASE  // DATABASE keyword
+	USE       // USE keyword
+	SHOW      // SHOW keyword
+	DATABASES // DATABASES keyword
 )
 
 var tokenNames = map[TokenType]string{
@@ -231,6 +237,10 @@ var tokenNames = map[TokenType]string{
 	OVER:         "OVER",
 	PARTITION:    "PARTITION",
 	WINDOW:       "WINDOW",
+	DATABASE:     "DATABASE",
+	USE:          "USE",
+	SHOW:         "SHOW",
+	DATABASES:    "DATABASES",
 }
 
 func (t TokenType) String() string {
@@ -331,6 +341,16 @@ var keywords = map[string]TokenType{
 	"OVER":       OVER,
 	"PARTITION":  PARTITION,
 	"WINDOW":     WINDOW,
+	"DATABASE":   DATABASE,
+	"USE":        USE,
+	"SHOW":       SHOW,
+	"DATABASES":  DATABASES,
+}
+
+// IsKeyword returns true if the given token type is a SQL keyword.
+func IsKeyword(t TokenType) bool {
+	_, ok := tokenNames[t]
+	return ok && t >= CREATE
 }
 
 // LookupIdent returns the keyword TokenType if the identifier is a keyword,

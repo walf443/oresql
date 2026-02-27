@@ -1409,3 +1409,87 @@ func TestParseOverWindowName(t *testing.T) {
 		assert.Equal(t, "w", winExpr.WindowName, "column %d", i)
 	}
 }
+
+func TestParseCreateDatabase(t *testing.T) {
+	tests := []struct {
+		input string
+		name  string
+	}{
+		{"CREATE DATABASE mydb", "mydb"},
+		{"CREATE DATABASE MyDB", "MyDB"},
+		{"create database testdb;", "testdb"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			stmt := parse(t, tt.input)
+			require.IsType(t, &ast.CreateDatabaseStmt{}, stmt)
+			s := stmt.(*ast.CreateDatabaseStmt)
+			assert.Equal(t, tt.name, s.DatabaseName)
+		})
+	}
+}
+
+func TestParseDropDatabase(t *testing.T) {
+	tests := []struct {
+		input string
+		name  string
+	}{
+		{"DROP DATABASE mydb", "mydb"},
+		{"drop database testdb;", "testdb"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			stmt := parse(t, tt.input)
+			require.IsType(t, &ast.DropDatabaseStmt{}, stmt)
+			s := stmt.(*ast.DropDatabaseStmt)
+			assert.Equal(t, tt.name, s.DatabaseName)
+		})
+	}
+}
+
+func TestParseUseDatabase(t *testing.T) {
+	tests := []struct {
+		input string
+		name  string
+	}{
+		{"USE mydb", "mydb"},
+		{"use default;", "default"},
+		{"USE TestDB", "TestDB"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			stmt := parse(t, tt.input)
+			require.IsType(t, &ast.UseDatabaseStmt{}, stmt)
+			s := stmt.(*ast.UseDatabaseStmt)
+			assert.Equal(t, tt.name, s.DatabaseName)
+		})
+	}
+}
+
+func TestParseShowDatabases(t *testing.T) {
+	tests := []string{
+		"SHOW DATABASES",
+		"show databases;",
+	}
+	for _, input := range tests {
+		t.Run(input, func(t *testing.T) {
+			stmt := parse(t, input)
+			require.IsType(t, &ast.ShowDatabasesStmt{}, stmt)
+		})
+	}
+}
+
+func TestParseCreateDatabaseError(t *testing.T) {
+	l := lexer.New("CREATE DATABASE")
+	p := New(l)
+	_, err := p.Parse()
+	require.Error(t, err)
+}
+
+func TestParseUseDatabaseKeywordName(t *testing.T) {
+	// Keywords should be usable as database names
+	stmt := parse(t, "USE default")
+	require.IsType(t, &ast.UseDatabaseStmt{}, stmt)
+	s := stmt.(*ast.UseDatabaseStmt)
+	assert.Equal(t, "default", s.DatabaseName)
+}

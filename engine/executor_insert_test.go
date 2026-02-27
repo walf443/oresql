@@ -8,7 +8,7 @@ import (
 )
 
 func TestInsertMultipleRows(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 
 	result := run(t, exec, "INSERT INTO users VALUES (1, 'alice'), (2, 'bob'), (3, 'charlie')")
@@ -25,7 +25,7 @@ func TestInsertMultipleRows(t *testing.T) {
 }
 
 func TestInsertNull(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	result := run(t, exec, "INSERT INTO users VALUES (1, NULL)")
 	assert.Equal(t, "1 row inserted", result.Message)
@@ -37,20 +37,20 @@ func TestInsertNull(t *testing.T) {
 }
 
 func TestInsertNotNullSuccess(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT NOT NULL, name TEXT)")
 	result := run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	assert.Equal(t, "1 row inserted", result.Message)
 }
 
 func TestInsertNotNullViolation(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT NOT NULL, name TEXT)")
 	runExpectError(t, exec, "INSERT INTO users VALUES (NULL, 'alice')")
 }
 
 func TestInsertNullableColumnStillAllowsNull(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT NOT NULL, name TEXT)")
 	result := run(t, exec, "INSERT INTO users VALUES (1, NULL)")
 	assert.Equal(t, "1 row inserted", result.Message)
@@ -61,24 +61,24 @@ func TestInsertNullableColumnStillAllowsNull(t *testing.T) {
 }
 
 func TestErrorInsertNonexistentTable(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	runExpectError(t, exec, "INSERT INTO nonexistent VALUES (1)")
 }
 
 func TestErrorInsertWrongValueCount(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	runExpectError(t, exec, "INSERT INTO users VALUES (1)")
 }
 
 func TestErrorInsertTypeMismatch(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	runExpectError(t, exec, "INSERT INTO users VALUES ('not_int', 'alice')")
 }
 
 func TestInsertWithColumnsAllColumns(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	result := run(t, exec, "INSERT INTO users (id, name) VALUES (1, 'alice')")
 	assert.Equal(t, "1 row inserted", result.Message)
@@ -90,7 +90,7 @@ func TestInsertWithColumnsAllColumns(t *testing.T) {
 }
 
 func TestInsertWithColumnsReorder(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users (name, id) VALUES ('alice', 1)")
 
@@ -101,7 +101,7 @@ func TestInsertWithColumnsReorder(t *testing.T) {
 }
 
 func TestInsertPartialColumnsWithDefault(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT DEFAULT 'unknown')")
 	run(t, exec, "INSERT INTO users (id) VALUES (1)")
 
@@ -112,7 +112,7 @@ func TestInsertPartialColumnsWithDefault(t *testing.T) {
 }
 
 func TestInsertPartialColumnsNoDefaultGetsNull(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users (id) VALUES (1)")
 
@@ -123,13 +123,13 @@ func TestInsertPartialColumnsNoDefaultGetsNull(t *testing.T) {
 }
 
 func TestErrorInsertPartialColumnsNotNullNoDefault(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT NOT NULL, name TEXT)")
 	runExpectError(t, exec, "INSERT INTO users (name) VALUES ('alice')")
 }
 
 func TestInsertPartialColumnsNotNullWithDefault(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT NOT NULL DEFAULT 0, name TEXT)")
 	run(t, exec, "INSERT INTO users (name) VALUES ('alice')")
 
@@ -140,25 +140,25 @@ func TestInsertPartialColumnsNotNullWithDefault(t *testing.T) {
 }
 
 func TestErrorInsertDuplicateColumns(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	runExpectError(t, exec, "INSERT INTO users (id, id) VALUES (1, 2)")
 }
 
 func TestErrorInsertNonexistentColumn(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	runExpectError(t, exec, "INSERT INTO users (id, foo) VALUES (1, 'bar')")
 }
 
 func TestErrorInsertColumnValueCountMismatch(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	runExpectError(t, exec, "INSERT INTO users (id, name) VALUES (1)")
 }
 
 func TestInsertWithColumnsMultipleRows(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT DEFAULT 'unknown')")
 	result := run(t, exec, "INSERT INTO users (id) VALUES (1), (2), (3)")
 	assert.Equal(t, "3 rows inserted", result.Message)
@@ -172,7 +172,7 @@ func TestInsertWithColumnsMultipleRows(t *testing.T) {
 }
 
 func TestInsertSelectBasic(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE src (id INT, name TEXT)")
 	run(t, exec, "CREATE TABLE dst (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO src VALUES (1, 'alice'), (2, 'bob')")
@@ -189,7 +189,7 @@ func TestInsertSelectBasic(t *testing.T) {
 }
 
 func TestInsertSelectWithColumns(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE src (id INT, name TEXT)")
 	run(t, exec, "CREATE TABLE dst (id INT, name TEXT DEFAULT 'unknown')")
 	run(t, exec, "INSERT INTO src VALUES (1, 'alice'), (2, 'bob')")
@@ -204,7 +204,7 @@ func TestInsertSelectWithColumns(t *testing.T) {
 }
 
 func TestInsertSelectWithWhere(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE src (id INT, name TEXT)")
 	run(t, exec, "CREATE TABLE dst (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO src VALUES (1, 'alice'), (2, 'bob'), (3, 'charlie')")
@@ -218,7 +218,7 @@ func TestInsertSelectWithWhere(t *testing.T) {
 }
 
 func TestInsertSelectWithUnion(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t1 (id INT)")
 	run(t, exec, "CREATE TABLE t2 (id INT)")
 	run(t, exec, "CREATE TABLE dst (id INT)")
@@ -233,7 +233,7 @@ func TestInsertSelectWithUnion(t *testing.T) {
 }
 
 func TestInsertSelectColumnCountMismatch(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE src (id INT, name TEXT)")
 	run(t, exec, "CREATE TABLE dst (id INT, name TEXT, age INT)")
 	run(t, exec, "INSERT INTO src VALUES (1, 'alice')")

@@ -24,7 +24,7 @@ func execSQL(exec *Executor, sql string) error {
 // Schema: bench (id INT PRIMARY KEY, val INT, name TEXT, category INT)
 func setupBenchTable(b *testing.B, n int, withIndex bool) *Executor {
 	b.Helper()
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	if err := execSQL(exec, "CREATE TABLE bench (id INT PRIMARY KEY, val INT, name TEXT, category INT)"); err != nil {
 		b.Fatal(err)
 	}
@@ -439,7 +439,7 @@ func BenchmarkCompositeWithIndex_100000(b *testing.B) {
 
 func setupLowSelectivityTable(b *testing.B, n int, withIndex bool) *Executor {
 	b.Helper()
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	if err := execSQL(exec, "CREATE TABLE bench_low (id INT PRIMARY KEY, val INT, grp INT)"); err != nil {
 		b.Fatal(err)
 	}
@@ -513,7 +513,7 @@ func BenchmarkLowSelectivityWithIndex_100000(b *testing.B) {
 // indexMode: "none", "separate" (user_id + status separately), "composite" (user_id, status)
 func setupJoinBenchTablesComposite(b *testing.B, n int, indexMode string) *Executor {
 	b.Helper()
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	if err := execSQL(exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)"); err != nil {
 		b.Fatal(err)
 	}
@@ -558,7 +558,7 @@ func setupJoinBenchTablesComposite(b *testing.B, n int, indexMode string) *Execu
 
 func setupJoinBenchTables(b *testing.B, n int, joinIndex bool, whereIndex bool) *Executor {
 	b.Helper()
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	if err := execSQL(exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)"); err != nil {
 		b.Fatal(err)
 	}

@@ -133,7 +133,7 @@ func TestDedup(t *testing.T) {
 // --- LIMIT early termination tests ---
 
 func TestSelectLimitNoOrder(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, val INT)")
 	for i := 1; i <= 10; i++ {
 		run(t, exec, fmt.Sprintf("INSERT INTO t VALUES (%d, %d)", i, i*10))
@@ -144,7 +144,7 @@ func TestSelectLimitNoOrder(t *testing.T) {
 }
 
 func TestSelectWhereLimitNoOrder(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, val INT)")
 	for i := 1; i <= 10; i++ {
 		run(t, exec, fmt.Sprintf("INSERT INTO t VALUES (%d, %d)", i, i*10))
@@ -156,7 +156,7 @@ func TestSelectWhereLimitNoOrder(t *testing.T) {
 }
 
 func TestSelectLimitOffsetNoOrder(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, val INT)")
 	for i := 1; i <= 10; i++ {
 		run(t, exec, fmt.Sprintf("INSERT INTO t VALUES (%d, %d)", i, i*10))
@@ -167,7 +167,7 @@ func TestSelectLimitOffsetNoOrder(t *testing.T) {
 }
 
 func TestJoinLimitNoOrder(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, product TEXT)")
 	for i := 1; i <= 5; i++ {
@@ -182,7 +182,7 @@ func TestJoinLimitNoOrder(t *testing.T) {
 }
 
 func TestLeftJoinLimitNoOrder(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, product TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'Alice')")
@@ -197,7 +197,7 @@ func TestLeftJoinLimitNoOrder(t *testing.T) {
 }
 
 func TestGroupByLimitNoEarlyTermination(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, val INT)")
 	for i := 1; i <= 10; i++ {
 		run(t, exec, fmt.Sprintf("INSERT INTO t VALUES (%d, %d)", i, i%3))
@@ -209,7 +209,7 @@ func TestGroupByLimitNoEarlyTermination(t *testing.T) {
 }
 
 func TestDistinctLimitNoOrder(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, val INT)")
 	// 10 rows with 3 distinct val values: 0, 1, 2
 	for i := 1; i <= 10; i++ {
@@ -228,7 +228,7 @@ func TestDistinctLimitNoOrder(t *testing.T) {
 }
 
 func TestDistinctLimitOffsetNoOrder(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, val INT)")
 	// 20 rows with 5 distinct val values: 0, 1, 2, 3, 4
 	for i := 1; i <= 20; i++ {
@@ -247,7 +247,7 @@ func TestDistinctLimitOffsetNoOrder(t *testing.T) {
 }
 
 func TestDistinctWhereLimitNoOrder(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, val INT)")
 	for i := 1; i <= 20; i++ {
 		run(t, exec, fmt.Sprintf("INSERT INTO t VALUES (%d, %d)", i, i%5))
@@ -264,7 +264,7 @@ func TestDistinctWhereLimitNoOrder(t *testing.T) {
 }
 
 func TestDistinctStarLimitNoOrder(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, val INT)")
 	// Insert duplicate rows: (1,10) appears twice
 	run(t, exec, "INSERT INTO t VALUES (1, 10)")
@@ -279,7 +279,7 @@ func TestDistinctStarLimitNoOrder(t *testing.T) {
 }
 
 func TestCaseSearched(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, val INT)")
 	run(t, exec, "INSERT INTO t VALUES (1, 10)")
 	run(t, exec, "INSERT INTO t VALUES (2, -5)")
@@ -291,7 +291,7 @@ func TestCaseSearched(t *testing.T) {
 }
 
 func TestCaseSimple(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, status INT)")
 	run(t, exec, "INSERT INTO t VALUES (1, 1)")
 	run(t, exec, "INSERT INTO t VALUES (2, 0)")
@@ -303,7 +303,7 @@ func TestCaseSimple(t *testing.T) {
 }
 
 func TestCaseNoElse(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, val INT)")
 	run(t, exec, "INSERT INTO t VALUES (1, 10)")
 	run(t, exec, "INSERT INTO t VALUES (2, -5)")
@@ -315,7 +315,7 @@ func TestCaseNoElse(t *testing.T) {
 }
 
 func TestCaseMultipleWhens(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, val INT)")
 	run(t, exec, "INSERT INTO t VALUES (1, 1)")
 	run(t, exec, "INSERT INTO t VALUES (2, 2)")
@@ -329,7 +329,7 @@ func TestCaseMultipleWhens(t *testing.T) {
 }
 
 func TestCaseInWhere(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, val INT)")
 	run(t, exec, "INSERT INTO t VALUES (1, 10)")
 	run(t, exec, "INSERT INTO t VALUES (2, -5)")
@@ -342,7 +342,7 @@ func TestCaseInWhere(t *testing.T) {
 }
 
 func TestCaseWithNull(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, val INT)")
 	run(t, exec, "INSERT INTO t VALUES (1, NULL)")
 	run(t, exec, "INSERT INTO t VALUES (2, 5)")
@@ -355,7 +355,7 @@ func TestCaseWithNull(t *testing.T) {
 }
 
 func TestCoalesceFirstNonNull(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, a INT, b INT, c INT)")
 	run(t, exec, "INSERT INTO t VALUES (1, NULL, 20, 30)")
 	run(t, exec, "INSERT INTO t VALUES (2, 10, NULL, 30)")
@@ -367,7 +367,7 @@ func TestCoalesceFirstNonNull(t *testing.T) {
 }
 
 func TestCoalesceAllNull(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, a INT, b INT)")
 	run(t, exec, "INSERT INTO t VALUES (1, NULL, NULL)")
 
@@ -377,7 +377,7 @@ func TestCoalesceAllNull(t *testing.T) {
 }
 
 func TestCoalesceSingleArg(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, a INT)")
 	run(t, exec, "INSERT INTO t VALUES (1, 42)")
 	run(t, exec, "INSERT INTO t VALUES (2, NULL)")
@@ -389,7 +389,7 @@ func TestCoalesceSingleArg(t *testing.T) {
 }
 
 func TestCoalesceInWhere(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, val INT)")
 	run(t, exec, "INSERT INTO t VALUES (1, NULL)")
 	run(t, exec, "INSERT INTO t VALUES (2, 5)")
@@ -401,7 +401,7 @@ func TestCoalesceInWhere(t *testing.T) {
 }
 
 func TestCoalesceWithoutFrom(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 
 	result := run(t, exec, "SELECT COALESCE(NULL, NULL, 'hello')")
 	require.Len(t, result.Rows, 1, "expected 1 row")
@@ -409,7 +409,7 @@ func TestCoalesceWithoutFrom(t *testing.T) {
 }
 
 func TestNullifEqual(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, val INT)")
 	run(t, exec, "INSERT INTO t VALUES (1, 1)")
 
@@ -419,7 +419,7 @@ func TestNullifEqual(t *testing.T) {
 }
 
 func TestNullifNotEqual(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, val INT)")
 	run(t, exec, "INSERT INTO t VALUES (1, 5)")
 
@@ -429,7 +429,7 @@ func TestNullifNotEqual(t *testing.T) {
 }
 
 func TestNullifWithNull(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, val INT)")
 	run(t, exec, "INSERT INTO t VALUES (1, NULL)")
 
@@ -439,7 +439,7 @@ func TestNullifWithNull(t *testing.T) {
 }
 
 func TestNullifWithoutFrom(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 
 	result := run(t, exec, "SELECT NULLIF(1, 1)")
 	require.Len(t, result.Rows, 1, "expected 1 row")
@@ -451,7 +451,7 @@ func TestNullifWithoutFrom(t *testing.T) {
 }
 
 func TestAbsFunction(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, val INT)")
 	run(t, exec, "INSERT INTO t VALUES (1, -5)")
 	run(t, exec, "INSERT INTO t VALUES (2, 3)")
@@ -465,7 +465,7 @@ func TestAbsFunction(t *testing.T) {
 }
 
 func TestAbsFunctionFloat(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, val FLOAT)")
 	run(t, exec, "INSERT INTO t VALUES (1, -3.14)")
 
@@ -475,7 +475,7 @@ func TestAbsFunctionFloat(t *testing.T) {
 }
 
 func TestAbsFunctionWhere(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, val INT)")
 	run(t, exec, "INSERT INTO t VALUES (1, -5)")
 	run(t, exec, "INSERT INTO t VALUES (2, 3)")
@@ -487,7 +487,7 @@ func TestAbsFunctionWhere(t *testing.T) {
 }
 
 func TestRoundFunction(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 
 	// ROUND with integer (no change)
 	result := run(t, exec, "SELECT ROUND(5)")
@@ -511,7 +511,7 @@ func TestRoundFunction(t *testing.T) {
 }
 
 func TestModFunction(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 
 	// Basic MOD
 	result := run(t, exec, "SELECT MOD(10, 3)")
@@ -527,7 +527,7 @@ func TestModFunction(t *testing.T) {
 }
 
 func TestCeilFunction(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 
 	// Positive float
 	result := run(t, exec, "SELECT CEIL(2.3)")
@@ -547,7 +547,7 @@ func TestCeilFunction(t *testing.T) {
 }
 
 func TestFloorFunction(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 
 	// Positive float
 	result := run(t, exec, "SELECT FLOOR(2.7)")
@@ -567,7 +567,7 @@ func TestFloorFunction(t *testing.T) {
 }
 
 func TestPowerFunction(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 
 	// Basic power
 	result := run(t, exec, "SELECT POWER(2, 10)")
@@ -583,7 +583,7 @@ func TestPowerFunction(t *testing.T) {
 }
 
 func TestNumericFunctionsWithTable(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, val FLOAT)")
 	run(t, exec, "INSERT INTO t VALUES (1, -3.7)")
 	run(t, exec, "INSERT INTO t VALUES (2, 2.3)")
@@ -601,7 +601,7 @@ func TestNumericFunctionsWithTable(t *testing.T) {
 }
 
 func TestDoubleQuoteStringLiteral(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 
 	result := run(t, exec, `SELECT "hello"`)
 	require.Len(t, result.Rows, 1, "expected 1 row")
@@ -609,7 +609,7 @@ func TestDoubleQuoteStringLiteral(t *testing.T) {
 }
 
 func TestStringFunctionsWithoutTable(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 
 	tests := []struct {
 		name string
@@ -661,7 +661,7 @@ func TestStringFunctionsWithoutTable(t *testing.T) {
 }
 
 func TestStringFunctionsWithTable(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO t VALUES (1, 'Alice')")
 	run(t, exec, "INSERT INTO t VALUES (2, '  Bob  ')")
@@ -699,7 +699,7 @@ func TestStringFunctionsWithTable(t *testing.T) {
 }
 
 func TestOrderByLimitTopK(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (val INT)")
 	run(t, exec, "INSERT INTO t VALUES (5)")
 	run(t, exec, "INSERT INTO t VALUES (3)")
@@ -741,7 +741,7 @@ func TestOrderByLimitTopK(t *testing.T) {
 }
 
 func TestOrderByLimitTopKMultiColumn(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t2 (col1 INT, col2 TEXT)")
 	run(t, exec, "INSERT INTO t2 VALUES (1, 'b')")
 	run(t, exec, "INSERT INTO t2 VALUES (1, 'a')")
@@ -763,7 +763,7 @@ func TestOrderByLimitTopKMultiColumn(t *testing.T) {
 }
 
 func TestOrderByLimitTopKWithNull(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE tn (val INT)")
 	run(t, exec, "INSERT INTO tn VALUES (3)")
 	run(t, exec, "INSERT INTO tn VALUES (NULL)")
@@ -791,7 +791,7 @@ func TestOrderByLimitTopKWithNull(t *testing.T) {
 // --- Index ORDER BY tests ---
 
 func TestIndexOrderByAsc(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT)")
 	run(t, exec, "CREATE INDEX idx_val ON t(val)")
 	for i := 1; i <= 10; i++ {
@@ -807,7 +807,7 @@ func TestIndexOrderByAsc(t *testing.T) {
 }
 
 func TestIndexOrderByDesc(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT)")
 	run(t, exec, "CREATE INDEX idx_val ON t(val)")
 	for i := 1; i <= 10; i++ {
@@ -823,7 +823,7 @@ func TestIndexOrderByDesc(t *testing.T) {
 }
 
 func TestPKOrderByAscDesc(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT)")
 	for i := 1; i <= 5; i++ {
 		run(t, exec, fmt.Sprintf("INSERT INTO t VALUES (%d, %d)", i, i*10))
@@ -845,7 +845,7 @@ func TestPKOrderByAscDesc(t *testing.T) {
 }
 
 func TestIndexOrderByLimit(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT)")
 	run(t, exec, "CREATE INDEX idx_val ON t(val)")
 	for i := 1; i <= 100; i++ {
@@ -868,7 +868,7 @@ func TestIndexOrderByLimit(t *testing.T) {
 }
 
 func TestIndexOrderByWithWhereRange(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT)")
 	run(t, exec, "CREATE INDEX idx_val ON t(val)")
 	for i := 1; i <= 100; i++ {
@@ -884,7 +884,7 @@ func TestIndexOrderByWithWhereRange(t *testing.T) {
 }
 
 func TestIndexOrderByOffsetLimit(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT)")
 	run(t, exec, "CREATE INDEX idx_val ON t(val)")
 	for i := 1; i <= 20; i++ {
@@ -900,7 +900,7 @@ func TestIndexOrderByOffsetLimit(t *testing.T) {
 }
 
 func TestIndexOrderByDuplicates(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT)")
 	run(t, exec, "CREATE INDEX idx_val ON t(val)")
 	// Insert duplicate val values
@@ -920,7 +920,7 @@ func TestIndexOrderByDuplicates(t *testing.T) {
 }
 
 func TestIndexOrderByMultiColumn(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, col1 INT, col2 INT)")
 	run(t, exec, "CREATE INDEX idx_col1 ON t(col1)")
 	run(t, exec, "INSERT INTO t VALUES (1, 2, 30)")
@@ -940,7 +940,7 @@ func TestIndexOrderByMultiColumn(t *testing.T) {
 }
 
 func TestIndexOrderByMultiColumnLimit(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, col1 INT, col2 INT)")
 	run(t, exec, "CREATE INDEX idx_col1 ON t(col1)")
 	// col1: 1,1,1,2,2,2,3,3,3
@@ -959,7 +959,7 @@ func TestIndexOrderByMultiColumnLimit(t *testing.T) {
 }
 
 func TestIndexOrderByNullableDescLimit(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT)")
 	run(t, exec, "CREATE INDEX idx_val ON t(val)")
 	run(t, exec, "INSERT INTO t VALUES (1, 30)")
@@ -978,7 +978,7 @@ func TestIndexOrderByNullableDescLimit(t *testing.T) {
 }
 
 func TestIndexOrderByNullableAscLimit(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT)")
 	run(t, exec, "CREATE INDEX idx_val ON t(val)")
 	run(t, exec, "INSERT INTO t VALUES (1, 30)")
@@ -997,7 +997,7 @@ func TestIndexOrderByNullableAscLimit(t *testing.T) {
 }
 
 func TestIndexOrderByNullableDescNoLimit(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT)")
 	run(t, exec, "CREATE INDEX idx_val ON t(val)")
 	run(t, exec, "INSERT INTO t VALUES (1, 30)")
@@ -1016,7 +1016,7 @@ func TestIndexOrderByNullableDescNoLimit(t *testing.T) {
 }
 
 func TestOrderByNonIndexedFallback(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT, other INT)")
 	run(t, exec, "CREATE INDEX idx_val ON t(val)")
 	for i := 1; i <= 5; i++ {
@@ -1033,7 +1033,7 @@ func TestOrderByNonIndexedFallback(t *testing.T) {
 }
 
 func TestOrderByWithGroupByFallback(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT, grp INT)")
 	run(t, exec, "CREATE INDEX idx_grp ON t(grp)")
 	for i := 1; i <= 10; i++ {

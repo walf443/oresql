@@ -8,7 +8,7 @@ import (
 )
 
 func TestDeleteWithWhere(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -24,7 +24,7 @@ func TestDeleteWithWhere(t *testing.T) {
 }
 
 func TestDeleteMultipleRows(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -38,7 +38,7 @@ func TestDeleteMultipleRows(t *testing.T) {
 }
 
 func TestDeleteNoMatch(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 
@@ -50,7 +50,7 @@ func TestDeleteNoMatch(t *testing.T) {
 }
 
 func TestDeleteNoWhere(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -63,7 +63,7 @@ func TestDeleteNoWhere(t *testing.T) {
 }
 
 func TestDeleteWithIndex(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "CREATE INDEX idx_name ON users(name)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
@@ -82,7 +82,7 @@ func TestDeleteWithIndex(t *testing.T) {
 }
 
 func TestDeleteWithIndexIn(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "CREATE INDEX idx_name ON users(name)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
@@ -101,7 +101,7 @@ func TestDeleteWithIndexIn(t *testing.T) {
 }
 
 func TestDeleteOrderByLimit(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -119,7 +119,7 @@ func TestDeleteOrderByLimit(t *testing.T) {
 }
 
 func TestDeleteOrderByDescLimit(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -136,7 +136,7 @@ func TestDeleteOrderByDescLimit(t *testing.T) {
 }
 
 func TestDeleteWhereOrderByLimit(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -154,7 +154,7 @@ func TestDeleteWhereOrderByLimit(t *testing.T) {
 }
 
 func TestDeleteNoWhereWithIndex(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "CREATE INDEX idx_name ON users(name)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")

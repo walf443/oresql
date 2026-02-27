@@ -8,7 +8,7 @@ import (
 )
 
 func TestThreeTableJoinWithIndex(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT, user_id INT, amount INT)")
 	run(t, exec, "CREATE TABLE items (id INT, order_id INT, product TEXT)")
@@ -53,7 +53,7 @@ func TestThreeTableJoinWithIndex(t *testing.T) {
 }
 
 func TestThreeTableJoinWithWherePushdown(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT, status TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT, user_id INT, amount INT)")
 	run(t, exec, "CREATE TABLE items (id INT, order_id INT, product TEXT)")
@@ -82,7 +82,7 @@ func TestThreeTableJoinWithWherePushdown(t *testing.T) {
 
 func TestThreeTableJoinStarSchema(t *testing.T) {
 	// Fact table (sales) + two dimension tables (products, stores)
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE products (id INT, name TEXT)")
 	run(t, exec, "CREATE TABLE stores (id INT, city TEXT)")
 	run(t, exec, "CREATE TABLE sales (id INT, product_id INT, store_id INT, quantity INT)")
@@ -114,7 +114,7 @@ func TestThreeTableJoinStarSchema(t *testing.T) {
 
 func TestThreeTableJoinChainSchema(t *testing.T) {
 	// A -> B -> C chain
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE a (id INT, val TEXT)")
 	run(t, exec, "CREATE TABLE b (id INT, a_id INT, val TEXT)")
 	run(t, exec, "CREATE TABLE c (id INT, b_id INT, val TEXT)")
@@ -142,7 +142,7 @@ func TestThreeTableJoinChainSchema(t *testing.T) {
 }
 
 func TestFourTableJoin(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE customers (id INT, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT, customer_id INT)")
 	run(t, exec, "CREATE TABLE items (id INT, order_id INT, product_id INT)")
@@ -170,7 +170,7 @@ func TestFourTableJoin(t *testing.T) {
 }
 
 func TestThreeTableJoinSelectStar(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE a (id INT, aval TEXT)")
 	run(t, exec, "CREATE TABLE b (id INT, a_id INT, bval TEXT)")
 	run(t, exec, "CREATE TABLE c (id INT, b_id INT, cval TEXT)")
@@ -200,7 +200,7 @@ func TestThreeTableJoinSelectStar(t *testing.T) {
 }
 
 func TestThreeTableJoinCrossTableWhere(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE a (id INT, val INT)")
 	run(t, exec, "CREATE TABLE b (id INT, a_id INT, val INT)")
 	run(t, exec, "CREATE TABLE c (id INT, b_id INT, val INT)")

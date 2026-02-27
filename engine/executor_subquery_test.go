@@ -8,7 +8,7 @@ import (
 )
 
 func TestInSubquery(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 
 	// Setup: create tables
 	setup := []string{
@@ -86,7 +86,7 @@ func TestInSubquery(t *testing.T) {
 }
 
 func TestScalarSubquery(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 
 	// Setup: create tables
 	setup := []string{
@@ -174,7 +174,7 @@ func TestScalarSubquery(t *testing.T) {
 }
 
 func TestFromSubqueryBasic(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 
 	setup := []string{
 		"CREATE TABLE t1 (id INT, name TEXT)",
@@ -257,7 +257,7 @@ func TestFromSubqueryBasic(t *testing.T) {
 }
 
 func TestFromSubqueryWithUnion(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 
 	setup := []string{
 		"CREATE TABLE t1 (id INT)",
@@ -279,7 +279,7 @@ func TestFromSubqueryWithUnion(t *testing.T) {
 }
 
 func TestFromSubqueryWithJoin(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 
 	setup := []string{
 		"CREATE TABLE t1 (id INT, val TEXT)",
@@ -302,7 +302,7 @@ func TestFromSubqueryWithJoin(t *testing.T) {
 }
 
 func TestFromSubqueryColumnTypes(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 
 	setup := []string{
 		"CREATE TABLE t1 (id INT, name TEXT)",
@@ -321,7 +321,7 @@ func TestFromSubqueryColumnTypes(t *testing.T) {
 }
 
 func TestExistsSubquery(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 
 	// Setup: create tables
 	setup := []string{
@@ -424,7 +424,7 @@ func TestExistsSubquery(t *testing.T) {
 }
 
 func TestCorrelatedExists(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 
 	setup := []string{
 		"CREATE TABLE users (id INT, name TEXT)",
@@ -502,7 +502,7 @@ func TestCorrelatedExists(t *testing.T) {
 }
 
 func TestCorrelatedScalar(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 
 	setup := []string{
 		"CREATE TABLE users (id INT, name TEXT)",
@@ -573,7 +573,7 @@ func TestCorrelatedScalar(t *testing.T) {
 }
 
 func TestCorrelatedComparison(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 
 	setup := []string{
 		"CREATE TABLE employees (id INT, name TEXT, dept TEXT, salary INT)",

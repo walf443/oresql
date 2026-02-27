@@ -16,7 +16,7 @@ func TestWALAppendAndReplay(t *testing.T) {
 	// Phase 1: Execute statements with WAL
 	wal1, err := NewWAL(walPath)
 	require.NoError(t, err, "failed to create WAL")
-	exec1 := NewExecutor(WithWAL(wal1))
+	exec1 := NewExecutor(NewDatabase("test"), WithWAL(wal1))
 
 	_, err = exec1.ExecuteSQL("CREATE TABLE users (id INT, name TEXT)")
 	require.NoError(t, err, "CREATE TABLE error")
@@ -30,7 +30,7 @@ func TestWALAppendAndReplay(t *testing.T) {
 	wal2, err := NewWAL(walPath)
 	require.NoError(t, err, "failed to open WAL")
 	defer wal2.Close()
-	exec2 := NewExecutor(WithWAL(wal2))
+	exec2 := NewExecutor(NewDatabase("test"), WithWAL(wal2))
 
 	err = exec2.ReplayWAL()
 	require.NoError(t, err, "ReplayWAL error")
@@ -52,7 +52,7 @@ func TestWALReplayEmpty(t *testing.T) {
 	require.NoError(t, err, "failed to create WAL")
 	defer wal.Close()
 
-	exec := NewExecutor(WithWAL(wal))
+	exec := NewExecutor(NewDatabase("test"), WithWAL(wal))
 	err = exec.ReplayWAL()
 	require.NoError(t, err, "ReplayWAL on empty file should succeed")
 }
@@ -69,7 +69,7 @@ func TestWALReplayError(t *testing.T) {
 	require.NoError(t, err, "failed to open WAL")
 	defer wal.Close()
 
-	exec := NewExecutor(WithWAL(wal))
+	exec := NewExecutor(NewDatabase("test"), WithWAL(wal))
 	err = exec.ReplayWAL()
 	require.Error(t, err, "expected error during replay of invalid WAL")
 }
@@ -81,7 +81,7 @@ func TestWALSelectNotLogged(t *testing.T) {
 	wal, err := NewWAL(walPath)
 	require.NoError(t, err, "failed to create WAL")
 
-	exec := NewExecutor(WithWAL(wal))
+	exec := NewExecutor(NewDatabase("test"), WithWAL(wal))
 
 	// Execute a SELECT (should not be logged)
 	_, err = exec.ExecuteSQL("SELECT 1")
@@ -95,7 +95,7 @@ func TestWALSelectNotLogged(t *testing.T) {
 }
 
 func TestNewExecutorBackwardCompat(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 
 	result, err := exec.ExecuteSQL("SELECT 1")
 	require.NoError(t, err, "ExecuteSQL error")
@@ -119,7 +119,7 @@ func TestWALCommentLines(t *testing.T) {
 	require.NoError(t, err, "failed to open WAL")
 	defer wal.Close()
 
-	exec := NewExecutor(WithWAL(wal))
+	exec := NewExecutor(NewDatabase("test"), WithWAL(wal))
 	err = exec.ReplayWAL()
 	require.NoError(t, err, "ReplayWAL error")
 

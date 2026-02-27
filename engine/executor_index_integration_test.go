@@ -8,7 +8,7 @@ import (
 )
 
 func TestSelectWithIndexEquality(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -22,7 +22,7 @@ func TestSelectWithIndexEquality(t *testing.T) {
 }
 
 func TestSelectWithIndexNoMatch(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "CREATE INDEX idx_name ON users(name)")
@@ -32,7 +32,7 @@ func TestSelectWithIndexNoMatch(t *testing.T) {
 }
 
 func TestIndexMaintainedOnInsert(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "CREATE INDEX idx_name ON users(name)")
@@ -46,7 +46,7 @@ func TestIndexMaintainedOnInsert(t *testing.T) {
 }
 
 func TestIndexMaintainedOnDelete(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -59,7 +59,7 @@ func TestIndexMaintainedOnDelete(t *testing.T) {
 }
 
 func TestIndexMaintainedOnUpdate(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -78,7 +78,7 @@ func TestIndexMaintainedOnUpdate(t *testing.T) {
 }
 
 func TestIndexClearedOnTruncate(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "CREATE INDEX idx_name ON users(name)")
@@ -95,7 +95,7 @@ func TestIndexClearedOnTruncate(t *testing.T) {
 }
 
 func TestIndexOnIntColumn(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -108,7 +108,7 @@ func TestIndexOnIntColumn(t *testing.T) {
 }
 
 func TestIndexOnFloatColumn(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, val FLOAT)")
 	run(t, exec, "INSERT INTO t VALUES (1, 1.5)")
 	run(t, exec, "INSERT INTO t VALUES (2, 2.5)")
@@ -121,7 +121,7 @@ func TestIndexOnFloatColumn(t *testing.T) {
 }
 
 func TestIndexWithNullValues(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, NULL)")
@@ -140,7 +140,7 @@ func TestIndexWithNullValues(t *testing.T) {
 }
 
 func TestCreateIndexOnExistingData(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -155,14 +155,14 @@ func TestCreateIndexOnExistingData(t *testing.T) {
 }
 
 func TestCreateCompositeIndex(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT, age INT)")
 	result := run(t, exec, "CREATE INDEX idx_name_age ON users(name, age)")
 	assert.Equal(t, "index created", result.Message)
 }
 
 func TestSelectWithCompositeIndex(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT, age INT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice', 30)")
 	run(t, exec, "INSERT INTO users VALUES (2, 'alice', 25)")
@@ -176,7 +176,7 @@ func TestSelectWithCompositeIndex(t *testing.T) {
 }
 
 func TestSelectWithCompositeIndexPartialMatch(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT, age INT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice', 30)")
 	run(t, exec, "INSERT INTO users VALUES (2, 'alice', 25)")
@@ -189,7 +189,7 @@ func TestSelectWithCompositeIndexPartialMatch(t *testing.T) {
 }
 
 func TestCompositeIndexMaintainedOnInsert(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT, age INT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice', 30)")
 	run(t, exec, "CREATE INDEX idx_name_age ON users(name, age)")
@@ -203,7 +203,7 @@ func TestCompositeIndexMaintainedOnInsert(t *testing.T) {
 }
 
 func TestCompositeIndexMaintainedOnDelete(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT, age INT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice', 30)")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob', 25)")
@@ -216,7 +216,7 @@ func TestCompositeIndexMaintainedOnDelete(t *testing.T) {
 }
 
 func TestCompositeIndexMaintainedOnUpdate(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT, age INT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice', 30)")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob', 25)")
@@ -235,7 +235,7 @@ func TestCompositeIndexMaintainedOnUpdate(t *testing.T) {
 }
 
 func TestCompositeIndexWithNull(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT, age INT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice', 30)")
 	run(t, exec, "INSERT INTO users VALUES (2, NULL, 25)")
@@ -254,7 +254,7 @@ func TestCompositeIndexWithNull(t *testing.T) {
 }
 
 func TestCreateCompositeIndexOnExistingData(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT, age INT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice', 30)")
 	run(t, exec, "INSERT INTO users VALUES (2, 'alice', 30)")
@@ -269,7 +269,7 @@ func TestCreateCompositeIndexOnExistingData(t *testing.T) {
 }
 
 func TestSelectWithIndexIsNull(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE products (id INT, name TEXT, category TEXT)")
 	run(t, exec, "INSERT INTO products VALUES (1, 'Widget', 'tools')")
 	run(t, exec, "INSERT INTO products VALUES (2, 'Gadget', NULL)")
@@ -295,7 +295,7 @@ func TestSelectWithIndexIsNull(t *testing.T) {
 // --- Index range scan tests ---
 
 func TestSelectWithIndexRangeGt(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, name TEXT)")
 	run(t, exec, "CREATE INDEX idx_id ON t(id)")
 	run(t, exec, "INSERT INTO t VALUES (1, 'a')")
@@ -314,7 +314,7 @@ func TestSelectWithIndexRangeGt(t *testing.T) {
 }
 
 func TestSelectWithIndexRangeGte(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, name TEXT)")
 	run(t, exec, "CREATE INDEX idx_id ON t(id)")
 	run(t, exec, "INSERT INTO t VALUES (1, 'a')")
@@ -333,7 +333,7 @@ func TestSelectWithIndexRangeGte(t *testing.T) {
 }
 
 func TestSelectWithIndexRangeLt(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, name TEXT)")
 	run(t, exec, "CREATE INDEX idx_id ON t(id)")
 	run(t, exec, "INSERT INTO t VALUES (1, 'a')")
@@ -352,7 +352,7 @@ func TestSelectWithIndexRangeLt(t *testing.T) {
 }
 
 func TestSelectWithIndexRangeLte(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, name TEXT)")
 	run(t, exec, "CREATE INDEX idx_id ON t(id)")
 	run(t, exec, "INSERT INTO t VALUES (1, 'a')")
@@ -371,7 +371,7 @@ func TestSelectWithIndexRangeLte(t *testing.T) {
 }
 
 func TestSelectWithIndexRangeBetween(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, name TEXT)")
 	run(t, exec, "CREATE INDEX idx_id ON t(id)")
 	run(t, exec, "INSERT INTO t VALUES (1, 'a')")
@@ -390,7 +390,7 @@ func TestSelectWithIndexRangeBetween(t *testing.T) {
 }
 
 func TestSelectWithIndexRangeCombined(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, name TEXT)")
 	run(t, exec, "CREATE INDEX idx_id ON t(id)")
 	run(t, exec, "INSERT INTO t VALUES (1, 'a')")
@@ -409,7 +409,7 @@ func TestSelectWithIndexRangeCombined(t *testing.T) {
 }
 
 func TestSelectWithIndexRangeNoMatchRange(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, name TEXT)")
 	run(t, exec, "CREATE INDEX idx_id ON t(id)")
 	run(t, exec, "INSERT INTO t VALUES (1, 'a')")
@@ -421,7 +421,7 @@ func TestSelectWithIndexRangeNoMatchRange(t *testing.T) {
 }
 
 func TestSelectWithIndexRangeText(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, name TEXT)")
 	run(t, exec, "CREATE INDEX idx_name ON t(name)")
 	run(t, exec, "INSERT INTO t VALUES (1, 'alice')")
@@ -439,7 +439,7 @@ func TestSelectWithIndexRangeText(t *testing.T) {
 }
 
 func TestSelectWithIndexRangeNegativeInt(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, name TEXT)")
 	run(t, exec, "CREATE INDEX idx_id ON t(id)")
 	run(t, exec, "INSERT INTO t VALUES (-5, 'a')")
@@ -459,7 +459,7 @@ func TestSelectWithIndexRangeNegativeInt(t *testing.T) {
 }
 
 func TestSelectWithIndexRangeAndFilter(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, name TEXT)")
 	run(t, exec, "CREATE INDEX idx_id ON t(id)")
 	run(t, exec, "INSERT INTO t VALUES (1, 'x')")
@@ -479,7 +479,7 @@ func TestSelectWithIndexRangeAndFilter(t *testing.T) {
 }
 
 func TestSelectWithCompositeIndexRangeGt(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (col1 INT, col2 INT, col3 TEXT)")
 	run(t, exec, "CREATE INDEX idx ON t(col1, col2)")
 	run(t, exec, "INSERT INTO t VALUES (1, 3, 'a')")
@@ -499,7 +499,7 @@ func TestSelectWithCompositeIndexRangeGt(t *testing.T) {
 }
 
 func TestSelectWithCompositeIndexRangeBetween(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (col1 INT, col2 INT, col3 TEXT)")
 	run(t, exec, "CREATE INDEX idx ON t(col1, col2)")
 	run(t, exec, "INSERT INTO t VALUES (1, 1, 'a')")
@@ -519,7 +519,7 @@ func TestSelectWithCompositeIndexRangeBetween(t *testing.T) {
 }
 
 func TestSelectWithCompositeIndexRangeLt(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (col1 TEXT, col2 INT, col3 TEXT)")
 	run(t, exec, "CREATE INDEX idx ON t(col1, col2)")
 	run(t, exec, "INSERT INTO t VALUES ('a', 3, 'x')")
@@ -537,7 +537,7 @@ func TestSelectWithCompositeIndexRangeLt(t *testing.T) {
 }
 
 func TestSelectWithCompositeIndexRangeNoMatch(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (col1 INT, col2 INT)")
 	run(t, exec, "CREATE INDEX idx ON t(col1, col2)")
 	run(t, exec, "INSERT INTO t VALUES (1, 3)")
@@ -549,7 +549,7 @@ func TestSelectWithCompositeIndexRangeNoMatch(t *testing.T) {
 }
 
 func TestSelectWithCompositeIndexRangeWithPostFilter(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (col1 INT, col2 INT, col3 TEXT)")
 	run(t, exec, "CREATE INDEX idx ON t(col1, col2)")
 	run(t, exec, "INSERT INTO t VALUES (1, 3, 'x')")
@@ -566,7 +566,7 @@ func TestSelectWithCompositeIndexRangeWithPostFilter(t *testing.T) {
 }
 
 func TestSelectWithCompositeIndexRangePartialPrefix(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (a INT, b INT, c INT, d TEXT)")
 	run(t, exec, "CREATE INDEX idx ON t(a, b, c)")
 	run(t, exec, "INSERT INTO t VALUES (1, 2, 3, 'x')")
@@ -587,7 +587,7 @@ func TestSelectWithCompositeIndexRangePartialPrefix(t *testing.T) {
 }
 
 func TestSelectWithIndexIn(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -604,7 +604,7 @@ func TestSelectWithIndexIn(t *testing.T) {
 }
 
 func TestSelectWithIndexInNoMatch(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -615,7 +615,7 @@ func TestSelectWithIndexInNoMatch(t *testing.T) {
 }
 
 func TestSelectWithIndexInSingleValue(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -628,7 +628,7 @@ func TestSelectWithIndexInSingleValue(t *testing.T) {
 }
 
 func TestSelectWithCompositeIndexIn(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE items (a INT, b INT, c TEXT)")
 	run(t, exec, "INSERT INTO items VALUES (1, 3, 'x')")
 	run(t, exec, "INSERT INTO items VALUES (1, 5, 'y')")
@@ -646,7 +646,7 @@ func TestSelectWithCompositeIndexIn(t *testing.T) {
 }
 
 func TestSelectWithIndexInAndFilter(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -661,7 +661,7 @@ func TestSelectWithIndexInAndFilter(t *testing.T) {
 }
 
 func TestSelectWithCompositeIndexRangeMiddleColumn(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (a INT, b INT, c TEXT)")
 	run(t, exec, "CREATE INDEX idx ON t(a, b, c)")
 	run(t, exec, "INSERT INTO t VALUES (1, 2, 'x')")
@@ -680,7 +680,7 @@ func TestSelectWithCompositeIndexRangeMiddleColumn(t *testing.T) {
 }
 
 func TestSelectWithCompositeIndexRangeMiddleColumnBetween(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (a INT, b INT, c TEXT)")
 	run(t, exec, "CREATE INDEX idx ON t(a, b, c)")
 	run(t, exec, "INSERT INTO t VALUES (1, 1, 'a')")
@@ -700,7 +700,7 @@ func TestSelectWithCompositeIndexRangeMiddleColumnBetween(t *testing.T) {
 }
 
 func TestSelectWithCompositeIndexRangeMiddleColumnWithPostFilter(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (a INT, b INT, c TEXT)")
 	run(t, exec, "CREATE INDEX idx ON t(a, b, c)")
 	run(t, exec, "INSERT INTO t VALUES (1, 2, 'x')")
@@ -716,7 +716,7 @@ func TestSelectWithCompositeIndexRangeMiddleColumnWithPostFilter(t *testing.T) {
 }
 
 func TestSelectWhereLikeWithIndex(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "CREATE INDEX idx_name ON users(name)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
@@ -734,7 +734,7 @@ func TestSelectWhereLikeWithIndex(t *testing.T) {
 }
 
 func TestSelectWhereLikeWithIndexNoPrefix(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "CREATE INDEX idx_name ON users(name)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
@@ -748,7 +748,7 @@ func TestSelectWhereLikeWithIndexNoPrefix(t *testing.T) {
 }
 
 func TestSelectWhereLikeWithIndexEscape(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE items (id INT, name TEXT)")
 	run(t, exec, "CREATE INDEX idx_name ON items(name)")
 	run(t, exec, "INSERT INTO items VALUES (1, 'a_bcd')")
@@ -762,7 +762,7 @@ func TestSelectWhereLikeWithIndexEscape(t *testing.T) {
 }
 
 func TestSelectWithIndexAndCondition(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT, age INT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice', 30)")
 	run(t, exec, "INSERT INTO users VALUES (2, 'alice', 25)")

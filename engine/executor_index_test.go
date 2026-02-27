@@ -390,7 +390,7 @@ func TestExtractRangeConditions(t *testing.T) {
 }
 
 func TestPrimaryKeyLookup(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE items (id INT PRIMARY KEY, name TEXT)")
 	for i := 1; i <= 10; i++ {
 		run(t, exec, fmt.Sprintf("INSERT INTO items VALUES (%d, 'item%d')", i, i))
@@ -404,7 +404,7 @@ func TestPrimaryKeyLookup(t *testing.T) {
 }
 
 func TestPrimaryKeyLookupNotFound(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE items (id INT PRIMARY KEY, name TEXT)")
 	for i := 1; i <= 10; i++ {
 		run(t, exec, fmt.Sprintf("INSERT INTO items VALUES (%d, 'item%d')", i, i))

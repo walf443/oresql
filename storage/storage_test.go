@@ -191,3 +191,63 @@ func TestFindColumn(t *testing.T) {
 		assert.Contains(t, err.Error(), "not found")
 	})
 }
+
+// --- EncodeRow / DecodeRow tests ---
+
+func TestEncodeDecodeRowRoundTrip(t *testing.T) {
+	tests := []struct {
+		name string
+		row  Row
+	}{
+		{"empty row", Row{}},
+		{"null only", Row{nil}},
+		{"int only", Row{int64(42)}},
+		{"float only", Row{float64(3.14)}},
+		{"text only", Row{"hello"}},
+		{"mixed types", Row{int64(1), "alice", nil, float64(2.5)}},
+		{"negative int", Row{int64(-100)}},
+		{"empty string", Row{""}},
+		{"unicode text", Row{"日本語テスト"}},
+		{"multiple nulls", Row{nil, nil, nil}},
+		{"all types", Row{nil, int64(0), float64(0.0), ""}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			encoded := EncodeRow(tt.row)
+			decoded, err := DecodeRow(encoded)
+			require.NoError(t, err)
+			require.Len(t, decoded, len(tt.row))
+			for i := range tt.row {
+				assert.Equal(t, tt.row[i], decoded[i], "mismatch at index %d", i)
+			}
+		})
+	}
+}
+
+func TestDecodeRowError(t *testing.T) {
+	t.Run("truncated INT", func(t *testing.T) {
+		_, err := DecodeRow([]byte{0x01, 0x00, 0x00}) // INT needs 8 bytes
+		assert.Error(t, err)
+	})
+
+	t.Run("truncated FLOAT", func(t *testing.T) {
+		_, err := DecodeRow([]byte{0x02, 0x00}) // FLOAT needs 8 bytes
+		assert.Error(t, err)
+	})
+
+	t.Run("truncated TEXT length", func(t *testing.T) {
+		_, err := DecodeRow([]byte{0x03, 0x00}) // TEXT needs 4 bytes for length
+		assert.Error(t, err)
+	})
+
+	t.Run("truncated TEXT data", func(t *testing.T) {
+		_, err := DecodeRow([]byte{0x03, 0x00, 0x00, 0x00, 0x05, 'h', 'i'}) // claims 5 bytes, only 2
+		assert.Error(t, err)
+	})
+
+	t.Run("unknown tag", func(t *testing.T) {
+		_, err := DecodeRow([]byte{0xFF})
+		assert.Error(t, err)
+	})
+}

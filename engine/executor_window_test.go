@@ -8,7 +8,7 @@ import (
 )
 
 func TestWindowRowNumber(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO t VALUES (3, 'charlie')")
 	run(t, exec, "INSERT INTO t VALUES (1, 'alice')")
@@ -32,7 +32,7 @@ func TestWindowRowNumber(t *testing.T) {
 }
 
 func TestWindowRowNumberPartitioned(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE emp (id INT, dept TEXT, name TEXT)")
 	run(t, exec, "INSERT INTO emp VALUES (1, 'eng', 'alice')")
 	run(t, exec, "INSERT INTO emp VALUES (2, 'eng', 'bob')")
@@ -62,7 +62,7 @@ func TestWindowRowNumberPartitioned(t *testing.T) {
 }
 
 func TestWindowRank(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE scores (id INT, score INT)")
 	run(t, exec, "INSERT INTO scores VALUES (1, 100)")
 	run(t, exec, "INSERT INTO scores VALUES (2, 90)")
@@ -88,7 +88,7 @@ func TestWindowRank(t *testing.T) {
 }
 
 func TestWindowDenseRank(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE scores (id INT, score INT)")
 	run(t, exec, "INSERT INTO scores VALUES (1, 100)")
 	run(t, exec, "INSERT INTO scores VALUES (2, 90)")
@@ -114,7 +114,7 @@ func TestWindowDenseRank(t *testing.T) {
 }
 
 func TestWindowRankPartitioned(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE emp (id INT, dept TEXT, salary INT)")
 	run(t, exec, "INSERT INTO emp VALUES (1, 'eng', 100)")
 	run(t, exec, "INSERT INTO emp VALUES (2, 'eng', 100)")
@@ -143,7 +143,7 @@ func TestWindowRankPartitioned(t *testing.T) {
 }
 
 func TestWindowMultipleFunctions(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, score INT)")
 	run(t, exec, "INSERT INTO t VALUES (1, 100)")
 	run(t, exec, "INSERT INTO t VALUES (2, 100)")
@@ -172,7 +172,7 @@ func TestWindowMultipleFunctions(t *testing.T) {
 }
 
 func TestWindowWithWhere(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, name TEXT, active INT)")
 	run(t, exec, "INSERT INTO t VALUES (1, 'alice', 1)")
 	run(t, exec, "INSERT INTO t VALUES (2, 'bob', 0)")
@@ -187,7 +187,7 @@ func TestWindowWithWhere(t *testing.T) {
 }
 
 func TestWindowWithLimit(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO t VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO t VALUES (2, 'bob')")
@@ -202,7 +202,7 @@ func TestWindowWithLimit(t *testing.T) {
 }
 
 func TestWindowEmptyOver(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT)")
 	run(t, exec, "INSERT INTO t VALUES (1)")
 	run(t, exec, "INSERT INTO t VALUES (2)")
@@ -219,7 +219,7 @@ func TestWindowEmptyOver(t *testing.T) {
 }
 
 func TestWindowSumPartition(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE emp (id INT, dept TEXT, salary INT)")
 	run(t, exec, "INSERT INTO emp VALUES (1, 'eng', 100)")
 	run(t, exec, "INSERT INTO emp VALUES (2, 'eng', 200)")
@@ -247,7 +247,7 @@ func TestWindowSumPartition(t *testing.T) {
 }
 
 func TestWindowSumRunning(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, val INT)")
 	run(t, exec, "INSERT INTO t VALUES (1, 10)")
 	run(t, exec, "INSERT INTO t VALUES (2, 20)")
@@ -271,7 +271,7 @@ func TestWindowSumRunning(t *testing.T) {
 }
 
 func TestWindowCountStar(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE emp (id INT, dept TEXT)")
 	run(t, exec, "INSERT INTO emp VALUES (1, 'eng')")
 	run(t, exec, "INSERT INTO emp VALUES (2, 'eng')")
@@ -294,7 +294,7 @@ func TestWindowCountStar(t *testing.T) {
 }
 
 func TestWindowAvgPartition(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE scores (id INT, dept TEXT, score INT)")
 	run(t, exec, "INSERT INTO scores VALUES (1, 'a', 10)")
 	run(t, exec, "INSERT INTO scores VALUES (2, 'a', 20)")
@@ -318,7 +318,7 @@ func TestWindowAvgPartition(t *testing.T) {
 }
 
 func TestWindowMinMaxPartition(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, grp TEXT, val INT)")
 	run(t, exec, "INSERT INTO t VALUES (1, 'a', 10)")
 	run(t, exec, "INSERT INTO t VALUES (2, 'a', 30)")
@@ -345,7 +345,7 @@ func TestWindowMinMaxPartition(t *testing.T) {
 }
 
 func TestWindowAggregateWithAlias(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, val INT)")
 	run(t, exec, "INSERT INTO t VALUES (1, 100)")
 	run(t, exec, "INSERT INTO t VALUES (2, 200)")
@@ -359,7 +359,7 @@ func TestWindowAggregateWithAlias(t *testing.T) {
 }
 
 func TestWindowAggregateWithWhere(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, val INT, active INT)")
 	run(t, exec, "INSERT INTO t VALUES (1, 10, 1)")
 	run(t, exec, "INSERT INTO t VALUES (2, 20, 0)")
@@ -374,7 +374,7 @@ func TestWindowAggregateWithWhere(t *testing.T) {
 }
 
 func TestWindowMixedRankingAndAggregate(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, val INT)")
 	run(t, exec, "INSERT INTO t VALUES (1, 100)")
 	run(t, exec, "INSERT INTO t VALUES (2, 200)")
@@ -399,7 +399,7 @@ func TestWindowMixedRankingAndAggregate(t *testing.T) {
 }
 
 func TestNamedWindowBasic(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE emp (id INT, dept TEXT, name TEXT)")
 	run(t, exec, "INSERT INTO emp VALUES (1, 'eng', 'alice')")
 	run(t, exec, "INSERT INTO emp VALUES (2, 'eng', 'bob')")
@@ -422,7 +422,7 @@ func TestNamedWindowBasic(t *testing.T) {
 }
 
 func TestNamedWindowMultiple(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE emp (id INT, dept TEXT, salary INT)")
 	run(t, exec, "INSERT INTO emp VALUES (1, 'eng', 100)")
 	run(t, exec, "INSERT INTO emp VALUES (2, 'eng', 200)")
@@ -452,7 +452,7 @@ func TestNamedWindowMultiple(t *testing.T) {
 }
 
 func TestNamedWindowAggregate(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE emp (id INT, dept TEXT, salary INT)")
 	run(t, exec, "INSERT INTO emp VALUES (1, 'eng', 100)")
 	run(t, exec, "INSERT INTO emp VALUES (2, 'eng', 200)")
@@ -479,7 +479,7 @@ func TestNamedWindowAggregate(t *testing.T) {
 }
 
 func TestNamedWindowMixed(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, val INT)")
 	run(t, exec, "INSERT INTO t VALUES (1, 100)")
 	run(t, exec, "INSERT INTO t VALUES (2, 200)")

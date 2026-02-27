@@ -8,7 +8,7 @@ import (
 )
 
 func TestSelectWhereEq(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -19,7 +19,7 @@ func TestSelectWhereEq(t *testing.T) {
 }
 
 func TestSelectWhereGt(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -30,7 +30,7 @@ func TestSelectWhereGt(t *testing.T) {
 }
 
 func TestSelectWhereAnd(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -40,7 +40,7 @@ func TestSelectWhereAnd(t *testing.T) {
 }
 
 func TestSelectWhereOr(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -51,7 +51,7 @@ func TestSelectWhereOr(t *testing.T) {
 }
 
 func TestSelectNoMatch(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 
@@ -60,7 +60,7 @@ func TestSelectNoMatch(t *testing.T) {
 }
 
 func TestSelectQualifiedColumns(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -73,7 +73,7 @@ func TestSelectQualifiedColumns(t *testing.T) {
 }
 
 func TestSelectQualifiedWhere(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -84,20 +84,20 @@ func TestSelectQualifiedWhere(t *testing.T) {
 }
 
 func TestErrorSelectWrongTableQualifier(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	runExpectError(t, exec, "SELECT other.id FROM users")
 }
 
 func TestErrorWhereWrongTableQualifier(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	runExpectError(t, exec, "SELECT * FROM users WHERE other.id = 1")
 }
 
 func TestSelectCountStar(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -110,7 +110,7 @@ func TestSelectCountStar(t *testing.T) {
 }
 
 func TestSelectCountStarWithWhere(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -121,7 +121,7 @@ func TestSelectCountStarWithWhere(t *testing.T) {
 }
 
 func TestSelectCountStarEmpty(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT)")
 
 	result := run(t, exec, "SELECT COUNT(*) FROM users")
@@ -129,7 +129,7 @@ func TestSelectCountStarEmpty(t *testing.T) {
 }
 
 func TestSelectCountColumnExcludesNull(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, NULL)")
@@ -147,7 +147,7 @@ func TestSelectCountColumnExcludesNull(t *testing.T) {
 }
 
 func TestSelectCountLiteral(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -160,7 +160,7 @@ func TestSelectCountLiteral(t *testing.T) {
 }
 
 func TestSelectWithoutFrom(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 
 	// SELECT 1
 	result := run(t, exec, "SELECT 1")
@@ -177,7 +177,7 @@ func TestSelectWithoutFrom(t *testing.T) {
 }
 
 func TestSelectAlias(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -189,7 +189,7 @@ func TestSelectAlias(t *testing.T) {
 }
 
 func TestSelectCountAlias(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -200,7 +200,7 @@ func TestSelectCountAlias(t *testing.T) {
 }
 
 func TestSelectLiteralAlias(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 
 	result := run(t, exec, "SELECT 1 AS one")
 	assert.Equal(t, "one", result.Columns[0])
@@ -208,7 +208,7 @@ func TestSelectLiteralAlias(t *testing.T) {
 }
 
 func TestSelectQuotedIdent(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (`count` INT)")
 	run(t, exec, "INSERT INTO t VALUES (42)")
 
@@ -219,7 +219,7 @@ func TestSelectQuotedIdent(t *testing.T) {
 }
 
 func TestSelectArithmetic(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 
 	// SELECT 1 * 2 → 2
 	result := run(t, exec, "SELECT 1 * 2")
@@ -239,7 +239,7 @@ func TestSelectArithmetic(t *testing.T) {
 }
 
 func TestSelectArithmeticWithTable(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE items (price INT)")
 	run(t, exec, "INSERT INTO items VALUES (10)")
 	run(t, exec, "INSERT INTO items VALUES (20)")
@@ -251,7 +251,7 @@ func TestSelectArithmeticWithTable(t *testing.T) {
 }
 
 func TestSelectArithmeticInWhere(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE items (price INT)")
 	run(t, exec, "INSERT INTO items VALUES (5)")
 	run(t, exec, "INSERT INTO items VALUES (10)")
@@ -263,12 +263,12 @@ func TestSelectArithmeticInWhere(t *testing.T) {
 }
 
 func TestErrorDivisionByZero(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	runExpectError(t, exec, "SELECT 1 / 0")
 }
 
 func TestSelectUnaryMinus(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 
 	result := run(t, exec, "SELECT -1")
 	assert.Equal(t, int64(-1), result.Rows[0][0])
@@ -278,18 +278,18 @@ func TestSelectUnaryMinus(t *testing.T) {
 }
 
 func TestErrorSelectNonexistentTable(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	runExpectError(t, exec, "SELECT * FROM nonexistent")
 }
 
 func TestErrorSelectNonexistentColumn(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT)")
 	runExpectError(t, exec, "SELECT foo FROM users")
 }
 
 func TestSelectWhereIsNull(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, NULL)")
@@ -301,7 +301,7 @@ func TestSelectWhereIsNull(t *testing.T) {
 }
 
 func TestSelectWhereIsNotNull(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, NULL)")
@@ -314,7 +314,7 @@ func TestSelectWhereIsNotNull(t *testing.T) {
 }
 
 func TestNullComparisonReturnsFalse(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, NULL)")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -326,7 +326,7 @@ func TestNullComparisonReturnsFalse(t *testing.T) {
 }
 
 func TestSelectOrderByAsc(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
@@ -340,7 +340,7 @@ func TestSelectOrderByAsc(t *testing.T) {
 }
 
 func TestSelectOrderByDesc(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
@@ -354,7 +354,7 @@ func TestSelectOrderByDesc(t *testing.T) {
 }
 
 func TestSelectOrderByMultipleColumns(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT, age INT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice', 30)")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob', 20)")
@@ -369,7 +369,7 @@ func TestSelectOrderByMultipleColumns(t *testing.T) {
 }
 
 func TestSelectWhereOrderBy(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
@@ -382,7 +382,7 @@ func TestSelectWhereOrderBy(t *testing.T) {
 }
 
 func TestSelectOrderByWithNull(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, NULL)")
@@ -403,7 +403,7 @@ func TestSelectOrderByWithNull(t *testing.T) {
 }
 
 func TestSelectLimitOnly(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -416,7 +416,7 @@ func TestSelectLimitOnly(t *testing.T) {
 }
 
 func TestSelectOffsetOnly(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -429,7 +429,7 @@ func TestSelectOffsetOnly(t *testing.T) {
 }
 
 func TestSelectLimitOffset(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -443,7 +443,7 @@ func TestSelectLimitOffset(t *testing.T) {
 }
 
 func TestSelectOrderByLimit(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
@@ -456,7 +456,7 @@ func TestSelectOrderByLimit(t *testing.T) {
 }
 
 func TestSelectOffsetExceedsRowCount(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -466,7 +466,7 @@ func TestSelectOffsetExceedsRowCount(t *testing.T) {
 }
 
 func TestSelectGroupByBasic(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -485,7 +485,7 @@ func TestSelectGroupByBasic(t *testing.T) {
 }
 
 func TestSelectGroupByWithWhere(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -502,7 +502,7 @@ func TestSelectGroupByWithWhere(t *testing.T) {
 }
 
 func TestSelectGroupByOrderBy(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'bob')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'alice')")
@@ -515,7 +515,7 @@ func TestSelectGroupByOrderBy(t *testing.T) {
 }
 
 func TestSelectGroupByHaving(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -529,7 +529,7 @@ func TestSelectGroupByHaving(t *testing.T) {
 }
 
 func TestSelectGroupByMultipleColumns(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE orders (product TEXT, region TEXT, amount INT)")
 	run(t, exec, "INSERT INTO orders VALUES ('A', 'east', 10)")
 	run(t, exec, "INSERT INTO orders VALUES ('A', 'east', 20)")
@@ -550,7 +550,7 @@ func TestSelectGroupByMultipleColumns(t *testing.T) {
 }
 
 func TestSelectSumBasic(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE orders (id INT, amount INT)")
 	run(t, exec, "INSERT INTO orders VALUES (1, 100)")
 	run(t, exec, "INSERT INTO orders VALUES (2, 200)")
@@ -563,7 +563,7 @@ func TestSelectSumBasic(t *testing.T) {
 }
 
 func TestSelectSumWithWhere(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE orders (id INT, region TEXT, amount INT)")
 	run(t, exec, "INSERT INTO orders VALUES (1, 'east', 100)")
 	run(t, exec, "INSERT INTO orders VALUES (2, 'west', 200)")
@@ -574,7 +574,7 @@ func TestSelectSumWithWhere(t *testing.T) {
 }
 
 func TestSelectAvgBasic(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE orders (id INT, amount INT)")
 	run(t, exec, "INSERT INTO orders VALUES (1, 10)")
 	run(t, exec, "INSERT INTO orders VALUES (2, 20)")
@@ -586,7 +586,7 @@ func TestSelectAvgBasic(t *testing.T) {
 }
 
 func TestSelectMinMaxInt(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
@@ -601,7 +601,7 @@ func TestSelectMinMaxInt(t *testing.T) {
 }
 
 func TestSelectMinMaxText(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'charlie')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'alice')")
@@ -613,7 +613,7 @@ func TestSelectMinMaxText(t *testing.T) {
 }
 
 func TestSelectAggregatesWithNull(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE scores (id INT, value INT)")
 	run(t, exec, "INSERT INTO scores VALUES (1, 10)")
 	run(t, exec, "INSERT INTO scores VALUES (2, NULL)")
@@ -638,7 +638,7 @@ func TestSelectAggregatesWithNull(t *testing.T) {
 }
 
 func TestSelectAggregatesAllNull(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE scores (id INT, value INT)")
 	run(t, exec, "INSERT INTO scores VALUES (1, NULL)")
 	run(t, exec, "INSERT INTO scores VALUES (2, NULL)")
@@ -661,7 +661,7 @@ func TestSelectAggregatesAllNull(t *testing.T) {
 }
 
 func TestSelectGroupBySumBasic(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE orders (id INT, name TEXT, amount INT)")
 	run(t, exec, "INSERT INTO orders VALUES (1, 'alice', 100)")
 	run(t, exec, "INSERT INTO orders VALUES (2, 'bob', 200)")
@@ -677,7 +677,7 @@ func TestSelectGroupBySumBasic(t *testing.T) {
 }
 
 func TestSelectSumEmpty(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE orders (id INT, amount INT)")
 
 	// SUM on empty table should return NULL
@@ -686,7 +686,7 @@ func TestSelectSumEmpty(t *testing.T) {
 }
 
 func TestFloatColumnInsertSelect(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (val FLOAT)")
 	run(t, exec, "INSERT INTO t VALUES (3.14)")
 
@@ -696,7 +696,7 @@ func TestFloatColumnInsertSelect(t *testing.T) {
 }
 
 func TestFloatColumnInsertIntAutoConvert(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (val FLOAT)")
 	run(t, exec, "INSERT INTO t VALUES (42)")
 
@@ -705,13 +705,13 @@ func TestFloatColumnInsertIntAutoConvert(t *testing.T) {
 }
 
 func TestErrorIntColumnInsertFloat(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (val INT)")
 	runExpectError(t, exec, "INSERT INTO t VALUES (3.14)")
 }
 
 func TestFloatArithmetic(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 
 	// SELECT 1.5 + 2.5
 	result := run(t, exec, "SELECT 1.5 + 2.5")
@@ -719,7 +719,7 @@ func TestFloatArithmetic(t *testing.T) {
 }
 
 func TestFloatIntMixedArithmetic(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 
 	// SELECT 1 + 0.5
 	result := run(t, exec, "SELECT 1 + 0.5")
@@ -727,7 +727,7 @@ func TestFloatIntMixedArithmetic(t *testing.T) {
 }
 
 func TestAvgReturnsFloat(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE scores (id INT, value INT)")
 	run(t, exec, "INSERT INTO scores VALUES (1, 10)")
 	run(t, exec, "INSERT INTO scores VALUES (2, 20)")
@@ -741,7 +741,7 @@ func TestAvgReturnsFloat(t *testing.T) {
 }
 
 func TestSumFloatColumn(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (val FLOAT)")
 	run(t, exec, "INSERT INTO t VALUES (1.5)")
 	run(t, exec, "INSERT INTO t VALUES (2.5)")
@@ -752,7 +752,7 @@ func TestSumFloatColumn(t *testing.T) {
 }
 
 func TestFloatComparison(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (val FLOAT)")
 	run(t, exec, "INSERT INTO t VALUES (1.5)")
 	run(t, exec, "INSERT INTO t VALUES (2.5)")
@@ -765,7 +765,7 @@ func TestFloatComparison(t *testing.T) {
 }
 
 func TestFloatOrderBy(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (val FLOAT)")
 	run(t, exec, "INSERT INTO t VALUES (3.5)")
 	run(t, exec, "INSERT INTO t VALUES (1.5)")
@@ -779,7 +779,7 @@ func TestFloatOrderBy(t *testing.T) {
 }
 
 func TestFloatMinMax(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (val FLOAT)")
 	run(t, exec, "INSERT INTO t VALUES (3.5)")
 	run(t, exec, "INSERT INTO t VALUES (1.5)")
@@ -791,7 +791,7 @@ func TestFloatMinMax(t *testing.T) {
 }
 
 func TestFloatIntMixedComparison(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, val FLOAT)")
 	run(t, exec, "INSERT INTO t VALUES (1, 1.5)")
 	run(t, exec, "INSERT INTO t VALUES (2, 2.5)")
@@ -802,7 +802,7 @@ func TestFloatIntMixedComparison(t *testing.T) {
 }
 
 func TestFloatUpdateSet(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (val FLOAT)")
 	run(t, exec, "INSERT INTO t VALUES (1.0)")
 
@@ -812,7 +812,7 @@ func TestFloatUpdateSet(t *testing.T) {
 }
 
 func TestSelectDistinctBasic(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -825,7 +825,7 @@ func TestSelectDistinctBasic(t *testing.T) {
 }
 
 func TestSelectDistinctStar(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -836,7 +836,7 @@ func TestSelectDistinctStar(t *testing.T) {
 }
 
 func TestSelectDistinctOrderBy(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'bob')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'alice')")
@@ -849,7 +849,7 @@ func TestSelectDistinctOrderBy(t *testing.T) {
 }
 
 func TestSelectDistinctLimit(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -861,7 +861,7 @@ func TestSelectDistinctLimit(t *testing.T) {
 }
 
 func TestSelectWhereIn(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -874,7 +874,7 @@ func TestSelectWhereIn(t *testing.T) {
 }
 
 func TestSelectWhereInNoMatch(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -884,7 +884,7 @@ func TestSelectWhereInNoMatch(t *testing.T) {
 }
 
 func TestSelectWhereNotIn(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -897,7 +897,7 @@ func TestSelectWhereNotIn(t *testing.T) {
 }
 
 func TestSelectWhereInLeftNull(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, NULL)")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -908,7 +908,7 @@ func TestSelectWhereInLeftNull(t *testing.T) {
 }
 
 func TestSelectWhereInWithNullValues(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -919,7 +919,7 @@ func TestSelectWhereInWithNullValues(t *testing.T) {
 }
 
 func TestSelectWhereBetween(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -935,7 +935,7 @@ func TestSelectWhereBetween(t *testing.T) {
 }
 
 func TestSelectWhereNotBetween(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -950,7 +950,7 @@ func TestSelectWhereNotBetween(t *testing.T) {
 }
 
 func TestSelectWhereBetweenNoMatch(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -960,7 +960,7 @@ func TestSelectWhereBetweenNoMatch(t *testing.T) {
 }
 
 func TestSelectWhereBetweenNull(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (NULL, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -971,7 +971,7 @@ func TestSelectWhereBetweenNull(t *testing.T) {
 }
 
 func TestSelectWhereBetweenText(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -986,7 +986,7 @@ func TestSelectWhereBetweenText(t *testing.T) {
 }
 
 func TestSelectWhereLike(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -999,7 +999,7 @@ func TestSelectWhereLike(t *testing.T) {
 }
 
 func TestSelectWhereNotLike(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -1011,7 +1011,7 @@ func TestSelectWhereNotLike(t *testing.T) {
 }
 
 func TestSelectWhereLikeUnderscore(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'abc')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'aXc')")
@@ -1024,7 +1024,7 @@ func TestSelectWhereLikeUnderscore(t *testing.T) {
 }
 
 func TestSelectWhereLikeExact(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -1035,7 +1035,7 @@ func TestSelectWhereLikeExact(t *testing.T) {
 }
 
 func TestSelectWhereLikeNull(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, NULL)")
@@ -1046,7 +1046,7 @@ func TestSelectWhereLikeNull(t *testing.T) {
 }
 
 func TestSelectWhereLikeEscapePercent(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE items (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO items VALUES (1, '100%')")
 	run(t, exec, "INSERT INTO items VALUES (2, '100abc')")
@@ -1059,7 +1059,7 @@ func TestSelectWhereLikeEscapePercent(t *testing.T) {
 }
 
 func TestSelectWhereLikeEscapeUnderscore(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE items (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO items VALUES (1, 'a_b')")
 	run(t, exec, "INSERT INTO items VALUES (2, 'aXb')")
@@ -1071,7 +1071,7 @@ func TestSelectWhereLikeEscapeUnderscore(t *testing.T) {
 }
 
 func TestSelectWhereLikeEscapeBackslash(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE items (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO items VALUES (1, 'a\\b')")
 	run(t, exec, "INSERT INTO items VALUES (2, 'aXb')")
@@ -1082,7 +1082,7 @@ func TestSelectWhereLikeEscapeBackslash(t *testing.T) {
 }
 
 func TestNotOperator(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE items (id INT, active INT)")
 	run(t, exec, "INSERT INTO items VALUES (1, 1)")
 	run(t, exec, "INSERT INTO items VALUES (2, 0)")
@@ -1114,7 +1114,7 @@ func TestNotOperator(t *testing.T) {
 }
 
 func TestCast(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (i INT, f FLOAT, s TEXT)")
 	run(t, exec, "INSERT INTO t VALUES (42, 3.14, 'hello')")
 	run(t, exec, "INSERT INTO t VALUES (7, 2.0, '123')")
@@ -1146,7 +1146,7 @@ func TestCast(t *testing.T) {
 	assert.Equal(t, float64(123), result.Rows[0][0])
 
 	// NULL stays NULL
-	exec2 := NewExecutor()
+	exec2 := NewExecutor(NewDatabase("test"))
 	run(t, exec2, "CREATE TABLE t2 (val TEXT)")
 	run(t, exec2, "INSERT INTO t2 VALUES (NULL)")
 	result = run(t, exec2, "SELECT CAST(val AS INT) FROM t2")
@@ -1154,7 +1154,7 @@ func TestCast(t *testing.T) {
 }
 
 func TestCastError(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (s TEXT)")
 	run(t, exec, "INSERT INTO t VALUES ('abc')")
 

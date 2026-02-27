@@ -8,7 +8,7 @@ import (
 )
 
 func TestUpdateBasic(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -22,7 +22,7 @@ func TestUpdateBasic(t *testing.T) {
 }
 
 func TestUpdateMultipleRows(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -38,7 +38,7 @@ func TestUpdateMultipleRows(t *testing.T) {
 }
 
 func TestUpdateNoMatch(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 
@@ -47,7 +47,7 @@ func TestUpdateNoMatch(t *testing.T) {
 }
 
 func TestUpdateNoWhere(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -62,7 +62,7 @@ func TestUpdateNoWhere(t *testing.T) {
 }
 
 func TestUpdateMultipleSets(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT, age INT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice', 20)")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob', 25)")
@@ -76,21 +76,21 @@ func TestUpdateMultipleSets(t *testing.T) {
 }
 
 func TestErrorUpdateTypeMismatch(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	runExpectError(t, exec, "UPDATE users SET id = 'not_int' WHERE id = 1")
 }
 
 func TestErrorUpdateNotNull(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT NOT NULL, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	runExpectError(t, exec, "UPDATE users SET id = NULL WHERE id = 1")
 }
 
 func TestUpdateWithIndex(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT, age INT)")
 	run(t, exec, "CREATE INDEX idx_name ON users(name)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice', 20)")
@@ -112,7 +112,7 @@ func TestUpdateWithIndex(t *testing.T) {
 }
 
 func TestUpdateWithIndexRange(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE products (id INT, price INT)")
 	run(t, exec, "CREATE INDEX idx_price ON products(price)")
 	run(t, exec, "INSERT INTO products VALUES (1, 100)")
@@ -133,7 +133,7 @@ func TestUpdateWithIndexRange(t *testing.T) {
 }
 
 func TestUpdateOrderByLimit(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -153,7 +153,7 @@ func TestUpdateOrderByLimit(t *testing.T) {
 }
 
 func TestUpdateOrderByDescLimit(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -171,7 +171,7 @@ func TestUpdateOrderByDescLimit(t *testing.T) {
 }
 
 func TestUpdateWhereOrderByLimit(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -190,7 +190,7 @@ func TestUpdateWhereOrderByLimit(t *testing.T) {
 }
 
 func TestUpdateNoWhereWithIndex(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT, active INT)")
 	run(t, exec, "CREATE INDEX idx_name ON users(name)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice', 0)")

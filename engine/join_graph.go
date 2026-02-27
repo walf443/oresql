@@ -214,7 +214,7 @@ func (e *Executor) buildJoinGraph(stmt *ast.SelectStmt) (*JoinGraph, error) {
 		}
 	} else {
 		var err error
-		fromInfo, err = e.catalog.GetTable(stmt.TableName)
+		fromInfo, err = e.db.catalog.GetTable(stmt.TableName)
 		if err != nil {
 			return nil, err
 		}
@@ -232,7 +232,7 @@ func (e *Executor) buildJoinGraph(stmt *ast.SelectStmt) (*JoinGraph, error) {
 
 	// 2. Create nodes for each JOIN table
 	for _, join := range stmt.Joins {
-		joinInfo, err := e.catalog.GetTable(join.TableName)
+		joinInfo, err := e.db.catalog.GetTable(join.TableName)
 		if err != nil {
 			return nil, err
 		}
@@ -312,7 +312,7 @@ func (e *Executor) buildJoinGraph(stmt *ast.SelectStmt) (*JoinGraph, error) {
 				// Check index on tableA's column
 				col, findErr := nodeA.Info.FindColumn(pair.leftCol)
 				if findErr == nil {
-					idx := e.storage.LookupSingleColumnIndex(nodeA.Info.Name, col.Index)
+					idx := e.db.storage.LookupSingleColumnIndex(nodeA.Info.Name, col.Index)
 					if idx != nil {
 						edge.IndexOnA = true
 					}
@@ -320,7 +320,7 @@ func (e *Executor) buildJoinGraph(stmt *ast.SelectStmt) (*JoinGraph, error) {
 				// Check index on tableB's column
 				col, findErr = nodeB.Info.FindColumn(pair.rightCol)
 				if findErr == nil {
-					idx := e.storage.LookupSingleColumnIndex(nodeB.Info.Name, col.Index)
+					idx := e.db.storage.LookupSingleColumnIndex(nodeB.Info.Name, col.Index)
 					if idx != nil {
 						edge.IndexOnB = true
 					}
@@ -534,7 +534,7 @@ func (e *Executor) OptimizeJoinOrder(graph *JoinGraph) []string {
 						}
 						col, findErr := node.Info.FindColumn(thisCol)
 						if findErr == nil {
-							idx := e.storage.LookupSingleColumnIndex(node.Info.Name, col.Index)
+							idx := e.db.storage.LookupSingleColumnIndex(node.Info.Name, col.Index)
 							if idx != nil {
 								score += 3 // Index Nested Loop possible
 							}
@@ -624,7 +624,7 @@ func (e *Executor) findCompositeJoinIndex(
 	localWhereStripped ast.Expr,
 	info *TableInfo,
 ) *compositeJoinPlan {
-	indexes := e.storage.GetIndexes(info.Name)
+	indexes := e.db.storage.GetIndexes(info.Name)
 	if len(indexes) == 0 {
 		return nil
 	}
@@ -747,12 +747,12 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 		stripped := stripTableQualifier(combined, drivingNode.TableName, drivingNode.Alias)
 
 		if keys, ok := e.tryIndexScan(stripped, drivingNode.Info); ok {
-			drivingRows, err = e.storage.GetByKeys(drivingNode.Info.Name, keys)
+			drivingRows, err = e.db.storage.GetByKeys(drivingNode.Info.Name, keys)
 			if err != nil {
 				return nil, nil, err
 			}
 		} else {
-			drivingRows, err = e.storage.Scan(drivingNode.Info.Name)
+			drivingRows, err = e.db.storage.Scan(drivingNode.Info.Name)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -770,7 +770,7 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 		}
 		drivingRows = filtered
 	} else {
-		drivingRows, err = e.storage.Scan(drivingNode.Info.Name)
+		drivingRows, err = e.db.storage.Scan(drivingNode.Info.Name)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -833,7 +833,7 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 			// Check if nextTable has an index on the equi-join column
 			col, findErr := nextNode.Info.FindColumn(nextEquiCol)
 			if findErr == nil {
-				nextIdx = e.storage.LookupSingleColumnIndex(nextNode.Info.Name, col.Index)
+				nextIdx = e.db.storage.LookupSingleColumnIndex(nextNode.Info.Name, col.Index)
 			}
 		}
 
@@ -880,9 +880,9 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 				stripped := stripTableQualifier(combined, nextNode.TableName, nextNode.Alias)
 				// Try index scan for LocalWhere conditions
 				if keys, ok := e.tryIndexScan(stripped, nextNode.Info); ok {
-					preFilteredInner, err = e.storage.GetByKeys(nextNode.Info.Name, keys)
+					preFilteredInner, err = e.db.storage.GetByKeys(nextNode.Info.Name, keys)
 				} else {
-					preFilteredInner, err = e.storage.Scan(nextNode.Info.Name)
+					preFilteredInner, err = e.db.storage.Scan(nextNode.Info.Name)
 				}
 				if err != nil {
 					return nil, nil, err
@@ -900,7 +900,7 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 				}
 				preFilteredInner = filtered
 			} else {
-				preFilteredInner, err = e.storage.Scan(nextNode.Info.Name)
+				preFilteredInner, err = e.db.storage.Scan(nextNode.Info.Name)
 				if err != nil {
 					return nil, nil, err
 				}
@@ -998,7 +998,7 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 					if len(keys) == 0 {
 						skipInner = true
 					} else {
-						innerCandidates, err = e.storage.GetByKeys(nextNode.Info.Name, keys)
+						innerCandidates, err = e.db.storage.GetByKeys(nextNode.Info.Name, keys)
 						if err != nil {
 							return nil, nil, err
 						}

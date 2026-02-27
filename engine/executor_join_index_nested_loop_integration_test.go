@@ -8,7 +8,7 @@ import (
 )
 
 func TestJoinWithIndexNestedLoop(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, product TEXT)")
 	run(t, exec, "CREATE INDEX idx_orders_user_id ON orders (user_id)")
@@ -31,7 +31,7 @@ func TestJoinWithIndexNestedLoop(t *testing.T) {
 }
 
 func TestJoinWithWherePushdown(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT, status TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, product TEXT)")
 
@@ -52,7 +52,7 @@ func TestJoinWithWherePushdown(t *testing.T) {
 }
 
 func TestJoinDrivingTableChoice(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, product TEXT, amount INT)")
 	run(t, exec, "CREATE INDEX idx_orders_user_id ON orders (user_id)")
@@ -72,7 +72,7 @@ func TestJoinDrivingTableChoice(t *testing.T) {
 }
 
 func TestJoinReversedOrderSelectStar(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, product TEXT)")
 	run(t, exec, "CREATE INDEX idx_orders_user_id ON orders (user_id)")
@@ -94,7 +94,7 @@ func TestJoinReversedOrderSelectStar(t *testing.T) {
 }
 
 func TestJoinNullEquiJoinValue(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, product TEXT)")
 	run(t, exec, "CREATE INDEX idx_orders_user_id ON orders (user_id)")
@@ -112,7 +112,7 @@ func TestJoinNullEquiJoinValue(t *testing.T) {
 }
 
 func TestJoinCrossTableWhere(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, product TEXT)")
 
@@ -129,7 +129,7 @@ func TestJoinCrossTableWhere(t *testing.T) {
 }
 
 func TestJoinOrWhereNotPushed(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT, status TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, amount INT)")
 
@@ -148,7 +148,7 @@ func TestJoinOrWhereNotPushed(t *testing.T) {
 }
 
 func TestJoinBothTablesPushedDown(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT, status TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, product TEXT, amount INT)")
 
@@ -169,7 +169,7 @@ func TestJoinBothTablesPushedDown(t *testing.T) {
 func TestJoinInnerTableLocalWhereIndexScan(t *testing.T) {
 	// Problem 1: JOINカラムにインデックスなし、WHERE条件のカラムにインデックスあり
 	// orders.status にインデックスあり、orders.user_id にインデックスなし
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, product TEXT, status TEXT)")
 	run(t, exec, "CREATE INDEX idx_orders_status ON orders (status)")
@@ -195,7 +195,7 @@ func TestJoinInnerTableLocalWhereIndexScan(t *testing.T) {
 func TestJoinInnerTableLocalWherePKWithJoinIndex(t *testing.T) {
 	// Problem 2: JOINカラムにインデックスあり + WHERE条件がPKを指定
 	// orders.user_id にインデックスあり、WHERE o.id = 10 はPKルックアップ
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, product TEXT)")
 	run(t, exec, "CREATE INDEX idx_orders_user_id ON orders (user_id)")
@@ -216,7 +216,7 @@ func TestJoinInnerTableLocalWherePKWithJoinIndex(t *testing.T) {
 }
 
 func TestJoinThreeTablesNaivePath(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t1 (id INT, val TEXT)")
 	run(t, exec, "CREATE TABLE t2 (id INT, t1_id INT, val TEXT)")
 	run(t, exec, "CREATE TABLE t3 (id INT, t2_id INT, val TEXT)")
@@ -234,7 +234,7 @@ func TestJoinThreeTablesNaivePath(t *testing.T) {
 
 func TestJoinCompositeIndexFullEquality(t *testing.T) {
 	// Case A: Composite index (user_id, status) covers both JOIN + WHERE equality
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, product TEXT, status TEXT)")
 	run(t, exec, "CREATE INDEX idx_orders_uid_status ON orders (user_id, status)")
@@ -261,7 +261,7 @@ func TestJoinCompositeIndexFullEquality(t *testing.T) {
 
 func TestJoinCompositeIndexPrefixRange(t *testing.T) {
 	// Case B: Composite index (user_id, amount) with JOIN + range on amount
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, product TEXT, amount INT)")
 	run(t, exec, "CREATE INDEX idx_orders_uid_amount ON orders (user_id, amount)")
@@ -287,7 +287,7 @@ func TestJoinCompositeIndexPrefixRange(t *testing.T) {
 
 func TestJoinCompositeIndex3ColPrefixScan(t *testing.T) {
 	// Case C: 3-column composite index (user_id, status, amount), WHERE only has status
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, product TEXT, status TEXT, amount INT)")
 	run(t, exec, "CREATE INDEX idx_orders_uid_status_amount ON orders (user_id, status, amount)")

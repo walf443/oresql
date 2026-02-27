@@ -9,7 +9,7 @@ import (
 )
 
 func TestInnerJoinBasic(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT, user_id INT, product TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
@@ -26,7 +26,7 @@ func TestInnerJoinBasic(t *testing.T) {
 }
 
 func TestInnerJoinNoMatch(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT, user_id INT, product TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
@@ -37,7 +37,7 @@ func TestInnerJoinNoMatch(t *testing.T) {
 }
 
 func TestInnerJoinWithWhere(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT, user_id INT, product TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
@@ -52,7 +52,7 @@ func TestInnerJoinWithWhere(t *testing.T) {
 }
 
 func TestInnerJoinWithAlias(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT, user_id INT, product TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
@@ -65,7 +65,7 @@ func TestInnerJoinWithAlias(t *testing.T) {
 }
 
 func TestInnerJoinQualifiedColumns(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t1 (id INT, val TEXT)")
 	run(t, exec, "CREATE TABLE t2 (id INT, t1_id INT, val TEXT)")
 	run(t, exec, "INSERT INTO t1 VALUES (1, 'a')")
@@ -79,7 +79,7 @@ func TestInnerJoinQualifiedColumns(t *testing.T) {
 }
 
 func TestInnerJoinStar(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT, user_id INT, product TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
@@ -96,7 +96,7 @@ func TestInnerJoinStar(t *testing.T) {
 }
 
 func TestInnerJoinMultiple(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t1 (id INT, val TEXT)")
 	run(t, exec, "CREATE TABLE t2 (id INT, t1_id INT, val TEXT)")
 	run(t, exec, "CREATE TABLE t3 (id INT, t2_id INT, val TEXT)")
@@ -112,7 +112,7 @@ func TestInnerJoinMultiple(t *testing.T) {
 }
 
 func TestInnerJoinOrderBy(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT, user_id INT, product TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
@@ -127,7 +127,7 @@ func TestInnerJoinOrderBy(t *testing.T) {
 }
 
 func TestInnerJoinAmbiguousColumn(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t1 (id INT, name TEXT)")
 	run(t, exec, "CREATE TABLE t2 (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO t1 VALUES (1, 'a')")
@@ -137,7 +137,7 @@ func TestInnerJoinAmbiguousColumn(t *testing.T) {
 }
 
 func TestLeftJoinBasic(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT, user_id INT, product TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
@@ -157,7 +157,7 @@ func TestLeftJoinBasic(t *testing.T) {
 }
 
 func TestLeftJoinNoMatch(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT, user_id INT, product TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
@@ -172,7 +172,7 @@ func TestLeftJoinNoMatch(t *testing.T) {
 }
 
 func TestLeftJoinAllMatch(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT, user_id INT, product TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
@@ -189,7 +189,7 @@ func TestLeftJoinAllMatch(t *testing.T) {
 }
 
 func TestLeftJoinWithWhereIsNull(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT, user_id INT, product TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
@@ -204,7 +204,7 @@ func TestLeftJoinWithWhereIsNull(t *testing.T) {
 }
 
 func TestLeftJoinMultiple(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t1 (id INT, val TEXT)")
 	run(t, exec, "CREATE TABLE t2 (id INT, t1_id INT, val TEXT)")
 	run(t, exec, "CREATE TABLE t3 (id INT, t2_id INT, val TEXT)")
@@ -224,7 +224,7 @@ func TestLeftJoinMultiple(t *testing.T) {
 }
 
 func TestMixedInnerAndLeftJoin(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT, user_id INT, product TEXT)")
 	run(t, exec, "CREATE TABLE reviews (id INT, order_id INT, rating INT)")
@@ -246,7 +246,7 @@ func TestMixedInnerAndLeftJoin(t *testing.T) {
 }
 
 func TestLeftJoinWithIndex(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT, user_id INT, product TEXT)")
 	run(t, exec, "CREATE INDEX idx_orders_user_id ON orders(user_id)")
@@ -263,7 +263,7 @@ func TestLeftJoinWithIndex(t *testing.T) {
 }
 
 func TestLeftJoinWithAlias(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT, user_id INT, product TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
@@ -279,7 +279,7 @@ func TestLeftJoinWithAlias(t *testing.T) {
 }
 
 func TestRightJoinBasic(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT, user_id INT, product TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
@@ -298,7 +298,7 @@ func TestRightJoinBasic(t *testing.T) {
 }
 
 func TestRightJoinNoMatch(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT, user_id INT, product TEXT)")
 	run(t, exec, "INSERT INTO orders VALUES (10, 1, 'laptop')")
@@ -313,7 +313,7 @@ func TestRightJoinNoMatch(t *testing.T) {
 }
 
 func TestRightJoinAllMatch(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT, user_id INT, product TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
@@ -330,7 +330,7 @@ func TestRightJoinAllMatch(t *testing.T) {
 }
 
 func TestRightJoinWithWhereIsNull(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT, user_id INT, product TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
@@ -345,7 +345,7 @@ func TestRightJoinWithWhereIsNull(t *testing.T) {
 }
 
 func TestCrossJoinBasic(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE colors (name TEXT)")
 	run(t, exec, "CREATE TABLE sizes (name TEXT)")
 	run(t, exec, "INSERT INTO colors VALUES ('red')")
@@ -367,7 +367,7 @@ func TestCrossJoinBasic(t *testing.T) {
 }
 
 func TestCrossJoinWithWhere(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t1 (id INT, val TEXT)")
 	run(t, exec, "CREATE TABLE t2 (id INT, t1_id INT, val TEXT)")
 	run(t, exec, "INSERT INTO t1 VALUES (1, 'a')")
@@ -384,7 +384,7 @@ func TestCrossJoinWithWhere(t *testing.T) {
 }
 
 func TestCrossJoinEmpty(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t1 (id INT)")
 	run(t, exec, "CREATE TABLE t2 (id INT)")
 	run(t, exec, "INSERT INTO t1 VALUES (1)")
@@ -394,7 +394,7 @@ func TestCrossJoinEmpty(t *testing.T) {
 }
 
 func TestTableAlias(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 

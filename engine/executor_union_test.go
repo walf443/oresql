@@ -29,7 +29,7 @@ func setupUnionTables(t *testing.T, e *Executor) {
 }
 
 func TestUnionBasic(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 	setupUnionTables(t, e)
 
 	result, err := e.ExecuteSQL("SELECT id, name FROM t1 UNION SELECT id, name FROM t2")
@@ -46,7 +46,7 @@ func TestUnionBasic(t *testing.T) {
 }
 
 func TestUnionAll(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 	setupUnionTables(t, e)
 
 	result, err := e.ExecuteSQL("SELECT id, name FROM t1 UNION ALL SELECT id, name FROM t2")
@@ -57,7 +57,7 @@ func TestUnionAll(t *testing.T) {
 }
 
 func TestUnionColumnCountMismatch(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 	setupUnionTables(t, e)
 
 	_, err := e.ExecuteSQL("SELECT id FROM t1 UNION SELECT id, name FROM t2")
@@ -65,7 +65,7 @@ func TestUnionColumnCountMismatch(t *testing.T) {
 }
 
 func TestUnionWithOrderBy(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 	setupUnionTables(t, e)
 
 	result, err := e.ExecuteSQL("SELECT id, name FROM t1 UNION SELECT id, name FROM t2 ORDER BY id")
@@ -81,7 +81,7 @@ func TestUnionWithOrderBy(t *testing.T) {
 }
 
 func TestUnionWithLimitOffset(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 	setupUnionTables(t, e)
 
 	result, err := e.ExecuteSQL("SELECT id, name FROM t1 UNION SELECT id, name FROM t2 ORDER BY id LIMIT 2 OFFSET 1")
@@ -95,7 +95,7 @@ func TestUnionWithLimitOffset(t *testing.T) {
 }
 
 func TestUnionChain(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 	setupUnionTables(t, e)
 
 	result, err := e.ExecuteSQL("SELECT id, name FROM t1 UNION SELECT id, name FROM t2 UNION SELECT id, name FROM t3")
@@ -111,7 +111,7 @@ func TestUnionChain(t *testing.T) {
 }
 
 func TestUnionAllChain(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 	setupUnionTables(t, e)
 
 	result, err := e.ExecuteSQL("SELECT id, name FROM t1 UNION ALL SELECT id, name FROM t2 UNION ALL SELECT id, name FROM t3")
@@ -122,7 +122,7 @@ func TestUnionAllChain(t *testing.T) {
 }
 
 func TestUnionWithWhere(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 	setupUnionTables(t, e)
 
 	result, err := e.ExecuteSQL("SELECT id, name FROM t1 WHERE id >= 2 UNION SELECT id, name FROM t2 WHERE id <= 3")
@@ -139,7 +139,7 @@ func TestUnionWithWhere(t *testing.T) {
 }
 
 func TestUnionColumnNames(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 	setupUnionTables(t, e)
 
 	result, err := e.ExecuteSQL("SELECT id, name FROM t1 UNION SELECT id, name FROM t2")
@@ -152,7 +152,7 @@ func TestUnionColumnNames(t *testing.T) {
 }
 
 func TestUnionWithJoin(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 
 	stmts := []string{
 		"CREATE TABLE users (id INT, name TEXT)",
@@ -186,7 +186,7 @@ func TestUnionWithJoin(t *testing.T) {
 }
 
 func TestUnionParenthesizedLimit(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 	setupUnionTables(t, e)
 
 	// Each SELECT limited individually, then combined
@@ -204,7 +204,7 @@ func TestUnionParenthesizedLimit(t *testing.T) {
 }
 
 func TestUnionParenthesizedLimitWithOverallOrderBy(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 	setupUnionTables(t, e)
 
 	result, err := e.ExecuteSQL("(SELECT id, name FROM t1 LIMIT 2) UNION (SELECT id, name FROM t2 LIMIT 2) ORDER BY id")
@@ -223,7 +223,7 @@ func TestUnionParenthesizedLimitWithOverallOrderBy(t *testing.T) {
 }
 
 func TestUnionWhereAppliesToEachSelect(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 	setupUnionTables(t, e)
 
 	// WHERE on right SELECT only: left gets all rows, right gets filtered
@@ -246,7 +246,7 @@ func TestUnionWhereAppliesToEachSelect(t *testing.T) {
 }
 
 func TestUnionGroupByAppliesToEachSelect(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 
 	stmts := []string{
 		"CREATE TABLE sales (region TEXT, amount INT)",
@@ -303,7 +303,7 @@ func TestUnionGroupByAppliesToEachSelect(t *testing.T) {
 }
 
 func TestUnionHavingAppliesToEachSelect(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 
 	stmts := []string{
 		"CREATE TABLE orders1 (category TEXT, amount INT)",
@@ -345,7 +345,7 @@ func TestUnionHavingAppliesToEachSelect(t *testing.T) {
 }
 
 func TestUnionBareLimitError(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 	setupUnionTables(t, e)
 
 	_, err := e.ExecuteSQL("SELECT id FROM t1 LIMIT 2 UNION SELECT id FROM t2")
@@ -353,7 +353,7 @@ func TestUnionBareLimitError(t *testing.T) {
 }
 
 func TestUnionTypeMismatchError(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 
 	stmts := []string{
 		"CREATE TABLE ti (id INT, val INT)",
@@ -372,7 +372,7 @@ func TestUnionTypeMismatchError(t *testing.T) {
 }
 
 func TestUnionAllTypeMismatchError(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 
 	stmts := []string{
 		"CREATE TABLE ti2 (id INT, val INT)",
@@ -391,7 +391,7 @@ func TestUnionAllTypeMismatchError(t *testing.T) {
 }
 
 func TestUnionSameTypesOK(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 
 	stmts := []string{
 		"CREATE TABLE sa (id INT, val INT)",
@@ -414,7 +414,7 @@ func TestUnionSameTypesOK(t *testing.T) {
 }
 
 func TestIntersectBasic(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 	setupUnionTables(t, e)
 
 	result, err := e.ExecuteSQL("SELECT id, name FROM t1 INTERSECT SELECT id, name FROM t2")
@@ -431,7 +431,7 @@ func TestIntersectBasic(t *testing.T) {
 }
 
 func TestIntersectAll(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 
 	stmts := []string{
 		"CREATE TABLE ia (id INT)",
@@ -464,7 +464,7 @@ func TestIntersectAll(t *testing.T) {
 }
 
 func TestIntersectNoCommon(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 	setupUnionTables(t, e)
 
 	result, err := e.ExecuteSQL("SELECT id, name FROM t1 INTERSECT SELECT id, name FROM t3")
@@ -481,7 +481,7 @@ func TestIntersectNoCommon(t *testing.T) {
 }
 
 func TestIntersectWithOrderBy(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 	setupUnionTables(t, e)
 
 	result, err := e.ExecuteSQL("SELECT id, name FROM t1 INTERSECT SELECT id, name FROM t2 ORDER BY id")
@@ -497,7 +497,7 @@ func TestIntersectWithOrderBy(t *testing.T) {
 }
 
 func TestIntersectChain(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 	setupUnionTables(t, e)
 
 	// t1: 1,2,3  t2: 2,3,4  t3: 4,5
@@ -513,7 +513,7 @@ func TestIntersectChain(t *testing.T) {
 }
 
 func TestIntersectTypeMismatch(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 
 	stmts := []string{
 		"CREATE TABLE it1 (id INT, val INT)",
@@ -532,7 +532,7 @@ func TestIntersectTypeMismatch(t *testing.T) {
 }
 
 func TestExceptBasic(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 	setupUnionTables(t, e)
 
 	result, err := e.ExecuteSQL("SELECT id, name FROM t1 EXCEPT SELECT id, name FROM t2")
@@ -553,7 +553,7 @@ func TestExceptBasic(t *testing.T) {
 }
 
 func TestExceptAll(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 
 	stmts := []string{
 		"CREATE TABLE ea (id INT)",
@@ -586,7 +586,7 @@ func TestExceptAll(t *testing.T) {
 }
 
 func TestExceptNoMatch(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 	setupUnionTables(t, e)
 
 	// All t2 rows are in t1 or not — here t1 subset check
@@ -600,7 +600,7 @@ func TestExceptNoMatch(t *testing.T) {
 }
 
 func TestExceptAllRemoved(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 	setupUnionTables(t, e)
 
 	// t2 contains all of t1's common rows plus more
@@ -618,7 +618,7 @@ func TestExceptAllRemoved(t *testing.T) {
 }
 
 func TestExceptWithOrderBy(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 	setupUnionTables(t, e)
 
 	result, err := e.ExecuteSQL("SELECT id, name FROM t1 UNION SELECT id, name FROM t2 EXCEPT SELECT id, name FROM t3 ORDER BY id")
@@ -634,7 +634,7 @@ func TestExceptWithOrderBy(t *testing.T) {
 }
 
 func TestExceptChain(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 	setupUnionTables(t, e)
 
 	// t1: 1,2,3  t2: 2,3,4
@@ -650,7 +650,7 @@ func TestExceptChain(t *testing.T) {
 }
 
 func TestExceptTypeMismatch(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 
 	stmts := []string{
 		"CREATE TABLE et1 (id INT, val INT)",

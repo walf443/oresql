@@ -154,7 +154,7 @@ func TestResolveUnqualifiedTableN(t *testing.T) {
 }
 
 func TestBuildJoinGraph_TwoTables(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT, user_id INT, amount INT)")
 	run(t, exec, "CREATE INDEX idx_orders_user_id ON orders(user_id)")
@@ -191,7 +191,7 @@ func TestBuildJoinGraph_TwoTables(t *testing.T) {
 }
 
 func TestBuildJoinGraph_ThreeTables(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT, user_id INT, amount INT)")
 	run(t, exec, "CREATE TABLE items (id INT, order_id INT, product TEXT)")
@@ -234,7 +234,7 @@ func TestBuildJoinGraph_ThreeTables(t *testing.T) {
 }
 
 func TestBuildJoinGraph_WhereClassification(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT, status TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT, user_id INT, amount INT)")
 	run(t, exec, "CREATE TABLE items (id INT, order_id INT, product TEXT)")
@@ -298,7 +298,7 @@ func TestBuildJoinGraph_WhereClassification(t *testing.T) {
 }
 
 func TestBuildJoinGraph_IndexAnnotation(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT, user_id INT)")
 	run(t, exec, "CREATE INDEX idx_orders_uid ON orders(user_id)")
@@ -332,7 +332,7 @@ func TestBuildJoinGraph_IndexAnnotation(t *testing.T) {
 }
 
 func TestOptimizeJoinOrder_PrefersIndexed(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT, user_id INT)")
 	run(t, exec, "CREATE INDEX idx_orders_uid ON orders(user_id)")
@@ -366,7 +366,7 @@ func TestOptimizeJoinOrder_PrefersIndexed(t *testing.T) {
 }
 
 func TestOptimizeJoinOrder_PrefersFiltered(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT, status TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT, user_id INT)")
 	run(t, exec, "CREATE INDEX idx_users_status ON users(status)")
@@ -405,7 +405,7 @@ func TestOptimizeJoinOrder_PrefersFiltered(t *testing.T) {
 }
 
 func TestOptimizeJoinOrder_ThreeTables(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT, status TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT, user_id INT, amount INT)")
 	run(t, exec, "CREATE TABLE items (id INT, order_id INT, product TEXT)")

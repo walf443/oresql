@@ -134,6 +134,89 @@ type IndexReader interface {
 	OrderedRangeScan(fromVal *Value, fromInclusive bool, toVal *Value, toInclusive bool, reverse bool, fn func(rowKey int64) bool)
 }
 
+// MetadataProvider is an optional interface that storage engines can implement
+// to support loading table metadata on startup (for persistent storage).
+type MetadataProvider interface {
+	ListTables() []string
+	LoadTableMeta(name string) (*TableInfo, []*IndexInfo, int64, error)
+}
+
+// EncodeRow encodes a row (slice of Values) into a byte slice.
+// Each value is encoded as: [1 byte type] [N bytes data].
+// Type tags: 0x00=NULL, 0x01=INT, 0x02=FLOAT, 0x03=TEXT.
+func EncodeRow(row Row) []byte {
+	var buf []byte
+	for _, val := range row {
+		switch v := val.(type) {
+		case nil:
+			buf = append(buf, 0x00)
+		case int64:
+			buf = append(buf, 0x01)
+			var b [8]byte
+			binary.BigEndian.PutUint64(b[:], uint64(v))
+			buf = append(buf, b[:]...)
+		case float64:
+			buf = append(buf, 0x02)
+			var b [8]byte
+			binary.BigEndian.PutUint64(b[:], math.Float64bits(v))
+			buf = append(buf, b[:]...)
+		case string:
+			buf = append(buf, 0x03)
+			var lenBuf [4]byte
+			binary.BigEndian.PutUint32(lenBuf[:], uint32(len(v)))
+			buf = append(buf, lenBuf[:]...)
+			buf = append(buf, v...)
+		}
+	}
+	return buf
+}
+
+// DecodeRow decodes a byte slice into a row (slice of Values).
+// Returns the row and any decoding error.
+func DecodeRow(data []byte) (Row, error) {
+	var row Row
+	pos := 0
+	for pos < len(data) {
+		if pos >= len(data) {
+			return nil, fmt.Errorf("unexpected end of row data")
+		}
+		tag := data[pos]
+		pos++
+		switch tag {
+		case 0x00: // NULL
+			row = append(row, nil)
+		case 0x01: // INT
+			if pos+8 > len(data) {
+				return nil, fmt.Errorf("unexpected end of INT data")
+			}
+			v := int64(binary.BigEndian.Uint64(data[pos : pos+8]))
+			pos += 8
+			row = append(row, v)
+		case 0x02: // FLOAT
+			if pos+8 > len(data) {
+				return nil, fmt.Errorf("unexpected end of FLOAT data")
+			}
+			bits := binary.BigEndian.Uint64(data[pos : pos+8])
+			pos += 8
+			row = append(row, math.Float64frombits(bits))
+		case 0x03: // TEXT
+			if pos+4 > len(data) {
+				return nil, fmt.Errorf("unexpected end of TEXT length")
+			}
+			length := int(binary.BigEndian.Uint32(data[pos : pos+4]))
+			pos += 4
+			if pos+length > len(data) {
+				return nil, fmt.Errorf("unexpected end of TEXT data")
+			}
+			row = append(row, string(data[pos:pos+length]))
+			pos += length
+		default:
+			return nil, fmt.Errorf("unknown value type tag: 0x%02x", tag)
+		}
+	}
+	return row, nil
+}
+
 // EncodeValue encodes a single value with a type prefix into the builder.
 // The encoding preserves sort order for byte-wise comparison:
 //   - NULL: 0x00 (sorts before all other types)

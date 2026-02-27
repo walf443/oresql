@@ -7,7 +7,6 @@ import (
 	"github.com/walf443/oresql/lexer"
 	"github.com/walf443/oresql/parser"
 	"github.com/walf443/oresql/storage"
-	"github.com/walf443/oresql/storage/memory"
 )
 
 // Result holds the output of a query execution.
@@ -28,25 +27,15 @@ func WithWAL(w *WAL) Option {
 	}
 }
 
-// WithStorage sets the storage engine for the Executor.
-func WithStorage(s StorageEngine) Option {
-	return func(e *Executor) {
-		e.storage = s
-	}
-}
-
 // Executor runs SQL statements.
 type Executor struct {
-	catalog *Catalog
-	storage StorageEngine
-	wal     *WAL
+	db  *Database
+	wal *WAL
 }
 
-func NewExecutor(opts ...Option) *Executor {
-	e := &Executor{
-		catalog: NewCatalog(),
-		storage: memory.NewMemoryStorage(),
-	}
+// NewExecutor creates a new Executor for the given Database.
+func NewExecutor(db *Database, opts ...Option) *Executor {
+	e := &Executor{db: db}
 	for _, opt := range opts {
 		opt(e)
 	}
@@ -112,7 +101,7 @@ func (e *Executor) Execute(stmt ast.Statement) (*Result, error) {
 	}
 
 	// DDL: acquire executor-level locks
-	locker, ok := e.storage.(storage.TableLocker)
+	locker, ok := e.db.storage.(storage.TableLocker)
 	if !ok {
 		return e.executeInner(stmt)
 	}

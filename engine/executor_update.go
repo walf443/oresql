@@ -7,7 +7,7 @@ import (
 )
 
 func (e *Executor) executeUpdate(stmt *ast.UpdateStmt) (*Result, error) {
-	info, err := e.catalog.GetTable(stmt.TableName)
+	info, err := e.db.catalog.GetTable(stmt.TableName)
 	if err != nil {
 		return nil, err
 	}
@@ -15,9 +15,9 @@ func (e *Executor) executeUpdate(stmt *ast.UpdateStmt) (*Result, error) {
 
 	var allRows []KeyRow
 	if keys, indexUsed := e.tryIndexScan(stmt.Where, info); indexUsed {
-		allRows, err = e.storage.GetKeyRowsByKeys(info.Name, keys)
+		allRows, err = e.db.storage.GetKeyRowsByKeys(info.Name, keys)
 	} else {
-		allRows, err = e.storage.ScanWithKeys(stmt.TableName)
+		allRows, err = e.db.storage.ScanWithKeys(stmt.TableName)
 	}
 	if err != nil {
 		return nil, err
@@ -68,7 +68,7 @@ func (e *Executor) executeUpdate(stmt *ast.UpdateStmt) (*Result, error) {
 			newRow[col.Index] = val
 		}
 
-		if err := e.storage.UpdateRow(stmt.TableName, kr.Key, newRow); err != nil {
+		if err := e.db.storage.UpdateRow(stmt.TableName, kr.Key, newRow); err != nil {
 			return nil, err
 		}
 		updated++

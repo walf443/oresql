@@ -18,7 +18,7 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 		stmt.FromSubquery == nil &&
 		len(stmt.GroupBy) == 0 && !hasAggregate(stmt.Columns) && !stmt.Distinct &&
 		!hasWindowFunction(stmt.Columns) {
-		info, err := e.catalog.GetTable(stmt.TableName)
+		info, err := e.db.catalog.GetTable(stmt.TableName)
 		if err == nil {
 			if ior := e.tryIndexOrder(stmt.OrderBy, stmt.Where, info, stmt.Limit != nil); ior != nil {
 				return e.executeSelectWithIndexOrder(stmt, info, ior)
@@ -242,7 +242,7 @@ func (e *Executor) scanFullOrder(
 		if stmt.Where == nil && needed > 0 {
 			forEachLimit = needed
 		}
-		e.storage.ForEachRow(info.Name, ior.reverse, func(key int64, row Row) bool {
+		e.db.storage.ForEachRow(info.Name, ior.reverse, func(key int64, row Row) bool {
 			if stmt.Where != nil {
 				val, err := eval.Eval(stmt.Where, row)
 				if err != nil {
@@ -266,7 +266,7 @@ func (e *Executor) scanFullOrder(
 			ior.toVal, ior.toInclusive,
 			ior.reverse,
 			func(rowKey int64) bool {
-				row, found := e.storage.GetRow(info.Name, rowKey)
+				row, found := e.db.storage.GetRow(info.Name, rowKey)
 				if !found {
 					return true
 				}
@@ -331,7 +331,7 @@ func (e *Executor) scanPartialOrder(
 	firstRow := true
 
 	scanFn := func(rowKey int64) bool {
-		row, found := e.storage.GetRow(info.Name, rowKey)
+		row, found := e.db.storage.GetRow(info.Name, rowKey)
 		if !found {
 			return true
 		}
@@ -362,7 +362,7 @@ func (e *Executor) scanPartialOrder(
 	if ior.usePK {
 		// partialOrder cannot use limit because it needs to collect all rows
 		// in the same first-column value group even after reaching needed count.
-		e.storage.ForEachRow(info.Name, ior.reverse, func(key int64, row Row) bool {
+		e.db.storage.ForEachRow(info.Name, ior.reverse, func(key int64, row Row) bool {
 			if stmt.Where != nil {
 				wVal, err := eval.Eval(stmt.Where, row)
 				if err != nil {
@@ -471,19 +471,19 @@ func (e *Executor) scanSourceSubquery(stmt *ast.SelectStmt, earlyLimit int) ([]R
 
 // scanSourceSingle scans a single table with optional index optimization.
 func (e *Executor) scanSourceSingle(stmt *ast.SelectStmt) ([]Row, ExprEvaluator, error) {
-	info, err := e.catalog.GetTable(stmt.TableName)
+	info, err := e.db.catalog.GetTable(stmt.TableName)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	var rows []Row
 	if keys, indexUsed := e.tryIndexScan(stmt.Where, info); indexUsed {
-		rows, err = e.storage.GetByKeys(info.Name, keys)
+		rows, err = e.db.storage.GetByKeys(info.Name, keys)
 		if err != nil {
 			return nil, nil, err
 		}
 	} else {
-		rows, err = e.storage.Scan(stmt.TableName)
+		rows, err = e.db.storage.Scan(stmt.TableName)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -643,11 +643,11 @@ func (e *Executor) executeSelectMaybeCorrelated(stmt *ast.SelectStmt, outerEval 
 // that can resolve both inner and outer column references to evaluate the full pipeline.
 func (e *Executor) executeSelectCorrelated(stmt *ast.SelectStmt, outerEval ExprEvaluator, outerRow Row) (*Result, error) {
 	// Phase 1: Source rows + inner evaluator (without WHERE)
-	info, err := e.catalog.GetTable(stmt.TableName)
+	info, err := e.db.catalog.GetTable(stmt.TableName)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := e.storage.Scan(stmt.TableName)
+	rows, err := e.db.storage.Scan(stmt.TableName)
 	if err != nil {
 		return nil, err
 	}

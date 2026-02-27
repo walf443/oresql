@@ -271,6 +271,13 @@ func (c *Catalog) DropColumn(tableName string, columnName string) (*ColumnInfo, 
 	return &droppedCol, info, nil
 }
 
+// RestoreTable inserts a TableInfo directly into the catalog (used for loading from disk).
+func (c *Catalog) RestoreTable(info *TableInfo) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.tables[info.Name] = info
+}
+
 func (c *Catalog) GetTable(name string) (*TableInfo, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

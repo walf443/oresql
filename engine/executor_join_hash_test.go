@@ -9,7 +9,7 @@ import (
 
 // TestHashJoinInnerBasic tests basic INNER JOIN without indexes (hash join path).
 func TestHashJoinInnerBasic(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, product TEXT)")
 	// No indexes on user_id — forces hash join
@@ -29,7 +29,7 @@ func TestHashJoinInnerBasic(t *testing.T) {
 
 // TestHashJoinInnerNoMatch tests INNER JOIN with no matching rows.
 func TestHashJoinInnerNoMatch(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t1 (id INT PRIMARY KEY, val INT)")
 	run(t, exec, "CREATE TABLE t2 (id INT PRIMARY KEY, ref INT)")
 
@@ -42,7 +42,7 @@ func TestHashJoinInnerNoMatch(t *testing.T) {
 
 // TestHashJoinInnerWithWhere tests hash join with LocalWhere on inner table.
 func TestHashJoinInnerWithWhere(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, status TEXT)")
 
@@ -60,7 +60,7 @@ func TestHashJoinInnerWithWhere(t *testing.T) {
 
 // TestHashJoinLeftJoinBasic tests LEFT JOIN without indexes (hash join path).
 func TestHashJoinLeftJoinBasic(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, product TEXT)")
 
@@ -81,7 +81,7 @@ func TestHashJoinLeftJoinBasic(t *testing.T) {
 
 // TestHashJoinWithResidualOn tests hash join with equi + non-equi ON conditions.
 func TestHashJoinWithResidualOn(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t1 (id INT PRIMARY KEY, val INT)")
 	run(t, exec, "CREATE TABLE t2 (id INT PRIMARY KEY, ref INT, val INT)")
 
@@ -100,7 +100,7 @@ func TestHashJoinWithResidualOn(t *testing.T) {
 
 // TestHashJoinMultiColumnKey tests multi-column equi-join.
 func TestHashJoinMultiColumnKey(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t1 (a INT, b INT, val TEXT)")
 	run(t, exec, "CREATE TABLE t2 (x INT, y INT, data TEXT)")
 
@@ -116,7 +116,7 @@ func TestHashJoinMultiColumnKey(t *testing.T) {
 
 // TestHashJoinWithNullJoinKey tests that NULL join keys don't match (SQL semantics).
 func TestHashJoinWithNullJoinKey(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t1 (id INT, val TEXT)")
 	run(t, exec, "CREATE TABLE t2 (ref INT, data TEXT)")
 
@@ -132,7 +132,7 @@ func TestHashJoinWithNullJoinKey(t *testing.T) {
 
 // TestHashJoinWithLimit tests hash join with LIMIT early termination.
 func TestHashJoinWithLimit(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t1 (id INT PRIMARY KEY, val TEXT)")
 	run(t, exec, "CREATE TABLE t2 (id INT PRIMARY KEY, ref INT, data TEXT)")
 
@@ -147,7 +147,7 @@ func TestHashJoinWithLimit(t *testing.T) {
 
 // TestHashJoinThreeTableNoIndex tests 3-table JOIN without any indexes.
 func TestHashJoinThreeTableNoIndex(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE customers (id INT PRIMARY KEY, name TEXT)")
 	run(t, exec, "CREATE TABLE orders (id INT PRIMARY KEY, cust_id INT, total INT)")
 	run(t, exec, "CREATE TABLE items (id INT PRIMARY KEY, order_id INT, product TEXT)")

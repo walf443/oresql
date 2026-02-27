@@ -25,9 +25,10 @@ func TestIndexReaderInterface(t *testing.T) {
 	assert.Equal(t, "test_idx", idx.GetInfo().Name)
 }
 
-// TestWithStorageOption verifies that WithStorage correctly sets the storage engine.
-func TestWithStorageOption(t *testing.T) {
+// TestWithDatabaseStorageOption verifies that WithDatabaseStorage correctly sets the storage engine.
+func TestWithDatabaseStorageOption(t *testing.T) {
 	s := memory.NewMemoryStorage()
-	e := NewExecutor(WithStorage(s))
+	db := NewDatabase("test", WithDatabaseStorage(s))
+	e := NewExecutor(db)
 	assert.NotNil(t, e)
 }

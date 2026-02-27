@@ -44,7 +44,7 @@ func (e *Executor) tryIndexLookup(where ast.Expr, info *TableInfo) ([]int64, boo
 	}
 
 	// Try all indexes on this table, pick one where all columns have equality conditions
-	indexes := e.storage.GetIndexes(info.Name)
+	indexes := e.db.storage.GetIndexes(info.Name)
 	for _, idx := range indexes {
 		idxInfo := idx.GetInfo()
 		vals := make([]Value, len(idxInfo.ColumnNames))
@@ -187,7 +187,7 @@ func (e *Executor) tryIndexInLookup(where ast.Expr, info *TableInfo) ([]int64, b
 		if err != nil {
 			continue
 		}
-		idx := e.storage.LookupSingleColumnIndex(info.Name, col.Index)
+		idx := e.db.storage.LookupSingleColumnIndex(info.Name, col.Index)
 		if idx == nil {
 			continue
 		}
@@ -204,7 +204,7 @@ func (e *Executor) tryIndexInLookup(where ast.Expr, info *TableInfo) ([]int64, b
 
 	// 2. Try composite indexes: prefix equality + last column IN
 	eqConds := extractEqualityConditions(where)
-	indexes := e.storage.GetIndexes(info.Name)
+	indexes := e.db.storage.GetIndexes(info.Name)
 	for _, idx := range indexes {
 		idxInfo := idx.GetInfo()
 		if len(idxInfo.ColumnNames) < 2 {
@@ -405,7 +405,7 @@ func (e *Executor) tryIndexRangeScan(where ast.Expr, info *TableInfo) ([]int64, 
 		if err != nil {
 			continue
 		}
-		idx := e.storage.LookupSingleColumnIndex(info.Name, col.Index)
+		idx := e.db.storage.LookupSingleColumnIndex(info.Name, col.Index)
 		if idx == nil {
 			continue
 		}
@@ -419,7 +419,7 @@ func (e *Executor) tryIndexRangeScan(where ast.Expr, info *TableInfo) ([]int64, 
 
 	// Try composite indexes: prefix equality + next column range
 	eqConds := extractEqualityConditions(where)
-	indexes := e.storage.GetIndexes(info.Name)
+	indexes := e.db.storage.GetIndexes(info.Name)
 	for _, idx := range indexes {
 		idxInfo := idx.GetInfo()
 		if len(idxInfo.ColumnNames) < 2 {
@@ -512,7 +512,7 @@ func (e *Executor) tryIndexOrder(
 	}
 
 	// Check secondary indexes
-	idx := e.storage.LookupSingleColumnIndex(info.Name, col.Index)
+	idx := e.db.storage.LookupSingleColumnIndex(info.Name, col.Index)
 	if idx == nil {
 		return nil
 	}

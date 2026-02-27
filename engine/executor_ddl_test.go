@@ -8,7 +8,7 @@ import (
 )
 
 func TestCreateInsertSelect(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 
 	result := run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	assert.Equal(t, "table created", result.Message)
@@ -32,13 +32,13 @@ func TestCreateInsertSelect(t *testing.T) {
 }
 
 func TestErrorDuplicateTable(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT)")
 	runExpectError(t, exec, "CREATE TABLE users (id INT)")
 }
 
 func TestTruncateTable(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -58,12 +58,12 @@ func TestTruncateTable(t *testing.T) {
 }
 
 func TestTruncateTableNotExists(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	runExpectError(t, exec, "TRUNCATE TABLE nonexistent")
 }
 
 func TestDropTable(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 
@@ -75,12 +75,12 @@ func TestDropTable(t *testing.T) {
 }
 
 func TestDropTableNotExists(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	runExpectError(t, exec, "DROP TABLE nonexistent")
 }
 
 func TestDropTableRecreate(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "DROP TABLE users")
@@ -95,32 +95,32 @@ func TestDropTableRecreate(t *testing.T) {
 }
 
 func TestCreateIndex(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	result := run(t, exec, "CREATE INDEX idx_name ON users(name)")
 	assert.Equal(t, "index created", result.Message)
 }
 
 func TestCreateIndexTableNotExists(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	runExpectError(t, exec, "CREATE INDEX idx_name ON nonexistent(name)")
 }
 
 func TestCreateIndexColumnNotExists(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	runExpectError(t, exec, "CREATE INDEX idx_foo ON users(foo)")
 }
 
 func TestCreateIndexDuplicateName(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "CREATE INDEX idx_name ON users(name)")
 	runExpectError(t, exec, "CREATE INDEX idx_name ON users(name)")
 }
 
 func TestDropIndex(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "CREATE INDEX idx_name ON users(name)")
 	result := run(t, exec, "DROP INDEX idx_name")
@@ -128,12 +128,12 @@ func TestDropIndex(t *testing.T) {
 }
 
 func TestDropIndexNotExists(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	runExpectError(t, exec, "DROP INDEX nonexistent")
 }
 
 func TestDropTableRemovesIndexes(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "CREATE INDEX idx_name ON users(name)")
 	run(t, exec, "DROP TABLE users")
@@ -145,7 +145,7 @@ func TestDropTableRemovesIndexes(t *testing.T) {
 }
 
 func TestPrimaryKeyCreateInsertSelect(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
@@ -161,14 +161,14 @@ func TestPrimaryKeyCreateInsertSelect(t *testing.T) {
 }
 
 func TestPrimaryKeyDuplicateInsertError(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	runExpectError(t, exec, "INSERT INTO users VALUES (1, 'bob')")
 }
 
 func TestPrimaryKeyDeleteAndReinsert(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "DELETE FROM users WHERE id = 1")
@@ -181,24 +181,24 @@ func TestPrimaryKeyDeleteAndReinsert(t *testing.T) {
 }
 
 func TestPrimaryKeyImpliesNotNull(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
 	runExpectError(t, exec, "INSERT INTO users VALUES (NULL, 'alice')")
 }
 
 func TestTextPrimaryKeyAllowed(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	result := run(t, exec, "CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT)")
 	assert.Equal(t, "table created", result.Message)
 }
 
 func TestErrorMultiplePrimaryKeys(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	runExpectError(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, code INT PRIMARY KEY)")
 }
 
 func TestPrimaryKeyUpdate(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -210,7 +210,7 @@ func TestPrimaryKeyUpdate(t *testing.T) {
 }
 
 func TestPrimaryKeyTruncateAndReinsert(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "TRUNCATE TABLE users")
@@ -223,7 +223,7 @@ func TestPrimaryKeyTruncateAndReinsert(t *testing.T) {
 }
 
 func TestCompositePrimaryKey(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE enrollment (student_id INT, course_id INT, grade TEXT, PRIMARY KEY (student_id, course_id))")
 	run(t, exec, "INSERT INTO enrollment VALUES (1, 100, 'A')")
 	run(t, exec, "INSERT INTO enrollment VALUES (1, 200, 'B')")
@@ -234,7 +234,7 @@ func TestCompositePrimaryKey(t *testing.T) {
 }
 
 func TestCompositePrimaryKeyDuplicate(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE enrollment (student_id INT, course_id INT, grade TEXT, PRIMARY KEY (student_id, course_id))")
 	run(t, exec, "INSERT INTO enrollment VALUES (1, 100, 'A')")
 
@@ -243,7 +243,7 @@ func TestCompositePrimaryKeyDuplicate(t *testing.T) {
 }
 
 func TestCompositePrimaryKeyNull(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE enrollment (student_id INT, course_id INT, grade TEXT, PRIMARY KEY (student_id, course_id))")
 
 	// NULL in PK column should fail
@@ -252,7 +252,7 @@ func TestCompositePrimaryKeyNull(t *testing.T) {
 }
 
 func TestCompositePrimaryKeyWithTextColumns(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE tags (category TEXT, tag TEXT, value INT, PRIMARY KEY (category, tag))")
 	run(t, exec, "INSERT INTO tags VALUES ('color', 'red', 1)")
 	run(t, exec, "INSERT INTO tags VALUES ('color', 'blue', 2)")
@@ -266,7 +266,7 @@ func TestCompositePrimaryKeyWithTextColumns(t *testing.T) {
 }
 
 func TestCompositePrimaryKeyUpdate(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE enrollment (student_id INT, course_id INT, grade TEXT, PRIMARY KEY (student_id, course_id))")
 	run(t, exec, "INSERT INTO enrollment VALUES (1, 100, 'A')")
 	run(t, exec, "INSERT INTO enrollment VALUES (2, 100, 'B')")
@@ -282,7 +282,7 @@ func TestCompositePrimaryKeyUpdate(t *testing.T) {
 }
 
 func TestCompositePrimaryKeyDropColumn(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE enrollment (student_id INT, course_id INT, grade TEXT, PRIMARY KEY (student_id, course_id))")
 
 	// Dropping PK column should fail
@@ -294,14 +294,14 @@ func TestCompositePrimaryKeyDropColumn(t *testing.T) {
 }
 
 func TestBothColumnAndTablePrimaryKey(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 
 	// Both column-level and table-level PK should error
 	runExpectError(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, name TEXT, PRIMARY KEY (id, name))")
 }
 
 func TestTableLevelSinglePrimaryKey(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT, name TEXT, PRIMARY KEY (id))")
 	run(t, exec, "INSERT INTO t VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO t VALUES (2, 'bob')")
@@ -314,7 +314,7 @@ func TestTableLevelSinglePrimaryKey(t *testing.T) {
 }
 
 func TestCompositePrimaryKeyDeleteAndReinsert(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE enrollment (student_id INT, course_id INT, grade TEXT, PRIMARY KEY (student_id, course_id))")
 	run(t, exec, "INSERT INTO enrollment VALUES (1, 100, 'A')")
 
@@ -330,7 +330,7 @@ func TestCompositePrimaryKeyDeleteAndReinsert(t *testing.T) {
 }
 
 func TestTextColumnPrimaryKey(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE codes (code TEXT PRIMARY KEY, description TEXT)")
 	run(t, exec, "INSERT INTO codes VALUES ('A01', 'first')")
 	run(t, exec, "INSERT INTO codes VALUES ('B02', 'second')")
@@ -346,7 +346,7 @@ func TestTextColumnPrimaryKey(t *testing.T) {
 }
 
 func TestFloatColumnPrimaryKey(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE measurements (sensor_id FLOAT PRIMARY KEY, value TEXT)")
 	run(t, exec, "INSERT INTO measurements VALUES (1.5, 'a')")
 	run(t, exec, "INSERT INTO measurements VALUES (2.5, 'b')")
@@ -359,7 +359,7 @@ func TestFloatColumnPrimaryKey(t *testing.T) {
 }
 
 func TestAlterTableAddColumn(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -382,7 +382,7 @@ func TestAlterTableAddColumn(t *testing.T) {
 }
 
 func TestAlterTableAddColumnWithDefault(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
@@ -397,7 +397,7 @@ func TestAlterTableAddColumnWithDefault(t *testing.T) {
 }
 
 func TestAlterTableAddColumnNotNull(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 
@@ -410,7 +410,7 @@ func TestAlterTableAddColumnNotNull(t *testing.T) {
 }
 
 func TestAlterTableAddColumnNotNullNoDefault(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 
@@ -419,7 +419,7 @@ func TestAlterTableAddColumnNotNullNoDefault(t *testing.T) {
 }
 
 func TestAlterTableDropColumn(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT, age INT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice', 30)")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob', 25)")
@@ -443,7 +443,7 @@ func TestAlterTableDropColumn(t *testing.T) {
 }
 
 func TestAlterTableDropColumnWithIndex(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT, age INT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice', 30)")
 	run(t, exec, "CREATE INDEX idx_age ON users(age)")
@@ -457,7 +457,7 @@ func TestAlterTableDropColumnWithIndex(t *testing.T) {
 }
 
 func TestAlterTableDropColumnCompositeIndex(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT, age INT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice', 30)")
 	run(t, exec, "CREATE INDEX idx_name_age ON users(name, age)")
@@ -468,7 +468,7 @@ func TestAlterTableDropColumnCompositeIndex(t *testing.T) {
 }
 
 func TestAlterTableDropColumnAdjustsIndex(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (a INT, b INT, c INT)")
 	run(t, exec, "INSERT INTO t VALUES (1, 10, 100)")
 	run(t, exec, "INSERT INTO t VALUES (2, 20, 200)")
@@ -484,7 +484,7 @@ func TestAlterTableDropColumnAdjustsIndex(t *testing.T) {
 }
 
 func TestAlterTableDropPrimaryKey(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 
@@ -493,7 +493,7 @@ func TestAlterTableDropPrimaryKey(t *testing.T) {
 }
 
 func TestAlterTableDropLastColumn(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (a INT)")
 
 	// Cannot drop the last column
@@ -501,7 +501,7 @@ func TestAlterTableDropLastColumn(t *testing.T) {
 }
 
 func TestAlterTableDuplicateColumnName(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 
 	// Adding duplicate column name should error
@@ -509,7 +509,7 @@ func TestAlterTableDuplicateColumnName(t *testing.T) {
 }
 
 func TestAlterTableAddColumnUnique(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
 
@@ -523,7 +523,7 @@ func TestAlterTableAddColumnUnique(t *testing.T) {
 }
 
 func TestUniqueColumnConstraint(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, email TEXT UNIQUE)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice@example.com')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob@example.com')")
@@ -537,7 +537,7 @@ func TestUniqueColumnConstraint(t *testing.T) {
 }
 
 func TestUniqueColumnInsertNull(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, email TEXT UNIQUE)")
 
 	// Multiple NULLs should be allowed per SQL standard
@@ -549,7 +549,7 @@ func TestUniqueColumnInsertNull(t *testing.T) {
 }
 
 func TestCreateUniqueIndex(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, email TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice@example.com')")
 	run(t, exec, "CREATE UNIQUE INDEX idx_email ON users(email)")
@@ -562,7 +562,7 @@ func TestCreateUniqueIndex(t *testing.T) {
 }
 
 func TestCreateUniqueCompositeIndex(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE orders (user_id INT, product_id INT, qty INT)")
 	run(t, exec, "CREATE UNIQUE INDEX idx_user_product ON orders(user_id, product_id)")
 
@@ -578,7 +578,7 @@ func TestCreateUniqueCompositeIndex(t *testing.T) {
 }
 
 func TestCreateUniqueIndexOnExistingDuplicates(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, email TEXT)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice@example.com')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'alice@example.com')")
@@ -588,7 +588,7 @@ func TestCreateUniqueIndexOnExistingDuplicates(t *testing.T) {
 }
 
 func TestUniqueUpdateViolation(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, email TEXT UNIQUE)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice@example.com')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob@example.com')")
@@ -603,7 +603,7 @@ func TestUniqueUpdateViolation(t *testing.T) {
 }
 
 func TestUniqueUpdateSameRow(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, email TEXT UNIQUE)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice@example.com')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob@example.com')")
@@ -617,7 +617,7 @@ func TestUniqueUpdateSameRow(t *testing.T) {
 }
 
 func TestUniqueColumnWithNotNull(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE users (id INT, email TEXT NOT NULL UNIQUE)")
 	run(t, exec, "INSERT INTO users VALUES (1, 'alice@example.com')")
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob@example.com')")
@@ -630,17 +630,17 @@ func TestUniqueColumnWithNotNull(t *testing.T) {
 }
 
 func TestCreateTableWithDefault(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	result := run(t, exec, "CREATE TABLE t (id INT DEFAULT 0, name TEXT DEFAULT 'unknown')")
 	assert.Equal(t, "table created", result.Message)
 }
 
 func TestErrorCreateTableNotNullDefaultNull(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	runExpectError(t, exec, "CREATE TABLE t (id INT NOT NULL DEFAULT NULL)")
 }
 
 func TestErrorCreateTableDefaultTypeMismatch(t *testing.T) {
-	exec := NewExecutor()
+	exec := NewExecutor(NewDatabase("test"))
 	runExpectError(t, exec, "CREATE TABLE t (id INT DEFAULT 'hello')")
 }

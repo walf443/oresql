@@ -11,7 +11,7 @@ import (
 
 func setupConcurrentExecutor(t *testing.T) *Executor {
 	t.Helper()
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 	_, err := e.ExecuteSQL("CREATE TABLE t (id INT PRIMARY KEY, name TEXT)")
 	require.NoError(t, err)
 	return e
@@ -51,7 +51,7 @@ func TestConcurrentSelect(t *testing.T) {
 }
 
 func TestConcurrentInsert(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 	_, err := e.ExecuteSQL("CREATE TABLE t (id INT, name TEXT)")
 	require.NoError(t, err)
 
@@ -137,7 +137,7 @@ func TestConcurrentSelectAndInsert(t *testing.T) {
 }
 
 func TestConcurrentDifferentTables(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 	_, err := e.ExecuteSQL("CREATE TABLE a (id INT, val TEXT)")
 	require.NoError(t, err)
 	_, err = e.ExecuteSQL("CREATE TABLE b (id INT, val TEXT)")
@@ -180,7 +180,7 @@ func TestConcurrentDifferentTables(t *testing.T) {
 }
 
 func TestConcurrentDDLAndDML(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 	_, err := e.ExecuteSQL("CREATE TABLE existing (id INT, val TEXT)")
 	require.NoError(t, err)
 
@@ -221,7 +221,7 @@ func TestConcurrentDDLAndDML(t *testing.T) {
 }
 
 func TestConcurrentForEachRowSubqueryNoDeadlock(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 	_, err := e.ExecuteSQL("CREATE TABLE items (id INT PRIMARY KEY, val TEXT)")
 	require.NoError(t, err)
 	for i := 0; i < 10; i++ {
@@ -259,7 +259,7 @@ func TestConcurrentForEachRowSubqueryNoDeadlock(t *testing.T) {
 }
 
 func TestConcurrentDeadlockPrevention(t *testing.T) {
-	e := NewExecutor()
+	e := NewExecutor(NewDatabase("test"))
 	_, err := e.ExecuteSQL("CREATE TABLE alpha (id INT, val TEXT)")
 	require.NoError(t, err)
 	_, err = e.ExecuteSQL("CREATE TABLE beta (id INT, val TEXT)")

@@ -16,6 +16,7 @@ import (
 func main() {
 	dataDir := flag.String("data-dir", "", "directory for persistent storage (omit for in-memory)")
 	walPath := flag.String("wal", "", "path to write-ahead log file")
+	storageType := flag.String("storage", "file", "storage type: file (default) or disk")
 	flag.Parse()
 
 	// Backward compatibility: first positional arg is WAL path
@@ -50,7 +51,7 @@ func main() {
 		execOpts = append(execOpts, engine.WithWAL(wal))
 	}
 
-	mgr := engine.NewDatabaseManager(*dataDir)
+	mgr := engine.NewDatabaseManager(*dataDir, *storageType)
 	if *dataDir != "" {
 		if err := mgr.LoadExistingDatabases(); err != nil {
 			fmt.Fprintf(os.Stderr, "failed to load databases: %s\n", err)

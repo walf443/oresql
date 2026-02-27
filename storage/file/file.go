@@ -64,14 +64,14 @@ func (fs *FileStorage) tablePath(name string) string {
 
 // --- Binary metadata encoding/decoding helpers ---
 
-func putString(buf *[]byte, s string) {
+func PutString(buf *[]byte, s string) {
 	var lenBuf [2]byte
 	binary.BigEndian.PutUint16(lenBuf[:], uint16(len(s)))
 	*buf = append(*buf, lenBuf[:]...)
 	*buf = append(*buf, s...)
 }
 
-func getString(data []byte, pos int) (string, int, error) {
+func GetString(data []byte, pos int) (string, int, error) {
 	if pos+2 > len(data) {
 		return "", pos, fmt.Errorf("unexpected end of data reading string length at pos %d", pos)
 	}
@@ -86,12 +86,12 @@ func getString(data []byte, pos int) (string, int, error) {
 }
 
 // encodeOneValue encodes a single storage.Value into bytes using EncodeRow format.
-func encodeOneValue(val storage.Value) []byte {
+func EncodeOneValue(val storage.Value) []byte {
 	return storage.EncodeRow(storage.Row{val})
 }
 
 // decodeOneValue decodes a single value from EncodeRow format at the given position.
-func decodeOneValue(data []byte, pos int) (storage.Value, int, error) {
+func DecodeOneValue(data []byte, pos int) (storage.Value, int, error) {
 	if pos >= len(data) {
 		return nil, pos, fmt.Errorf("unexpected end of data at pos %d", pos)
 	}
@@ -130,11 +130,11 @@ func decodeOneValue(data []byte, pos int) (storage.Value, int, error) {
 }
 
 // encodeMeta encodes TableInfo and IndexInfo list into binary format.
-func encodeMeta(info *storage.TableInfo, indexes []*storage.IndexInfo) []byte {
+func EncodeMeta(info *storage.TableInfo, indexes []*storage.IndexInfo) []byte {
 	var buf []byte
 
 	// Table name
-	putString(&buf, info.Name)
+	PutString(&buf, info.Name)
 
 	// Number of columns
 	var numColsBuf [2]byte
@@ -143,8 +143,8 @@ func encodeMeta(info *storage.TableInfo, indexes []*storage.IndexInfo) []byte {
 
 	// Per column
 	for _, col := range info.Columns {
-		putString(&buf, col.Name)
-		putString(&buf, col.DataType)
+		PutString(&buf, col.Name)
+		PutString(&buf, col.DataType)
 
 		var idxBuf [2]byte
 		binary.BigEndian.PutUint16(idxBuf[:], uint16(col.Index))
@@ -163,7 +163,7 @@ func encodeMeta(info *storage.TableInfo, indexes []*storage.IndexInfo) []byte {
 		buf = append(buf, flags)
 
 		if col.HasDefault {
-			buf = append(buf, encodeOneValue(col.Default)...)
+			buf = append(buf, EncodeOneValue(col.Default)...)
 		}
 	}
 
@@ -192,15 +192,15 @@ func encodeMeta(info *storage.TableInfo, indexes []*storage.IndexInfo) []byte {
 	buf = append(buf, numIdxBuf[:]...)
 
 	for _, idx := range indexes {
-		putString(&buf, idx.Name)
-		putString(&buf, idx.TableName)
+		PutString(&buf, idx.Name)
+		PutString(&buf, idx.TableName)
 
 		// Column names
 		var numColNamesBuf [2]byte
 		binary.BigEndian.PutUint16(numColNamesBuf[:], uint16(len(idx.ColumnNames)))
 		buf = append(buf, numColNamesBuf[:]...)
 		for _, cn := range idx.ColumnNames {
-			putString(&buf, cn)
+			PutString(&buf, cn)
 		}
 
 		// Column indexes
@@ -214,7 +214,7 @@ func encodeMeta(info *storage.TableInfo, indexes []*storage.IndexInfo) []byte {
 		}
 
 		// Type
-		putString(&buf, idx.Type)
+		PutString(&buf, idx.Type)
 
 		// Unique
 		if idx.Unique {
@@ -228,13 +228,13 @@ func encodeMeta(info *storage.TableInfo, indexes []*storage.IndexInfo) []byte {
 }
 
 // decodeMeta decodes binary metadata into TableInfo and IndexInfo list.
-func decodeMeta(data []byte) (*storage.TableInfo, []*storage.IndexInfo, error) {
+func DecodeMeta(data []byte) (*storage.TableInfo, []*storage.IndexInfo, error) {
 	pos := 0
 	info := &storage.TableInfo{}
 
 	// Table name
 	var err error
-	info.Name, pos, err = getString(data, pos)
+	info.Name, pos, err = GetString(data, pos)
 	if err != nil {
 		return nil, nil, fmt.Errorf("reading table name: %w", err)
 	}
@@ -250,12 +250,12 @@ func decodeMeta(data []byte) (*storage.TableInfo, []*storage.IndexInfo, error) {
 	for i := 0; i < int(numCols); i++ {
 		col := &info.Columns[i]
 
-		col.Name, pos, err = getString(data, pos)
+		col.Name, pos, err = GetString(data, pos)
 		if err != nil {
 			return nil, nil, fmt.Errorf("reading column name: %w", err)
 		}
 
-		col.DataType, pos, err = getString(data, pos)
+		col.DataType, pos, err = GetString(data, pos)
 		if err != nil {
 			return nil, nil, fmt.Errorf("reading column datatype: %w", err)
 		}
@@ -278,7 +278,7 @@ func decodeMeta(data []byte) (*storage.TableInfo, []*storage.IndexInfo, error) {
 		col.HasDefault = flags&0x04 != 0
 
 		if col.HasDefault {
-			col.Default, pos, err = decodeOneValue(data, pos)
+			col.Default, pos, err = DecodeOneValue(data, pos)
 			if err != nil {
 				return nil, nil, fmt.Errorf("reading column default: %w", err)
 			}
@@ -323,12 +323,12 @@ func decodeMeta(data []byte) (*storage.TableInfo, []*storage.IndexInfo, error) {
 	for i := 0; i < int(numIndexes); i++ {
 		idx := &storage.IndexInfo{}
 
-		idx.Name, pos, err = getString(data, pos)
+		idx.Name, pos, err = GetString(data, pos)
 		if err != nil {
 			return nil, nil, fmt.Errorf("reading index name: %w", err)
 		}
 
-		idx.TableName, pos, err = getString(data, pos)
+		idx.TableName, pos, err = GetString(data, pos)
 		if err != nil {
 			return nil, nil, fmt.Errorf("reading index table name: %w", err)
 		}
@@ -342,7 +342,7 @@ func decodeMeta(data []byte) (*storage.TableInfo, []*storage.IndexInfo, error) {
 
 		idx.ColumnNames = make([]string, numColNames)
 		for j := 0; j < int(numColNames); j++ {
-			idx.ColumnNames[j], pos, err = getString(data, pos)
+			idx.ColumnNames[j], pos, err = GetString(data, pos)
 			if err != nil {
 				return nil, nil, fmt.Errorf("reading index col name: %w", err)
 			}
@@ -366,7 +366,7 @@ func decodeMeta(data []byte) (*storage.TableInfo, []*storage.IndexInfo, error) {
 		}
 
 		// Type
-		idx.Type, pos, err = getString(data, pos)
+		idx.Type, pos, err = GetString(data, pos)
 		if err != nil {
 			return nil, nil, fmt.Errorf("reading index type: %w", err)
 		}
@@ -388,7 +388,7 @@ func decodeMeta(data []byte) (*storage.TableInfo, []*storage.IndexInfo, error) {
 
 // writeFullFileV1 writes a complete v1 .dat file (header + metadata + all row entries).
 func writeFullFileV1(path string, info *storage.TableInfo, indexes []*storage.IndexInfo, nextRowID int64, keyRows []storage.KeyRow) error {
-	metaBytes := encodeMeta(info, indexes)
+	metaBytes := EncodeMeta(info, indexes)
 
 	var header [headerFixedSize]byte
 	copy(header[0:6], fileMagic)
@@ -510,7 +510,7 @@ func writeFullFileV3(path string, info *storage.TableInfo, indexes []*storage.In
 	}
 
 	// Encode metadata (existing schema + index defs)
-	metaBytes := encodeMeta(info, indexes)
+	metaBytes := EncodeMeta(info, indexes)
 
 	// Encode BTree meta section (appended after existing metadata)
 	var btreeMeta []byte
@@ -530,7 +530,7 @@ func writeFullFileV3(path string, info *storage.TableInfo, indexes []*storage.In
 	btreeMeta = append(btreeMeta, numSecBuf[:]...)
 
 	for _, sm := range secondaryMetas {
-		putString(&btreeMeta, sm.indexName)
+		PutString(&btreeMeta, sm.indexName)
 		var rootBuf [4]byte
 		binary.BigEndian.PutUint32(rootBuf[:], sm.rootPageID)
 		btreeMeta = append(btreeMeta, rootBuf[:]...)
@@ -635,7 +635,7 @@ func readFile(path string) (*storage.TableInfo, []*storage.IndexInfo, int64, []b
 	}
 
 	metaData := data[headerFixedSize : headerFixedSize+metaLength]
-	info, indexes, err := decodeMeta(metaData)
+	info, indexes, err := DecodeMeta(metaData)
 	if err != nil {
 		return nil, nil, 0, nil, fmt.Errorf("failed to decode metadata: %w", err)
 	}
@@ -668,13 +668,13 @@ func readFileV2V3(path string, mem *memory.MemoryStorage) error {
 	fullMeta := data[headerFixedSize : headerFixedSize+metaLength]
 
 	// Decode the standard metadata first
-	info, indexes, err := decodeMeta(fullMeta)
+	info, indexes, err := DecodeMeta(fullMeta)
 	if err != nil {
 		return fmt.Errorf("failed to decode metadata: %w", err)
 	}
 
 	// Find where standard metadata ends by re-encoding and checking length
-	standardMeta := encodeMeta(info, indexes)
+	standardMeta := EncodeMeta(info, indexes)
 	btreeMetaStart := len(standardMeta)
 
 	if btreeMetaStart+9 > len(fullMeta) {
@@ -707,7 +707,7 @@ func readFileV2V3(path string, mem *memory.MemoryStorage) error {
 	}
 	secMetas := make([]secMeta, numSecondary)
 	for i := 0; i < numSecondary; i++ {
-		name, newPos, err := getString(btreeMetaData, pos)
+		name, newPos, err := GetString(btreeMetaData, pos)
 		if err != nil {
 			return fmt.Errorf("reading secondary tree name: %w", err)
 		}
@@ -1027,7 +1027,7 @@ func (fs *FileStorage) loadTableV2(path string) error {
 		return err
 	}
 	metaData := data[headerFixedSize : headerFixedSize+metaLength]
-	info, _, err := decodeMeta(metaData)
+	info, _, err := DecodeMeta(metaData)
 	if err != nil {
 		return err
 	}
@@ -1078,7 +1078,7 @@ func (fs *FileStorage) LoadTableMeta(name string) (*storage.TableInfo, []*storag
 	}
 
 	metaData := data[headerFixedSize : headerFixedSize+metaLength]
-	info, indexes, err := decodeMeta(metaData)
+	info, indexes, err := DecodeMeta(metaData)
 	if err != nil {
 		return nil, nil, 0, fmt.Errorf("failed to decode metadata: %w", err)
 	}

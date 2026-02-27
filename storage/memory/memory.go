@@ -20,9 +20,9 @@ type SecondaryIndex struct {
 	tree *btree.BTree[storage.KeyEncoding] // encoded value -> map[int64]struct{} (set of BTree keys)
 }
 
-// encodeCompositeKey encodes multiple column values into a single binary key.
+// EncodeCompositeKey encodes multiple column values into a single binary key.
 // NULL values are encoded (prefix 0x00), so all rows are indexable.
-func encodeCompositeKey(row storage.Row, columnIdxs []int) storage.KeyEncoding {
+func EncodeCompositeKey(row storage.Row, columnIdxs []int) storage.KeyEncoding {
 	var buf strings.Builder
 	for _, idx := range columnIdxs {
 		storage.EncodeValue(&buf, row[idx])
@@ -220,16 +220,16 @@ func (si *SecondaryIndex) Lookup(vals []storage.Value) []int64 {
 	return keys
 }
 
-// checkUnique checks if inserting or updating a row would violate the unique constraint.
+// CheckUnique checks if inserting or updating a row would violate the unique constraint.
 // excludeKey is the BTree key of the row being updated (-1 for inserts).
-func (si *SecondaryIndex) checkUnique(row storage.Row, excludeKey int64) error {
+func (si *SecondaryIndex) CheckUnique(row storage.Row, excludeKey int64) error {
 	if !si.Info.Unique {
 		return nil
 	}
 	if isAllNull(row, si.Info.ColumnIdxs) {
 		return nil
 	}
-	encoded := encodeCompositeKey(row, si.Info.ColumnIdxs)
+	encoded := EncodeCompositeKey(row, si.Info.ColumnIdxs)
 	val, found := si.tree.Get(encoded)
 	if !found {
 		return nil
@@ -243,8 +243,8 @@ func (si *SecondaryIndex) checkUnique(row storage.Row, excludeKey int64) error {
 	return nil
 }
 
-func (si *SecondaryIndex) addRow(key int64, row storage.Row) {
-	encoded := encodeCompositeKey(row, si.Info.ColumnIdxs)
+func (si *SecondaryIndex) AddRow(key int64, row storage.Row) {
+	encoded := EncodeCompositeKey(row, si.Info.ColumnIdxs)
 	val, found := si.tree.Get(encoded)
 	if found {
 		keySet := val.(map[int64]struct{})
@@ -254,8 +254,8 @@ func (si *SecondaryIndex) addRow(key int64, row storage.Row) {
 	}
 }
 
-func (si *SecondaryIndex) removeRow(key int64, row storage.Row) {
-	encoded := encodeCompositeKey(row, si.Info.ColumnIdxs)
+func (si *SecondaryIndex) RemoveRow(key int64, row storage.Row) {
+	encoded := EncodeCompositeKey(row, si.Info.ColumnIdxs)
 	val, found := si.tree.Get(encoded)
 	if found {
 		keySet := val.(map[int64]struct{})
@@ -320,7 +320,7 @@ func (s *MemoryStorage) Insert(tableName string, row storage.Row) error {
 
 	// Check unique constraints before inserting
 	for _, idx := range tbl.indexes {
-		if err := idx.checkUnique(row, -1); err != nil {
+		if err := idx.CheckUnique(row, -1); err != nil {
 			return err
 		}
 	}
@@ -342,7 +342,7 @@ func (s *MemoryStorage) Insert(tableName string, row storage.Row) error {
 
 	// Update secondary indexes
 	for _, idx := range tbl.indexes {
-		idx.addRow(key, row)
+		idx.AddRow(key, row)
 	}
 
 	return nil
@@ -365,7 +365,7 @@ func (s *MemoryStorage) DeleteByKeys(tableName string, keys []int64) error {
 			if found {
 				row := val.(storage.Row)
 				for _, idx := range tbl.indexes {
-					idx.removeRow(key, row)
+					idx.RemoveRow(key, row)
 				}
 			}
 		}
@@ -391,18 +391,18 @@ func (s *MemoryStorage) UpdateRow(tableName string, key int64, row storage.Row) 
 		if found {
 			oldRow = oldVal.(storage.Row)
 			for _, idx := range tbl.indexes {
-				idx.removeRow(key, oldRow)
+				idx.RemoveRow(key, oldRow)
 			}
 		}
 	}
 
 	// Check unique constraints before applying update
 	for _, idx := range tbl.indexes {
-		if err := idx.checkUnique(row, key); err != nil {
+		if err := idx.CheckUnique(row, key); err != nil {
 			// Restore old index entries
 			if oldRow != nil {
 				for _, idx2 := range tbl.indexes {
-					idx2.addRow(key, oldRow)
+					idx2.AddRow(key, oldRow)
 				}
 			}
 			return err
@@ -413,7 +413,7 @@ func (s *MemoryStorage) UpdateRow(tableName string, key int64, row storage.Row) 
 
 	// Add new index entries
 	for _, idx := range tbl.indexes {
-		idx.addRow(key, row)
+		idx.AddRow(key, row)
 	}
 
 	return nil
@@ -537,7 +537,7 @@ func (s *MemoryStorage) DropColumn(tableName string, colIdx int) error {
 		idx.tree = btree.New[storage.KeyEncoding](32)
 		tbl.tree.ForEach(func(key int64, value any) bool {
 			row := value.(storage.Row)
-			idx.addRow(key, row)
+			idx.AddRow(key, row)
 			return true
 		})
 	}
@@ -566,12 +566,12 @@ func (s *MemoryStorage) CreateIndex(info *storage.IndexInfo) error {
 	tbl.tree.ForEach(func(key int64, value any) bool {
 		row := value.(storage.Row)
 		if info.Unique {
-			if err := idx.checkUnique(row, -1); err != nil {
+			if err := idx.CheckUnique(row, -1); err != nil {
 				buildErr = err
 				return false
 			}
 		}
-		idx.addRow(key, row)
+		idx.AddRow(key, row)
 		return true
 	})
 	if buildErr != nil {
@@ -956,7 +956,7 @@ func (s *MemoryStorage) InsertWithKey(tableName string, key int64, row storage.R
 
 	// Update secondary indexes
 	for _, idx := range tbl.indexes {
-		idx.addRow(key, row)
+		idx.AddRow(key, row)
 	}
 
 	return nil

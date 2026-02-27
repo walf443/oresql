@@ -11,16 +11,22 @@ import (
 
 // DatabaseManager manages multiple named databases.
 type DatabaseManager struct {
-	mu        sync.RWMutex
-	databases map[string]*Database // key: lowercase name
-	dataDir   string               // root data directory (empty for in-memory)
+	mu          sync.RWMutex
+	databases   map[string]*Database // key: lowercase name
+	dataDir     string               // root data directory (empty for in-memory)
+	storageType string               // "memory", "file" (default), or "disk"
 }
 
 // NewDatabaseManager creates a new DatabaseManager with a "default" database.
-func NewDatabaseManager(dataDir string) *DatabaseManager {
+func NewDatabaseManager(dataDir string, storageType ...string) *DatabaseManager {
+	st := ""
+	if len(storageType) > 0 {
+		st = storageType[0]
+	}
 	mgr := &DatabaseManager{
-		databases: make(map[string]*Database),
-		dataDir:   dataDir,
+		databases:   make(map[string]*Database),
+		dataDir:     dataDir,
+		storageType: st,
 	}
 
 	// Create the default database
@@ -28,6 +34,9 @@ func NewDatabaseManager(dataDir string) *DatabaseManager {
 	if dataDir != "" {
 		dbDir := filepath.Join(dataDir, "default")
 		dbOpts = append(dbOpts, WithDataDir(dbDir))
+	}
+	if st != "" {
+		dbOpts = append(dbOpts, WithStorageType(st))
 	}
 	mgr.databases["default"] = NewDatabase("default", dbOpts...)
 
@@ -51,6 +60,9 @@ func (mgr *DatabaseManager) CreateDatabase(name string) error {
 			return fmt.Errorf("failed to create database directory: %w", err)
 		}
 		dbOpts = append(dbOpts, WithDataDir(dbDir))
+	}
+	if mgr.storageType != "" {
+		dbOpts = append(dbOpts, WithStorageType(mgr.storageType))
 	}
 
 	mgr.databases[key] = NewDatabase(key, dbOpts...)
@@ -133,7 +145,11 @@ func (mgr *DatabaseManager) LoadExistingDatabases() error {
 			continue // already loaded (e.g., "default")
 		}
 		dbDir := filepath.Join(mgr.dataDir, name)
-		mgr.databases[name] = NewDatabase(name, WithDataDir(dbDir))
+		dbOpts := []DatabaseOption{WithDataDir(dbDir)}
+		if mgr.storageType != "" {
+			dbOpts = append(dbOpts, WithStorageType(mgr.storageType))
+		}
+		mgr.databases[name] = NewDatabase(name, dbOpts...)
 	}
 
 	return nil

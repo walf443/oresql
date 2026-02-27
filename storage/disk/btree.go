@@ -267,6 +267,52 @@ func searchLeaf(entries []leafEntry, key int64) int {
 	return lo
 }
 
+// GetByKeysSorted retrieves rows for pre-sorted keys using a single findLeaf
+// call followed by a leaf-chain traversal with two-pointer matching.
+// This is O(H + L') page fetches instead of O(K × H) for individual Get calls.
+func (t *DiskBTree) GetByKeysSorted(sortedKeys []int64) []storage.KeyRow {
+	if len(sortedKeys) == 0 {
+		return nil
+	}
+	leafID, err := t.findLeaf(sortedKeys[0])
+	if err != nil {
+		return nil
+	}
+	result := make([]storage.KeyRow, 0, len(sortedKeys))
+	keyIdx := 0
+	pageID := leafID
+
+	for pageID != pager.InvalidPageID && keyIdx < len(sortedKeys) {
+		data, err := t.pool.FetchPage(pageID)
+		if err != nil {
+			return result
+		}
+		lp := decodeLeafPage(data)
+		nextLeaf := lp.nextLeaf
+		t.pool.UnpinPage(pageID, false)
+
+		for i := 0; i < int(lp.entryCount) && keyIdx < len(sortedKeys); i++ {
+			entryKey := lp.entries[i].key
+			for keyIdx < len(sortedKeys) && sortedKeys[keyIdx] < entryKey {
+				keyIdx++
+			}
+			if keyIdx >= len(sortedKeys) {
+				break
+			}
+			if sortedKeys[keyIdx] == entryKey {
+				row, err := storage.DecodeRow(lp.entries[i].val)
+				if err != nil {
+					return result
+				}
+				result = append(result, storage.KeyRow{Key: entryKey, Row: row})
+				keyIdx++
+			}
+		}
+		pageID = nextLeaf
+	}
+	return result
+}
+
 // --- Insert ---
 
 // Insert inserts a key-row pair. Returns false if the key already exists.

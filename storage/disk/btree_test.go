@@ -397,6 +397,86 @@ func TestFloatValues(t *testing.T) {
 	assert.Equal(t, float64(-2.71), row[1])
 }
 
+func TestGetByKeysSorted(t *testing.T) {
+	t.Run("all keys exist", func(t *testing.T) {
+		bt := newTestBTree(t)
+		for i := int64(1); i <= 10; i++ {
+			bt.Insert(i, storage.Row{i, fmt.Sprintf("val-%d", i)})
+		}
+
+		result := bt.GetByKeysSorted([]int64{2, 5, 8})
+		require.Len(t, result, 3)
+		assert.Equal(t, int64(2), result[0].Key)
+		assert.Equal(t, "val-2", result[0].Row[1])
+		assert.Equal(t, int64(5), result[1].Key)
+		assert.Equal(t, "val-5", result[1].Row[1])
+		assert.Equal(t, int64(8), result[2].Key)
+		assert.Equal(t, "val-8", result[2].Row[1])
+	})
+
+	t.Run("some keys missing", func(t *testing.T) {
+		bt := newTestBTree(t)
+		for i := int64(1); i <= 10; i++ {
+			bt.Insert(i*2, storage.Row{i * 2, fmt.Sprintf("val-%d", i*2)})
+		}
+		// Keys: 2,4,6,8,10,12,14,16,18,20
+		// Query: 3(missing),4(hit),7(missing),10(hit),15(missing),20(hit)
+		result := bt.GetByKeysSorted([]int64{3, 4, 7, 10, 15, 20})
+		require.Len(t, result, 3)
+		assert.Equal(t, int64(4), result[0].Key)
+		assert.Equal(t, int64(10), result[1].Key)
+		assert.Equal(t, int64(20), result[2].Key)
+	})
+
+	t.Run("empty keys", func(t *testing.T) {
+		bt := newTestBTree(t)
+		bt.Insert(1, storage.Row{int64(1)})
+
+		result := bt.GetByKeysSorted([]int64{})
+		assert.Nil(t, result)
+	})
+
+	t.Run("all keys missing", func(t *testing.T) {
+		bt := newTestBTree(t)
+		for i := int64(1); i <= 5; i++ {
+			bt.Insert(i*2, storage.Row{i * 2})
+		}
+		// Keys: 2,4,6,8,10. Query: 1,3,5,7,9 (all missing)
+		result := bt.GetByKeysSorted([]int64{1, 3, 5, 7, 9})
+		assert.Len(t, result, 0)
+	})
+
+	t.Run("large dataset scattered keys", func(t *testing.T) {
+		bt := newTestBTree(t)
+		n := 1000
+		for i := int64(0); i < int64(n); i++ {
+			bt.Insert(i, storage.Row{i, fmt.Sprintf("val-%d", i)})
+		}
+
+		// Pick every 10th key
+		var keys []int64
+		for i := int64(5); i < int64(n); i += 10 {
+			keys = append(keys, i)
+		}
+		result := bt.GetByKeysSorted(keys)
+		require.Len(t, result, len(keys))
+		for i, kr := range result {
+			assert.Equal(t, keys[i], kr.Key)
+			assert.Equal(t, fmt.Sprintf("val-%d", keys[i]), kr.Row[1])
+		}
+	})
+
+	t.Run("single key", func(t *testing.T) {
+		bt := newTestBTree(t)
+		bt.Insert(42, storage.Row{int64(42), "answer"})
+
+		result := bt.GetByKeysSorted([]int64{42})
+		require.Len(t, result, 1)
+		assert.Equal(t, int64(42), result[0].Key)
+		assert.Equal(t, "answer", result[0].Row[1])
+	})
+}
+
 func ptr(v int64) *int64 {
 	return &v
 }

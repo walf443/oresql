@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -697,12 +698,15 @@ func (ds *DiskStorage) GetByKeys(tableName string, keys []int64) ([]storage.Row,
 	}
 	tbl.mu.RLock()
 	defer tbl.mu.RUnlock()
-	rows := make([]storage.Row, 0, len(keys))
-	for _, key := range keys {
-		row, found := tbl.btree.Get(key)
-		if found {
-			rows = append(rows, row)
-		}
+
+	sorted := make([]int64, len(keys))
+	copy(sorted, keys)
+	slices.Sort(sorted)
+
+	keyRows := tbl.btree.GetByKeysSorted(sorted)
+	rows := make([]storage.Row, len(keyRows))
+	for i, kr := range keyRows {
+		rows[i] = kr.Row
 	}
 	return rows, nil
 }
@@ -714,14 +718,12 @@ func (ds *DiskStorage) GetKeyRowsByKeys(tableName string, keys []int64) ([]stora
 	}
 	tbl.mu.RLock()
 	defer tbl.mu.RUnlock()
-	rows := make([]storage.KeyRow, 0, len(keys))
-	for _, key := range keys {
-		row, found := tbl.btree.Get(key)
-		if found {
-			rows = append(rows, storage.KeyRow{Key: key, Row: row})
-		}
-	}
-	return rows, nil
+
+	sorted := make([]int64, len(keys))
+	copy(sorted, keys)
+	slices.Sort(sorted)
+
+	return tbl.btree.GetByKeysSorted(sorted), nil
 }
 
 func (ds *DiskStorage) RowCount(tableName string) (int, error) {

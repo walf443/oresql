@@ -44,10 +44,11 @@ func TestPrimaryPageRoundTrip_Leaf(t *testing.T) {
 }
 
 func TestPrimaryPageRoundTrip_Internal(t *testing.T) {
+	// In B+Tree, internal nodes have nil values (routing keys only)
 	data := btree.NodeData[int64]{
 		Leaf: false,
 		Entries: []btree.EntryData[int64]{
-			{Key: 10, Value: storage.Row{int64(10), "ten"}},
+			{Key: 10, Value: nil},
 		},
 		Children: []uint32{0, 1},
 	}
@@ -58,6 +59,8 @@ func TestPrimaryPageRoundTrip_Internal(t *testing.T) {
 
 	assert.False(t, decoded.Leaf)
 	require.Len(t, decoded.Entries, 1)
+	assert.Equal(t, int64(10), decoded.Entries[0].Key)
+	assert.Nil(t, decoded.Entries[0].Value)
 	require.Len(t, decoded.Children, 2)
 	assert.Equal(t, uint32(0), decoded.Children[0])
 	assert.Equal(t, uint32(1), decoded.Children[1])
@@ -142,10 +145,11 @@ func TestSecondaryPageRoundTrip_Leaf(t *testing.T) {
 }
 
 func TestSecondaryPageRoundTrip_Internal(t *testing.T) {
+	// In B+Tree, internal nodes have nil values (routing keys only)
 	data := btree.NodeData[storage.KeyEncoding]{
 		Leaf: false,
 		Entries: []btree.EntryData[storage.KeyEncoding]{
-			{Key: storage.EncodeValues([]storage.Value{int64(42)}), Value: map[int64]struct{}{5: {}}},
+			{Key: storage.EncodeValues([]storage.Value{int64(42)}), Value: nil},
 		},
 		Children: []uint32{10, 20},
 	}
@@ -156,6 +160,8 @@ func TestSecondaryPageRoundTrip_Internal(t *testing.T) {
 
 	assert.False(t, decoded.Leaf)
 	require.Len(t, decoded.Entries, 1)
+	assert.Equal(t, data.Entries[0].Key, decoded.Entries[0].Key)
+	assert.Nil(t, decoded.Entries[0].Value)
 	require.Len(t, decoded.Children, 2)
 	assert.Equal(t, uint32(10), decoded.Children[0])
 	assert.Equal(t, uint32(20), decoded.Children[1])

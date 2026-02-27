@@ -1,6 +1,7 @@
 package btree
 
 import (
+	"cmp"
 	"fmt"
 	"math/rand"
 	"sort"
@@ -829,5 +830,91 @@ func TestStringBTreeSortedKeys(t *testing.T) {
 	require.Len(t, result, len(expected), "unexpected number of keys")
 	for i := range expected {
 		assert.Equal(t, expected[i], result[i], "position %d", i)
+	}
+}
+
+// --- B+Tree specific tests ---
+
+// collectLeafChainKeys follows the leaf chain (next pointers) from the leftmost leaf
+// and collects all keys in order.
+func collectLeafChainKeys[K cmp.Ordered](t *BTree[K]) []K {
+	leaf := t.LeftmostLeaf()
+	if leaf == nil {
+		return nil
+	}
+	var keys []K
+	for n := leaf; n != nil; n = n.next {
+		for _, e := range n.entries {
+			keys = append(keys, e.key)
+		}
+	}
+	return keys
+}
+
+func TestBPlusTreeInternalNodesHaveNoValues(t *testing.T) {
+	tree := New[int64](3) // small degree to force multiple levels
+
+	// Insert enough entries to create internal nodes
+	n := 50
+	for i := 0; i < n; i++ {
+		tree.Insert(int64(i), i*10)
+	}
+
+	// Walk all nodes and verify internal nodes have nil values
+	tree.WalkNodes(func(data NodeData[int64]) uint32 {
+		if !data.Leaf {
+			for _, e := range data.Entries {
+				assert.Nil(t, e.Value, "internal node entry key=%d should have nil value", e.Key)
+			}
+		}
+		return 0
+	})
+}
+
+func TestBPlusTreeLeafChainIntegrity(t *testing.T) {
+	tree := New[int64](3)
+
+	n := 50
+	for i := 0; i < n; i++ {
+		tree.Insert(int64(i), i*10)
+	}
+
+	// Collect keys via leaf chain
+	chainKeys := collectLeafChainKeys(tree)
+	require.Len(t, chainKeys, n, "leaf chain should contain all keys")
+
+	// Verify keys are in sorted order
+	for i := 1; i < len(chainKeys); i++ {
+		assert.Less(t, chainKeys[i-1], chainKeys[i],
+			"leaf chain keys should be in sorted order: %v", chainKeys)
+	}
+
+	// Verify all expected keys are present
+	for i := 0; i < n; i++ {
+		assert.Equal(t, int64(i), chainKeys[i])
+	}
+}
+
+func TestBPlusTreeLeafChainAfterDeletes(t *testing.T) {
+	tree := New[int64](3)
+
+	n := 50
+	for i := 0; i < n; i++ {
+		tree.Insert(int64(i), i*10)
+	}
+
+	// Delete even numbers
+	for i := 0; i < n; i += 2 {
+		require.True(t, tree.Delete(int64(i)), "Delete(%d) should succeed", i)
+	}
+
+	// Collect keys via leaf chain
+	chainKeys := collectLeafChainKeys(tree)
+	require.Len(t, chainKeys, n/2, "leaf chain should contain remaining keys")
+
+	// Verify keys are the odd numbers in sorted order
+	for i, k := range chainKeys {
+		expected := int64(i*2 + 1)
+		assert.Equal(t, expected, k, "position %d", i)
 	}
 }

@@ -26,7 +26,8 @@ const (
 	fileMagic       = "ORESQL"
 	fileVersionV1   = byte(0x01)
 	fileVersionV2   = byte(0x02)
-	fileVersion     = fileVersionV2 // current version for new files
+	fileVersionV3   = byte(0x03)
+	fileVersion     = fileVersionV3 // current version for new files
 	nextRowIDOffset = 7             // offset of nextRowID field in file
 	headerFixedSize = 19            // magic(6) + version(1) + nextRowID(8) + metaLength(4)
 	noRootPageID    = uint32(0xFFFFFFFF)
@@ -441,9 +442,9 @@ type secondaryTreeMeta struct {
 	length     uint32
 }
 
-// writeFullFileV2 writes a complete v2 .dat file with BTree snapshots.
-// Format: [Header v2][Metadata + BTree root info][Page Directory][Page Data][Empty Log]
-func writeFullFileV2(path string, info *storage.TableInfo, indexes []*storage.IndexInfo,
+// writeFullFileV3 writes a complete v3 .dat file with B+Tree snapshots.
+// Format: [Header v3][Metadata + BTree root info][Page Directory][Page Data][Empty Log]
+func writeFullFileV3(path string, info *storage.TableInfo, indexes []*storage.IndexInfo,
 	nextRowID int64, primaryTree *btree.BTree[int64],
 	secondaryIndexes map[string]*memory.SecondaryIndex) error {
 
@@ -563,7 +564,7 @@ func writeFullFileV2(path string, info *storage.TableInfo, indexes []*storage.In
 	// Write file
 	var header [headerFixedSize]byte
 	copy(header[0:6], fileMagic)
-	header[6] = fileVersionV2
+	header[6] = fileVersionV3
 	binary.BigEndian.PutUint64(header[7:15], uint64(nextRowID))
 	binary.BigEndian.PutUint32(header[15:19], uint32(len(fullMeta)))
 
@@ -643,8 +644,10 @@ func readFile(path string) (*storage.TableInfo, []*storage.IndexInfo, int64, []b
 	return info, indexes, nextRowID, rowData, nil
 }
 
-// readFileV2 reads a v2 .dat file and restores BTree snapshots into memory storage.
-func readFileV2(path string, mem *memory.MemoryStorage) error {
+// readFileV2V3 reads a v2 or v3 .dat file and restores BTree/B+Tree snapshots into memory storage.
+// v2 and v3 share the same page format; the difference is the BTree type (B-Tree vs B+Tree).
+// BuildFromNodes handles leaf chain reconstruction for B+Tree.
+func readFileV2V3(path string, mem *memory.MemoryStorage) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -654,8 +657,8 @@ func readFileV2(path string, mem *memory.MemoryStorage) error {
 	if err != nil {
 		return err
 	}
-	if version != fileVersionV2 {
-		return fmt.Errorf("expected v2 but got version: %d", version)
+	if version != fileVersionV2 && version != fileVersionV3 {
+		return fmt.Errorf("expected v2 or v3 but got version: %d", version)
 	}
 
 	if headerFixedSize+metaLength > len(data) {
@@ -928,6 +931,8 @@ func (fs *FileStorage) loadTable(tableName string) error {
 	}
 
 	switch version {
+	case fileVersionV3:
+		return fs.loadTableV3(path)
 	case fileVersionV2:
 		return fs.loadTableV2(path)
 	case fileVersionV1:
@@ -1000,14 +1005,40 @@ func (fs *FileStorage) loadTableV1(path string) error {
 		}
 	}
 
-	// Migrate to v2 on load
+	// Migrate to v3 on load
 	tableName := info.Name
-	return fs.rewriteTableV2(tableName)
+	return fs.rewriteTableV3(tableName)
 }
 
 // loadTableV2 loads a table from a v2 .dat file (BTree snapshot + optional log replay).
+// Migrates to v3 (B+Tree) format after loading.
 func (fs *FileStorage) loadTableV2(path string) error {
-	return readFileV2(path, fs.mem)
+	if err := readFileV2V3(path, fs.mem); err != nil {
+		return err
+	}
+
+	// Read table name from metadata to rewrite as v3
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	_, _, metaLength, err := readFileHeader(data)
+	if err != nil {
+		return err
+	}
+	metaData := data[headerFixedSize : headerFixedSize+metaLength]
+	info, _, err := decodeMeta(metaData)
+	if err != nil {
+		return err
+	}
+
+	// Migrate to v3 (B+Tree): rebuild trees and rewrite file
+	return fs.rewriteTableV3(info.Name)
+}
+
+// loadTableV3 loads a table from a v3 .dat file (B+Tree snapshot + optional log replay).
+func (fs *FileStorage) loadTableV3(path string) error {
+	return readFileV2V3(path, fs.mem)
 }
 
 // ListTables returns all table names from the data directory.
@@ -1108,11 +1139,11 @@ func (fs *FileStorage) getTableMeta(tableName string) (*storage.TableInfo, []*st
 // Used after schema changes (AddColumn, DropColumn) that modify all rows.
 // Uses ScanWithKeysNoLock because the caller (via WithTableLocks) already holds the table lock.
 func (fs *FileStorage) rewriteTable(tableName string) error {
-	return fs.rewriteTableV2(tableName)
+	return fs.rewriteTableV3(tableName)
 }
 
-// rewriteTableV2 rewrites the entire .dat file using v2 format with BTree snapshots.
-func (fs *FileStorage) rewriteTableV2(tableName string) error {
+// rewriteTableV3 rewrites the entire .dat file using v3 format with B+Tree snapshots.
+func (fs *FileStorage) rewriteTableV3(tableName string) error {
 	info, indexes, nextRowID := fs.getTableMeta(tableName)
 	if info == nil {
 		return nil
@@ -1121,14 +1152,14 @@ func (fs *FileStorage) rewriteTableV2(tableName string) error {
 	primaryTree := fs.mem.GetPrimaryTree(tableName)
 	secondaryIndexes := fs.mem.GetAllSecondaryTrees(tableName)
 
-	return writeFullFileV2(fs.tablePath(tableName), info, indexes, nextRowID,
+	return writeFullFileV3(fs.tablePath(tableName), info, indexes, nextRowID,
 		primaryTree, secondaryIndexes)
 }
 
 // rewriteTableMetaOnly rewrites the .dat file with updated metadata.
-// For v2, this does a full v2 rewrite since metadata includes BTree info.
+// Does a full v3 rewrite since metadata includes B+Tree info.
 func (fs *FileStorage) rewriteTableMetaOnly(tableName string) error {
-	return fs.rewriteTableV2(tableName)
+	return fs.rewriteTableV3(tableName)
 }
 
 // --- storage.Engine implementation ---
@@ -1137,8 +1168,8 @@ func (fs *FileStorage) CreateTable(info *storage.TableInfo) {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 	fs.mem.CreateTable(info)
-	// Write .dat file with v2 format (empty BTree snapshot)
-	writeFullFileV2(fs.tablePath(info.Name), info, nil, 1, nil, nil)
+	// Write .dat file with v3 format (empty B+Tree snapshot)
+	writeFullFileV3(fs.tablePath(info.Name), info, nil, 1, nil, nil)
 }
 
 func (fs *FileStorage) DropTable(name string) {
@@ -1152,10 +1183,10 @@ func (fs *FileStorage) TruncateTable(name string) {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 	fs.mem.TruncateTable(name)
-	// Rewrite .dat file with v2 format (empty BTree snapshot)
+	// Rewrite .dat file with v3 format (empty B+Tree snapshot)
 	info, indexes, nextRowID := fs.getTableMeta(name)
 	if info != nil {
-		writeFullFileV2(fs.tablePath(name), info, indexes, nextRowID, nil, nil)
+		writeFullFileV3(fs.tablePath(name), info, indexes, nextRowID, nil, nil)
 	}
 }
 

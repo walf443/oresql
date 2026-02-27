@@ -510,7 +510,7 @@ func TestV2IncrementalWriteAndReload(t *testing.T) {
 	assert.Equal(t, "bob", rows[1][1])
 }
 
-func TestV1ToV2Migration(t *testing.T) {
+func TestV1ToV3Migration(t *testing.T) {
 	dir := t.TempDir()
 
 	// Phase 1: Manually create a v1 file
@@ -535,7 +535,7 @@ func TestV1ToV2Migration(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, byte(0x01), data[6], "should be v1 before migration")
 
-	// Phase 2: Load (should auto-migrate to v2)
+	// Phase 2: Load (should auto-migrate to v3)
 	fs, err := NewFileStorage(dir)
 	require.NoError(t, err)
 	require.NoError(t, fs.LoadAll())
@@ -548,12 +548,12 @@ func TestV1ToV2Migration(t *testing.T) {
 	assert.Equal(t, int64(2), rows[1][0])
 	assert.Equal(t, "two", rows[1][1])
 
-	// Verify file is now v2
+	// Verify file is now v3
 	data, err = os.ReadFile(v1Path)
 	require.NoError(t, err)
-	assert.Equal(t, byte(0x02), data[6], "should be v2 after migration")
+	assert.Equal(t, byte(0x03), data[6], "should be v3 after migration")
 
-	// Phase 3: Reload from v2 and verify data intact
+	// Phase 3: Reload from v3 and verify data intact
 	fs2, err := NewFileStorage(dir)
 	require.NoError(t, err)
 	require.NoError(t, fs2.LoadAll())
@@ -563,6 +563,83 @@ func TestV1ToV2Migration(t *testing.T) {
 	require.Len(t, rows, 2)
 	assert.Equal(t, int64(1), rows[0][0])
 	assert.Equal(t, "one", rows[0][1])
+}
+
+func TestV2ToV3Migration(t *testing.T) {
+	dir := t.TempDir()
+
+	// Phase 1: Create table with v3, then downgrade to v2 header to simulate a v2 file
+	info := &storage.TableInfo{
+		Name: "legacy2",
+		Columns: []storage.ColumnInfo{
+			{Name: "id", DataType: "INT", Index: 0, PrimaryKey: true},
+			{Name: "val", DataType: "TEXT", Index: 1},
+		},
+		PrimaryKeyCol:  0,
+		PrimaryKeyCols: []int{0},
+	}
+
+	// Write using v3 format first, then patch version byte to v2
+	v2Path := filepath.Join(dir, "legacy2.dat")
+	require.NoError(t, writeFullFileV3(v2Path, info, nil, 3, nil, nil))
+
+	// Patch version byte from 0x03 to 0x02
+	data, err := os.ReadFile(v2Path)
+	require.NoError(t, err)
+	assert.Equal(t, byte(0x03), data[6], "should be v3 initially")
+	data[6] = 0x02
+	require.NoError(t, os.WriteFile(v2Path, data, 0644))
+
+	// Insert data by writing directly (we'll use the v1 format for simplicity and re-patch)
+	// Actually, the simplest approach: write a v1 file, load it (migrates to v3),
+	// then patch that file's version byte back to v2, and load again to test v2→v3
+	v2Path2 := filepath.Join(dir, "legacy2b.dat")
+	keyRows := []storage.KeyRow{
+		{Key: 1, Row: storage.Row{int64(1), "alpha"}},
+		{Key: 2, Row: storage.Row{int64(2), "beta"}},
+		{Key: 3, Row: storage.Row{int64(3), "gamma"}},
+	}
+	info2 := &storage.TableInfo{
+		Name: "legacy2b",
+		Columns: []storage.ColumnInfo{
+			{Name: "id", DataType: "INT", Index: 0, PrimaryKey: true},
+			{Name: "val", DataType: "TEXT", Index: 1},
+		},
+		PrimaryKeyCol:  0,
+		PrimaryKeyCols: []int{0},
+	}
+	// Write as v1, load to get v3, then patch to v2
+	require.NoError(t, writeFullFileV1(v2Path2, info2, nil, 4, keyRows))
+	fs1, err := NewFileStorage(dir)
+	require.NoError(t, err)
+	require.NoError(t, fs1.loadTable("legacy2b"))
+
+	// Now legacy2b.dat should be v3; patch to v2
+	data2, err := os.ReadFile(v2Path2)
+	require.NoError(t, err)
+	assert.Equal(t, byte(0x03), data2[6], "should be v3 after v1 migration")
+	data2[6] = 0x02
+	require.NoError(t, os.WriteFile(v2Path2, data2, 0644))
+
+	// Phase 2: Load from v2 (should migrate to v3)
+	fs2, err := NewFileStorage(dir)
+	require.NoError(t, err)
+	require.NoError(t, fs2.loadTable("legacy2b"))
+
+	rows, err := fs2.Scan("legacy2b")
+	require.NoError(t, err)
+	require.Len(t, rows, 3)
+	assert.Equal(t, int64(1), rows[0][0])
+	assert.Equal(t, "alpha", rows[0][1])
+	assert.Equal(t, int64(2), rows[1][0])
+	assert.Equal(t, "beta", rows[1][1])
+	assert.Equal(t, int64(3), rows[2][0])
+	assert.Equal(t, "gamma", rows[2][1])
+
+	// Verify file is now v3
+	data3, err := os.ReadFile(v2Path2)
+	require.NoError(t, err)
+	assert.Equal(t, byte(0x03), data3[6], "should be v3 after v2 migration")
 }
 
 func TestV2AutoIncrementReload(t *testing.T) {

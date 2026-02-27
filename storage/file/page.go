@@ -256,17 +256,21 @@ func decodeSecondaryPage(buf []byte) (btree.NodeData[storage.KeyEncoding], error
 		rowIDCount := int(binary.BigEndian.Uint32(buf[pos : pos+4]))
 		pos += 4
 
-		keySet := make(map[int64]struct{}, rowIDCount)
-		for j := 0; j < rowIDCount; j++ {
-			if pos+8 > len(buf) {
-				return data, fmt.Errorf("unexpected end reading rowID at entry %d, rowID %d", i, j)
+		var value any
+		if rowIDCount > 0 || data.Leaf {
+			keySet := make(map[int64]struct{}, rowIDCount)
+			for j := 0; j < rowIDCount; j++ {
+				if pos+8 > len(buf) {
+					return data, fmt.Errorf("unexpected end reading rowID at entry %d, rowID %d", i, j)
+				}
+				rowID := int64(binary.BigEndian.Uint64(buf[pos : pos+8]))
+				pos += 8
+				keySet[rowID] = struct{}{}
 			}
-			rowID := int64(binary.BigEndian.Uint64(buf[pos : pos+8]))
-			pos += 8
-			keySet[rowID] = struct{}{}
+			value = keySet
 		}
 
-		data.Entries[i] = btree.EntryData[storage.KeyEncoding]{Key: key, Value: keySet}
+		data.Entries[i] = btree.EntryData[storage.KeyEncoding]{Key: key, Value: value}
 	}
 
 	// Children

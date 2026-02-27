@@ -269,6 +269,8 @@ func evalExprGeneric(expr ast.Expr, row Row, eval ExprEvaluator) (Value, error) 
 		return e.Value, nil
 	case *ast.NullLitExpr:
 		return nil, nil
+	case *ast.BoolLitExpr:
+		return e.Value, nil
 	case *ast.IsNullExpr:
 		val, err := eval.Eval(e.Expr, row)
 		if err != nil {
@@ -405,6 +407,13 @@ func evalExprGeneric(expr ast.Expr, row Row, eval ExprEvaluator) (Value, error) 
 		leftBool, ok := left.(bool)
 		if !ok {
 			return nil, fmt.Errorf("expected boolean in %s expression, got %T", e.Op, left)
+		}
+		// Short-circuit evaluation
+		if e.Op == "AND" && !leftBool {
+			return false, nil
+		}
+		if e.Op == "OR" && leftBool {
+			return true, nil
 		}
 		right, err := eval.Eval(e.Right, row)
 		if err != nil {
@@ -636,6 +645,8 @@ func hasOuterReferences(stmt *ast.SelectStmt, outerEval ExprEvaluator) bool {
 			walk(e.Else)
 		case *ast.CastExpr:
 			walk(e.Expr)
+		case *ast.BoolLitExpr:
+			// leaf — no children
 		case *ast.ExistsExpr:
 			// Don't recurse into nested subqueries
 		case *ast.ScalarExpr:

@@ -177,6 +177,9 @@ func (e *Executor) Execute(stmt ast.Statement) (*Result, error) {
 }
 
 func (e *Executor) executeInner(stmt ast.Statement) (*Result, error) {
+	// Optimize constant expressions in WHERE/HAVING before execution
+	optimizeStatement(stmt)
+
 	switch s := stmt.(type) {
 	case *ast.CreateTableStmt:
 		return e.executeCreateTable(s)

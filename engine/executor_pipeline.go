@@ -20,6 +20,12 @@ func filterWhere[T any](rows []T, where ast.Expr, eval ExprEvaluator, rowOf func
 	if where == nil {
 		return rows, nil
 	}
+	if b, ok := where.(*ast.BoolLitExpr); ok {
+		if b.Value {
+			return rows, nil // WHERE TRUE → return all rows
+		}
+		return nil, nil // WHERE FALSE → empty
+	}
 	var filtered []T
 	for _, item := range rows {
 		val, err := eval.Eval(where, rowOf(item))
@@ -114,6 +120,16 @@ func applyLimit[T any](rows []T, limit *int64) []T {
 // Returns at most limit rows that pass the WHERE filter.
 // If where is nil, returns the first limit rows.
 func filterWhereLimit[T any](rows []T, where ast.Expr, eval ExprEvaluator, rowOf func(T) Row, limit int) ([]T, error) {
+	if b, ok := where.(*ast.BoolLitExpr); ok {
+		if !b.Value {
+			return nil, nil // WHERE FALSE → empty
+		}
+		// WHERE TRUE → just apply limit
+		if limit < len(rows) {
+			return rows[:limit], nil
+		}
+		return rows, nil
+	}
 	filtered := make([]T, 0, limit)
 	for _, item := range rows {
 		if where != nil {
@@ -141,6 +157,12 @@ func filterWhereLimit[T any](rows []T, where ast.Expr, eval ExprEvaluator, rowOf
 // termination in a single pass. Used for DISTINCT + LIMIT queries without ORDER BY.
 // Returns at most limit unique projected rows.
 func filterProjectDedupLimit(rows []Row, where ast.Expr, colExprs []ast.Expr, isStar bool, eval ExprEvaluator, limit int) ([]Row, error) {
+	if b, ok := where.(*ast.BoolLitExpr); ok {
+		if !b.Value {
+			return nil, nil // WHERE FALSE → empty
+		}
+		where = nil // WHERE TRUE → skip filtering
+	}
 	seen := make(map[string]bool)
 	result := make([]Row, 0, limit)
 	cols := eval.ColumnList()
@@ -247,6 +269,8 @@ func inferExprType(expr ast.Expr, eval ExprEvaluator) string {
 		return "TEXT"
 	case *ast.NullLitExpr:
 		return "" // compatible with any type
+	case *ast.BoolLitExpr:
+		return "INT" // boolean is internally treated as INT
 	case *ast.CallExpr:
 		switch e.Name {
 		case "COUNT":

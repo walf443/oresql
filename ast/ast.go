@@ -186,6 +186,12 @@ type NullLitExpr struct{}
 func (e *NullLitExpr) NodeType() string { return "NullLit" }
 func (e *NullLitExpr) exprNode()        {}
 
+// BoolLitExpr represents a boolean literal (TRUE/FALSE).
+type BoolLitExpr struct{ Value bool }
+
+func (e *BoolLitExpr) NodeType() string { return "BoolLit" }
+func (e *BoolLitExpr) exprNode()        {}
+
 // IsNullExpr represents <expr> IS [NOT] NULL.
 type IsNullExpr struct {
 	Expr Expr

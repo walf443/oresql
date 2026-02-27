@@ -50,6 +50,8 @@ func evalLiteral(expr ast.Expr) (Value, error) {
 		return e.Value, nil
 	case *ast.NullLitExpr:
 		return nil, nil
+	case *ast.BoolLitExpr:
+		return e.Value, nil
 	case *ast.ArithmeticExpr:
 		left, err := evalLiteral(e.Left)
 		if err != nil {
@@ -149,6 +151,8 @@ func evalExpr(expr ast.Expr, row Row, info *TableInfo) (Value, error) {
 		return e.Value, nil
 	case *ast.NullLitExpr:
 		return nil, nil
+	case *ast.BoolLitExpr:
+		return e.Value, nil
 	case *ast.IsNullExpr:
 		val, err := evalExpr(e.Expr, row, info)
 		if err != nil {
@@ -262,6 +266,13 @@ func evalExpr(expr ast.Expr, row Row, info *TableInfo) (Value, error) {
 		leftBool, ok := left.(bool)
 		if !ok {
 			return nil, fmt.Errorf("expected boolean in %s expression, got %T", e.Op, left)
+		}
+		// Short-circuit evaluation
+		if e.Op == "AND" && !leftBool {
+			return false, nil
+		}
+		if e.Op == "OR" && leftBool {
+			return true, nil
 		}
 		right, err := evalExpr(e.Right, row, info)
 		if err != nil {
@@ -938,6 +949,11 @@ func formatExpr(expr ast.Expr) string {
 		return "'" + e.Value + "'"
 	case *ast.NullLitExpr:
 		return "NULL"
+	case *ast.BoolLitExpr:
+		if e.Value {
+			return "TRUE"
+		}
+		return "FALSE"
 	case *ast.IdentExpr:
 		if e.Table != "" {
 			return e.Table + "." + e.Name

@@ -93,6 +93,7 @@
 - [x] USE DATABASE
 - [x] SHOW DATABASES
 - [x] SHOW TABLES
+- [x] クロスデータベース テーブル参照 (`db.table` 構文)
 
 ## その他
 

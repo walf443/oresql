@@ -29,9 +29,10 @@ type ColumnDef struct {
 
 // CreateTableStmt represents CREATE TABLE <name> (<columns>).
 type CreateTableStmt struct {
-	TableName  string
-	Columns    []ColumnDef
-	PrimaryKey []string // table-level PRIMARY KEY column names (nil if not specified)
+	DatabaseName string // empty = current database
+	TableName    string
+	Columns      []ColumnDef
+	PrimaryKey   []string // table-level PRIMARY KEY column names (nil if not specified)
 }
 
 func (s *CreateTableStmt) NodeType() string { return "CreateTable" }
@@ -40,10 +41,11 @@ func (s *CreateTableStmt) statementNode()   {}
 // InsertStmt represents INSERT INTO <table> [(<columns>)] VALUES (<values>), ...
 // or INSERT INTO <table> [(<columns>)] SELECT ...
 type InsertStmt struct {
-	TableName string
-	Columns   []string  // nil = no column list specified
-	Rows      [][]Expr  // VALUES rows (nil when Select is used)
-	Select    Statement // INSERT ... SELECT (nil when VALUES is used)
+	DatabaseName string // empty = current database
+	TableName    string
+	Columns      []string  // nil = no column list specified
+	Rows         [][]Expr  // VALUES rows (nil when Select is used)
+	Select       Statement // INSERT ... SELECT (nil when VALUES is used)
 }
 
 func (s *InsertStmt) NodeType() string { return "Insert" }
@@ -65,10 +67,11 @@ const (
 
 // JoinClause represents a single JOIN in a SELECT statement.
 type JoinClause struct {
-	JoinType   string // JoinInner or JoinLeft
-	TableName  string
-	TableAlias string
-	On         Expr
+	DatabaseName string // empty = current database
+	JoinType     string // JoinInner or JoinLeft
+	TableName    string
+	TableAlias   string
+	On           Expr
 }
 
 // NamedWindowDef represents a named window definition in a WINDOW clause.
@@ -82,6 +85,7 @@ type NamedWindowDef struct {
 type SelectStmt struct {
 	Distinct     bool
 	Columns      []Expr
+	DatabaseName string           // empty = current database
 	TableName    string           // table name (empty when FromSubquery is used)
 	FromSubquery Statement        // FROM subquery (nil = normal table). *SelectStmt or *SetOpStmt
 	TableAlias   string           // optional alias for the FROM table or subquery
@@ -218,11 +222,12 @@ type SetClause struct {
 
 // UpdateStmt represents UPDATE <table> SET <col> = <expr>, ... [WHERE <condition>] [ORDER BY ...] [LIMIT <n>].
 type UpdateStmt struct {
-	TableName string
-	Sets      []SetClause
-	Where     Expr            // nil if no WHERE clause
-	OrderBy   []OrderByClause // nil if no ORDER BY clause
-	Limit     *int64          // nil if no LIMIT clause
+	DatabaseName string // empty = current database
+	TableName    string
+	Sets         []SetClause
+	Where        Expr            // nil if no WHERE clause
+	OrderBy      []OrderByClause // nil if no ORDER BY clause
+	Limit        *int64          // nil if no LIMIT clause
 }
 
 func (s *UpdateStmt) NodeType() string { return "Update" }
@@ -230,10 +235,11 @@ func (s *UpdateStmt) statementNode()   {}
 
 // DeleteStmt represents DELETE FROM <table> [WHERE <condition>] [ORDER BY ...] [LIMIT <n>].
 type DeleteStmt struct {
-	TableName string
-	Where     Expr            // nil if no WHERE clause
-	OrderBy   []OrderByClause // nil if no ORDER BY clause
-	Limit     *int64          // nil if no LIMIT clause
+	DatabaseName string // empty = current database
+	TableName    string
+	Where        Expr            // nil if no WHERE clause
+	OrderBy      []OrderByClause // nil if no ORDER BY clause
+	Limit        *int64          // nil if no LIMIT clause
 }
 
 func (s *DeleteStmt) NodeType() string { return "Delete" }
@@ -241,7 +247,8 @@ func (s *DeleteStmt) statementNode()   {}
 
 // DropTableStmt represents DROP TABLE <name>.
 type DropTableStmt struct {
-	TableName string
+	DatabaseName string // empty = current database
+	TableName    string
 }
 
 func (s *DropTableStmt) NodeType() string { return "DropTable" }
@@ -249,7 +256,8 @@ func (s *DropTableStmt) statementNode()   {}
 
 // TruncateTableStmt represents TRUNCATE TABLE <name>.
 type TruncateTableStmt struct {
-	TableName string
+	DatabaseName string // empty = current database
+	TableName    string
 }
 
 func (s *TruncateTableStmt) NodeType() string { return "TruncateTable" }
@@ -289,10 +297,11 @@ func (e *LikeExpr) exprNode()        {}
 
 // CreateIndexStmt represents CREATE INDEX <name> ON <table>(<column>, ...).
 type CreateIndexStmt struct {
-	IndexName   string
-	TableName   string
-	ColumnNames []string
-	Unique      bool
+	DatabaseName string // empty = current database
+	IndexName    string
+	TableName    string
+	ColumnNames  []string
+	Unique       bool
 }
 
 func (s *CreateIndexStmt) NodeType() string { return "CreateIndex" }
@@ -308,8 +317,9 @@ func (s *DropIndexStmt) statementNode()   {}
 
 // AlterTableAddColumnStmt represents ALTER TABLE <name> ADD COLUMN <def>.
 type AlterTableAddColumnStmt struct {
-	TableName string
-	Column    ColumnDef
+	DatabaseName string // empty = current database
+	TableName    string
+	Column       ColumnDef
 }
 
 func (s *AlterTableAddColumnStmt) NodeType() string { return "AlterTableAddColumn" }
@@ -317,8 +327,9 @@ func (s *AlterTableAddColumnStmt) statementNode()   {}
 
 // AlterTableDropColumnStmt represents ALTER TABLE <name> DROP COLUMN <name>.
 type AlterTableDropColumnStmt struct {
-	TableName  string
-	ColumnName string
+	DatabaseName string // empty = current database
+	TableName    string
+	ColumnName   string
 }
 
 func (s *AlterTableDropColumnStmt) NodeType() string { return "AlterTableDropColumn" }

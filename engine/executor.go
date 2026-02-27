@@ -109,6 +109,33 @@ func isDDL(stmt ast.Statement) bool {
 	}
 }
 
+// resolveDatabase resolves a database by name.
+// If dbName is empty, the current database is returned.
+// If dbName is non-empty, it looks up the database via dbManager.
+func (e *Executor) resolveDatabase(dbName string) (*Database, error) {
+	if dbName == "" {
+		return e.db, nil
+	}
+	if e.dbManager == nil {
+		return nil, fmt.Errorf("database management is not enabled")
+	}
+	return e.dbManager.GetDatabase(dbName)
+}
+
+// resolveTable resolves a database and table by optional database name and table name.
+// If dbName is empty, the current database is used.
+func (e *Executor) resolveTable(dbName, tableName string) (*Database, *TableInfo, error) {
+	db, err := e.resolveDatabase(dbName)
+	if err != nil {
+		return nil, nil, err
+	}
+	info, err := db.catalog.GetTable(tableName)
+	if err != nil {
+		return nil, nil, err
+	}
+	return db, info, nil
+}
+
 func (e *Executor) Execute(stmt ast.Statement) (*Result, error) {
 	// DML: storage methods handle their own locking internally
 	if !isDDL(stmt) {

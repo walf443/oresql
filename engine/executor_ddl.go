@@ -8,11 +8,15 @@ import (
 )
 
 func (e *Executor) executeCreateTable(stmt *ast.CreateTableStmt) (*Result, error) {
-	info, err := e.db.catalog.CreateTable(stmt.TableName, stmt.Columns, stmt.PrimaryKey)
+	db, err := e.resolveDatabase(stmt.DatabaseName)
 	if err != nil {
 		return nil, err
 	}
-	e.db.storage.CreateTable(info)
+	info, err := db.catalog.CreateTable(stmt.TableName, stmt.Columns, stmt.PrimaryKey)
+	if err != nil {
+		return nil, err
+	}
+	db.storage.CreateTable(info)
 
 	// Auto-create unique indexes for UNIQUE columns (non-PK)
 	for _, cd := range stmt.Columns {
@@ -30,7 +34,7 @@ func (e *Executor) executeCreateTable(stmt *ast.CreateTableStmt) (*Result, error
 				Type:        "BTREE",
 				Unique:      true,
 			}
-			if err := e.db.storage.CreateIndex(idxInfo); err != nil {
+			if err := db.storage.CreateIndex(idxInfo); err != nil {
 				return nil, err
 			}
 		}
@@ -51,7 +55,7 @@ func (e *Executor) executeCreateTable(stmt *ast.CreateTableStmt) (*Result, error
 			Type:        "BTREE",
 			Unique:      true,
 		}
-		if err := e.db.storage.CreateIndex(idxInfo); err != nil {
+		if err := db.storage.CreateIndex(idxInfo); err != nil {
 			return nil, err
 		}
 	}
@@ -60,27 +64,35 @@ func (e *Executor) executeCreateTable(stmt *ast.CreateTableStmt) (*Result, error
 }
 
 func (e *Executor) executeDropTable(stmt *ast.DropTableStmt) (*Result, error) {
-	if err := e.db.catalog.DropTable(stmt.TableName); err != nil {
+	db, err := e.resolveDatabase(stmt.DatabaseName)
+	if err != nil {
 		return nil, err
 	}
-	e.db.storage.DropTable(stmt.TableName)
+	if err := db.catalog.DropTable(stmt.TableName); err != nil {
+		return nil, err
+	}
+	db.storage.DropTable(stmt.TableName)
 	return &Result{Message: "table dropped"}, nil
 }
 
 func (e *Executor) executeTruncateTable(stmt *ast.TruncateTableStmt) (*Result, error) {
-	if _, err := e.db.catalog.GetTable(stmt.TableName); err != nil {
+	db, err := e.resolveDatabase(stmt.DatabaseName)
+	if err != nil {
 		return nil, err
 	}
-	e.db.storage.TruncateTable(stmt.TableName)
+	if _, err := db.catalog.GetTable(stmt.TableName); err != nil {
+		return nil, err
+	}
+	db.storage.TruncateTable(stmt.TableName)
 	return &Result{Message: "table truncated"}, nil
 }
 
 func (e *Executor) executeCreateIndex(stmt *ast.CreateIndexStmt) (*Result, error) {
-	info, err := e.db.catalog.GetTable(stmt.TableName)
+	db, info, err := e.resolveTable(stmt.DatabaseName, stmt.TableName)
 	if err != nil {
 		return nil, err
 	}
-	if e.db.storage.HasIndex(stmt.IndexName) {
+	if db.storage.HasIndex(stmt.IndexName) {
 		return nil, fmt.Errorf("index %q already exists", stmt.IndexName)
 	}
 	columnNames := make([]string, len(stmt.ColumnNames))
@@ -101,7 +113,7 @@ func (e *Executor) executeCreateIndex(stmt *ast.CreateIndexStmt) (*Result, error
 		Type:        "BTREE",
 		Unique:      stmt.Unique,
 	}
-	if err := e.db.storage.CreateIndex(idxInfo); err != nil {
+	if err := db.storage.CreateIndex(idxInfo); err != nil {
 		return nil, err
 	}
 	return &Result{Message: "index created"}, nil
@@ -115,7 +127,11 @@ func (e *Executor) executeDropIndex(stmt *ast.DropIndexStmt) (*Result, error) {
 }
 
 func (e *Executor) executeAlterTableAddColumn(stmt *ast.AlterTableAddColumnStmt) (*Result, error) {
-	info, err := e.db.catalog.AddColumn(stmt.TableName, stmt.Column)
+	db, err := e.resolveDatabase(stmt.DatabaseName)
+	if err != nil {
+		return nil, err
+	}
+	info, err := db.catalog.AddColumn(stmt.TableName, stmt.Column)
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +148,7 @@ func (e *Executor) executeAlterTableAddColumn(stmt *ast.AlterTableAddColumnStmt)
 		defaultVal = nil
 	}
 
-	if err := e.db.storage.AddColumn(stmt.TableName, defaultVal); err != nil {
+	if err := db.storage.AddColumn(stmt.TableName, defaultVal); err != nil {
 		return nil, err
 	}
 
@@ -147,7 +163,7 @@ func (e *Executor) executeAlterTableAddColumn(stmt *ast.AlterTableAddColumnStmt)
 			Type:        "BTREE",
 			Unique:      true,
 		}
-		if err := e.db.storage.CreateIndex(idxInfo); err != nil {
+		if err := db.storage.CreateIndex(idxInfo); err != nil {
 			return nil, err
 		}
 	}
@@ -156,12 +172,16 @@ func (e *Executor) executeAlterTableAddColumn(stmt *ast.AlterTableAddColumnStmt)
 }
 
 func (e *Executor) executeAlterTableDropColumn(stmt *ast.AlterTableDropColumnStmt) (*Result, error) {
-	droppedCol, _, err := e.db.catalog.DropColumn(stmt.TableName, stmt.ColumnName)
+	db, err := e.resolveDatabase(stmt.DatabaseName)
+	if err != nil {
+		return nil, err
+	}
+	droppedCol, _, err := db.catalog.DropColumn(stmt.TableName, stmt.ColumnName)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := e.db.storage.DropColumn(stmt.TableName, droppedCol.Index); err != nil {
+	if err := db.storage.DropColumn(stmt.TableName, droppedCol.Index); err != nil {
 		return nil, err
 	}
 	return &Result{Message: "table altered"}, nil

@@ -115,11 +115,10 @@ func (p *Parser) parseCreateTable() (*ast.CreateTableStmt, error) {
 		return nil, err
 	}
 
-	if !p.isIdent() {
-		return nil, fmt.Errorf("expected table name, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+	dbName, tableName, err := p.parseTableRef()
+	if err != nil {
+		return nil, err
 	}
-	tableName := p.curToken.Literal
-	p.nextToken()
 
 	if err := p.expectToken(token.LPAREN); err != nil {
 		return nil, err
@@ -155,9 +154,10 @@ func (p *Parser) parseCreateTable() (*ast.CreateTableStmt, error) {
 	}
 
 	return &ast.CreateTableStmt{
-		TableName:  tableName,
-		Columns:    columns,
-		PrimaryKey: primaryKey,
+		DatabaseName: dbName,
+		TableName:    tableName,
+		Columns:      columns,
+		PrimaryKey:   primaryKey,
 	}, nil
 }
 
@@ -247,11 +247,10 @@ func (p *Parser) parseInsert() (*ast.InsertStmt, error) {
 		return nil, err
 	}
 
-	if !p.isIdent() {
-		return nil, fmt.Errorf("expected table name, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+	dbName, tableName, err := p.parseTableRef()
+	if err != nil {
+		return nil, err
 	}
-	tableName := p.curToken.Literal
-	p.nextToken()
 
 	// Parse optional column list: (col1, col2, ...)
 	// Distinguish from (SELECT ...) by peeking after LPAREN
@@ -276,9 +275,10 @@ func (p *Parser) parseInsert() (*ast.InsertStmt, error) {
 			return nil, err
 		}
 		return &ast.InsertStmt{
-			TableName: tableName,
-			Columns:   columns,
-			Select:    selectStmt,
+			DatabaseName: dbName,
+			TableName:    tableName,
+			Columns:      columns,
+			Select:       selectStmt,
 		}, nil
 	}
 
@@ -303,9 +303,10 @@ func (p *Parser) parseInsert() (*ast.InsertStmt, error) {
 	}
 
 	return &ast.InsertStmt{
-		TableName: tableName,
-		Columns:   columns,
-		Rows:      rows,
+		DatabaseName: dbName,
+		TableName:    tableName,
+		Columns:      columns,
+		Rows:         rows,
 	}, nil
 }
 
@@ -376,11 +377,10 @@ func (p *Parser) parseUpdate() (*ast.UpdateStmt, error) {
 		return nil, err
 	}
 
-	if !p.isIdent() {
-		return nil, fmt.Errorf("expected table name, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+	dbName, tableName, err := p.parseTableRef()
+	if err != nil {
+		return nil, err
 	}
-	tableName := p.curToken.Literal
-	p.nextToken()
 
 	if err := p.expectToken(token.SET); err != nil {
 		return nil, err
@@ -427,11 +427,12 @@ func (p *Parser) parseUpdate() (*ast.UpdateStmt, error) {
 	}
 
 	return &ast.UpdateStmt{
-		TableName: tableName,
-		Sets:      sets,
-		Where:     where,
-		OrderBy:   orderBy,
-		Limit:     limit,
+		DatabaseName: dbName,
+		TableName:    tableName,
+		Sets:         sets,
+		Where:        where,
+		OrderBy:      orderBy,
+		Limit:        limit,
 	}, nil
 }
 
@@ -486,14 +487,12 @@ func (p *Parser) parseDelete() (*ast.DeleteStmt, error) {
 		return nil, err
 	}
 
-	if !p.isIdent() {
-		return nil, fmt.Errorf("expected table name, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+	dbName, tableName, err := p.parseTableRef()
+	if err != nil {
+		return nil, err
 	}
-	tableName := p.curToken.Literal
-	p.nextToken()
 
 	var where ast.Expr
-	var err error
 	if p.curToken.Type == token.WHERE {
 		p.nextToken() // skip WHERE
 		where, err = p.parseExpr()
@@ -529,10 +528,11 @@ func (p *Parser) parseDelete() (*ast.DeleteStmt, error) {
 	}
 
 	return &ast.DeleteStmt{
-		TableName: tableName,
-		Where:     where,
-		OrderBy:   orderBy,
-		Limit:     limit,
+		DatabaseName: dbName,
+		TableName:    tableName,
+		Where:        where,
+		OrderBy:      orderBy,
+		Limit:        limit,
 	}, nil
 }
 
@@ -545,19 +545,42 @@ func (p *Parser) parseDropTable() (*ast.DropTableStmt, error) {
 		return nil, err
 	}
 
-	if !p.isIdent() {
-		return nil, fmt.Errorf("expected table name, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+	dbName, tableName, err := p.parseTableRef()
+	if err != nil {
+		return nil, err
 	}
-	tableName := p.curToken.Literal
-	p.nextToken()
 
-	return &ast.DropTableStmt{TableName: tableName}, nil
+	return &ast.DropTableStmt{DatabaseName: dbName, TableName: tableName}, nil
 }
 
 // isNameToken returns true if the current token can be used as a name
 // (identifier or keyword — allows USE default, CREATE DATABASE test, etc.).
 func (p *Parser) isNameToken() bool {
 	return p.isIdent() || token.IsKeyword(p.curToken.Type)
+}
+
+// parseTableRef parses an optionally database-qualified table name: [db.]table
+// Returns (dbName, tableName, error). dbName is empty if not qualified.
+// Keywords are allowed as database names when followed by DOT (e.g., default.users).
+func (p *Parser) parseTableRef() (string, string, error) {
+	// Accept keyword as database name if followed by DOT
+	if !p.isIdent() && !(p.isNameToken() && p.peekToken.Type == token.DOT) {
+		return "", "", fmt.Errorf("expected table name, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+	}
+	name := p.curToken.Literal
+	p.nextToken()
+
+	if p.curToken.Type == token.DOT {
+		p.nextToken() // skip DOT
+		if !p.isNameToken() {
+			return "", "", fmt.Errorf("expected table name after '.', got %s (%q)", p.curToken.Type, p.curToken.Literal)
+		}
+		tableName := p.curToken.Literal
+		p.nextToken()
+		return name, tableName, nil
+	}
+
+	return "", name, nil
 }
 
 // parseCreateDatabase parses: CREATE DATABASE <name>
@@ -644,13 +667,12 @@ func (p *Parser) parseTruncateTable() (*ast.TruncateTableStmt, error) {
 		return nil, err
 	}
 
-	if !p.isIdent() {
-		return nil, fmt.Errorf("expected table name, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+	dbName, tableName, err := p.parseTableRef()
+	if err != nil {
+		return nil, err
 	}
-	tableName := p.curToken.Literal
-	p.nextToken()
 
-	return &ast.TruncateTableStmt{TableName: tableName}, nil
+	return &ast.TruncateTableStmt{DatabaseName: dbName, TableName: tableName}, nil
 }
 
 // parseSelect parses a SELECT statement, potentially followed by UNION/INTERSECT [ALL] chains.
@@ -824,6 +846,7 @@ func (p *Parser) parseSelectCore() (*ast.SelectStmt, error) {
 		return nil, err
 	}
 
+	var dbName string
 	var tableName string
 	var tableAlias string
 	var fromSubquery ast.Statement
@@ -849,11 +872,11 @@ func (p *Parser) parseSelectCore() (*ast.SelectStmt, error) {
 			}
 			fromSubquery = subStmt
 		} else {
-			if !p.isIdent() {
-				return nil, fmt.Errorf("expected table name, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+			var err error
+			dbName, tableName, err = p.parseTableRef()
+			if err != nil {
+				return nil, err
 			}
-			tableName = p.curToken.Literal
-			p.nextToken()
 
 			tableAlias = p.parseTableAlias()
 		}
@@ -882,11 +905,10 @@ func (p *Parser) parseSelectCore() (*ast.SelectStmt, error) {
 			if err := p.expectToken(token.JOIN); err != nil {
 				return nil, err
 			}
-			if !p.isIdent() {
-				return nil, fmt.Errorf("expected table name after JOIN, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+			joinDBName, joinTable, err := p.parseTableRef()
+			if err != nil {
+				return nil, err
 			}
-			joinTable := p.curToken.Literal
-			p.nextToken()
 
 			joinAlias := p.parseTableAlias()
 
@@ -906,10 +928,11 @@ func (p *Parser) parseSelectCore() (*ast.SelectStmt, error) {
 				}
 			}
 			joins = append(joins, ast.JoinClause{
-				JoinType:   joinType,
-				TableName:  joinTable,
-				TableAlias: joinAlias,
-				On:         onExpr,
+				DatabaseName: joinDBName,
+				JoinType:     joinType,
+				TableName:    joinTable,
+				TableAlias:   joinAlias,
+				On:           onExpr,
 			})
 		}
 
@@ -955,6 +978,7 @@ func (p *Parser) parseSelectCore() (*ast.SelectStmt, error) {
 	return &ast.SelectStmt{
 		Distinct:     distinct,
 		Columns:      columns,
+		DatabaseName: dbName,
 		TableName:    tableName,
 		FromSubquery: fromSubquery,
 		TableAlias:   tableAlias,
@@ -1824,11 +1848,10 @@ func (p *Parser) parseCreateIndex() (ast.Statement, error) {
 		return nil, err
 	}
 
-	if !p.isIdent() {
-		return nil, fmt.Errorf("expected table name, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+	dbName, tableName, err := p.parseTableRef()
+	if err != nil {
+		return nil, err
 	}
-	tableName := p.curToken.Literal
-	p.nextToken()
 
 	if err := p.expectToken(token.LPAREN); err != nil {
 		return nil, err
@@ -1844,10 +1867,11 @@ func (p *Parser) parseCreateIndex() (ast.Statement, error) {
 	}
 
 	return &ast.CreateIndexStmt{
-		IndexName:   indexName,
-		TableName:   tableName,
-		ColumnNames: columnNames,
-		Unique:      unique,
+		DatabaseName: dbName,
+		IndexName:    indexName,
+		TableName:    tableName,
+		ColumnNames:  columnNames,
+		Unique:       unique,
 	}, nil
 }
 
@@ -1880,11 +1904,10 @@ func (p *Parser) parseAlterTable() (ast.Statement, error) {
 		return nil, err
 	}
 
-	if !p.isIdent() {
-		return nil, fmt.Errorf("expected table name, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+	dbName, tableName, err := p.parseTableRef()
+	if err != nil {
+		return nil, err
 	}
-	tableName := p.curToken.Literal
-	p.nextToken()
 
 	switch p.curToken.Type {
 	case token.ADD:
@@ -1897,7 +1920,7 @@ func (p *Parser) parseAlterTable() (ast.Statement, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &ast.AlterTableAddColumnStmt{TableName: tableName, Column: col}, nil
+		return &ast.AlterTableAddColumnStmt{DatabaseName: dbName, TableName: tableName, Column: col}, nil
 	case token.DROP:
 		p.nextToken() // skip DROP
 		// COLUMN keyword is optional
@@ -1909,7 +1932,7 @@ func (p *Parser) parseAlterTable() (ast.Statement, error) {
 		}
 		colName := p.curToken.Literal
 		p.nextToken()
-		return &ast.AlterTableDropColumnStmt{TableName: tableName, ColumnName: colName}, nil
+		return &ast.AlterTableDropColumnStmt{DatabaseName: dbName, TableName: tableName, ColumnName: colName}, nil
 	default:
 		return nil, fmt.Errorf("expected ADD or DROP after ALTER TABLE, got %s (%q)", p.curToken.Type, p.curToken.Literal)
 	}

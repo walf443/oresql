@@ -18,10 +18,13 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 		stmt.FromSubquery == nil &&
 		len(stmt.GroupBy) == 0 && !hasAggregate(stmt.Columns) && !stmt.Distinct &&
 		!hasWindowFunction(stmt.Columns) {
-		info, err := e.db.catalog.GetTable(stmt.TableName)
+		db, err := e.resolveDatabase(stmt.DatabaseName)
 		if err == nil {
-			if ior := e.tryIndexOrder(stmt.OrderBy, stmt.Where, info, stmt.Limit != nil); ior != nil {
-				return e.executeSelectWithIndexOrder(stmt, info, ior)
+			info, err := db.catalog.GetTable(stmt.TableName)
+			if err == nil {
+				if ior := e.tryIndexOrder(stmt.OrderBy, stmt.Where, info, stmt.Limit != nil); ior != nil {
+					return e.executeSelectWithIndexOrder(stmt, db, info, ior)
+				}
 			}
 		}
 	}
@@ -157,9 +160,9 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 // For fullOrder, ORDER BY sort is skipped entirely.
 // For partialOrder, sort is applied on a reduced row set.
 func (e *Executor) executeSelectWithIndexOrder(
-	stmt *ast.SelectStmt, info *TableInfo, ior *indexOrderResult,
+	stmt *ast.SelectStmt, db *Database, info *TableInfo, ior *indexOrderResult,
 ) (*Result, error) {
-	rows, eval, err := e.scanSourceOrderedByIndex(stmt, info, ior)
+	rows, eval, err := e.scanSourceOrderedByIndex(stmt, db, info, ior)
 	if err != nil {
 		return nil, err
 	}
@@ -204,7 +207,7 @@ func (e *Executor) executeSelectWithIndexOrder(
 // Returns rows in the correct order for fullOrder, or partially ordered rows for partialOrder.
 // WHERE filtering is applied during the scan.
 func (e *Executor) scanSourceOrderedByIndex(
-	stmt *ast.SelectStmt, info *TableInfo, ior *indexOrderResult,
+	stmt *ast.SelectStmt, db *Database, info *TableInfo, ior *indexOrderResult,
 ) ([]Row, ExprEvaluator, error) {
 	eval := newTableEvaluator(e, info)
 
@@ -217,15 +220,15 @@ func (e *Executor) scanSourceOrderedByIndex(
 	}
 
 	if ior.fullOrder {
-		return e.scanFullOrder(stmt, info, ior, eval, needed)
+		return e.scanFullOrder(stmt, db, info, ior, eval, needed)
 	}
-	return e.scanPartialOrder(stmt, info, ior, eval, needed)
+	return e.scanPartialOrder(stmt, db, info, ior, eval, needed)
 }
 
 // scanFullOrder handles the case where ORDER BY is a single column with an index.
 // No sort needed after scan; rows are in final order.
 func (e *Executor) scanFullOrder(
-	stmt *ast.SelectStmt, info *TableInfo, ior *indexOrderResult,
+	stmt *ast.SelectStmt, db *Database, info *TableInfo, ior *indexOrderResult,
 	eval ExprEvaluator, needed int,
 ) ([]Row, ExprEvaluator, error) {
 	cap := 64
@@ -242,7 +245,7 @@ func (e *Executor) scanFullOrder(
 		if stmt.Where == nil && needed > 0 {
 			forEachLimit = needed
 		}
-		e.db.storage.ForEachRow(info.Name, ior.reverse, func(key int64, row Row) bool {
+		db.storage.ForEachRow(info.Name, ior.reverse, func(key int64, row Row) bool {
 			if stmt.Where != nil {
 				val, err := eval.Eval(stmt.Where, row)
 				if err != nil {
@@ -266,7 +269,7 @@ func (e *Executor) scanFullOrder(
 			ior.toVal, ior.toInclusive,
 			ior.reverse,
 			func(rowKey int64) bool {
-				row, found := e.db.storage.GetRow(info.Name, rowKey)
+				row, found := db.storage.GetRow(info.Name, rowKey)
 				if !found {
 					return true
 				}
@@ -313,7 +316,7 @@ func (e *Executor) scanFullOrder(
 // scanPartialOrder handles ORDER BY with multiple columns where only the first has an index.
 // Reads rows in first-column order, applying group boundary cutoff for LIMIT optimization.
 func (e *Executor) scanPartialOrder(
-	stmt *ast.SelectStmt, info *TableInfo, ior *indexOrderResult,
+	stmt *ast.SelectStmt, db *Database, info *TableInfo, ior *indexOrderResult,
 	eval ExprEvaluator, needed int,
 ) ([]Row, ExprEvaluator, error) {
 	cap := 64
@@ -331,7 +334,7 @@ func (e *Executor) scanPartialOrder(
 	firstRow := true
 
 	scanFn := func(rowKey int64) bool {
-		row, found := e.db.storage.GetRow(info.Name, rowKey)
+		row, found := db.storage.GetRow(info.Name, rowKey)
 		if !found {
 			return true
 		}
@@ -362,7 +365,7 @@ func (e *Executor) scanPartialOrder(
 	if ior.usePK {
 		// partialOrder cannot use limit because it needs to collect all rows
 		// in the same first-column value group even after reaching needed count.
-		e.db.storage.ForEachRow(info.Name, ior.reverse, func(key int64, row Row) bool {
+		db.storage.ForEachRow(info.Name, ior.reverse, func(key int64, row Row) bool {
 			if stmt.Where != nil {
 				wVal, err := eval.Eval(stmt.Where, row)
 				if err != nil {
@@ -471,19 +474,19 @@ func (e *Executor) scanSourceSubquery(stmt *ast.SelectStmt, earlyLimit int) ([]R
 
 // scanSourceSingle scans a single table with optional index optimization.
 func (e *Executor) scanSourceSingle(stmt *ast.SelectStmt) ([]Row, ExprEvaluator, error) {
-	info, err := e.db.catalog.GetTable(stmt.TableName)
+	db, info, err := e.resolveTable(stmt.DatabaseName, stmt.TableName)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	var rows []Row
 	if keys, indexUsed := e.tryIndexScan(stmt.Where, info); indexUsed {
-		rows, err = e.db.storage.GetByKeys(info.Name, keys)
+		rows, err = db.storage.GetByKeys(info.Name, keys)
 		if err != nil {
 			return nil, nil, err
 		}
 	} else {
-		rows, err = e.db.storage.Scan(stmt.TableName)
+		rows, err = db.storage.Scan(stmt.TableName)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -643,11 +646,11 @@ func (e *Executor) executeSelectMaybeCorrelated(stmt *ast.SelectStmt, outerEval 
 // that can resolve both inner and outer column references to evaluate the full pipeline.
 func (e *Executor) executeSelectCorrelated(stmt *ast.SelectStmt, outerEval ExprEvaluator, outerRow Row) (*Result, error) {
 	// Phase 1: Source rows + inner evaluator (without WHERE)
-	info, err := e.db.catalog.GetTable(stmt.TableName)
+	db, info, err := e.resolveTable(stmt.DatabaseName, stmt.TableName)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := e.db.storage.Scan(stmt.TableName)
+	rows, err := db.storage.Scan(stmt.TableName)
 	if err != nil {
 		return nil, err
 	}

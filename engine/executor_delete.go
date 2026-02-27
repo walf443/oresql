@@ -7,7 +7,7 @@ import (
 )
 
 func (e *Executor) executeDelete(stmt *ast.DeleteStmt) (*Result, error) {
-	info, err := e.db.catalog.GetTable(stmt.TableName)
+	db, info, err := e.resolveTable(stmt.DatabaseName, stmt.TableName)
 	if err != nil {
 		return nil, err
 	}
@@ -15,9 +15,9 @@ func (e *Executor) executeDelete(stmt *ast.DeleteStmt) (*Result, error) {
 
 	var allRows []KeyRow
 	if keys, indexUsed := e.tryIndexScan(stmt.Where, info); indexUsed {
-		allRows, err = e.db.storage.GetKeyRowsByKeys(info.Name, keys)
+		allRows, err = db.storage.GetKeyRowsByKeys(info.Name, keys)
 	} else {
-		allRows, err = e.db.storage.ScanWithKeys(stmt.TableName)
+		allRows, err = db.storage.ScanWithKeys(stmt.TableName)
 	}
 	if err != nil {
 		return nil, err
@@ -48,7 +48,7 @@ func (e *Executor) executeDelete(stmt *ast.DeleteStmt) (*Result, error) {
 		keysToDelete = append(keysToDelete, kr.Key)
 	}
 
-	if err := e.db.storage.DeleteByKeys(stmt.TableName, keysToDelete); err != nil {
+	if err := db.storage.DeleteByKeys(stmt.TableName, keysToDelete); err != nil {
 		return nil, err
 	}
 

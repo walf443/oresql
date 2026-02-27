@@ -8,13 +8,13 @@ import (
 )
 
 func (e *Executor) executeInsert(stmt *ast.InsertStmt) (*Result, error) {
-	info, err := e.db.catalog.GetTable(stmt.TableName)
+	db, info, err := e.resolveTable(stmt.DatabaseName, stmt.TableName)
 	if err != nil {
 		return nil, err
 	}
 
 	if stmt.Select != nil {
-		return e.executeInsertSelect(stmt, info)
+		return e.executeInsertSelect(stmt, db, info)
 	}
 
 	if stmt.Columns == nil {
@@ -37,7 +37,7 @@ func (e *Executor) executeInsert(stmt *ast.InsertStmt) (*Result, error) {
 				row[i] = val
 			}
 
-			if err := e.db.storage.Insert(stmt.TableName, row); err != nil {
+			if err := db.storage.Insert(stmt.TableName, row); err != nil {
 				return nil, err
 			}
 		}
@@ -95,7 +95,7 @@ func (e *Executor) executeInsert(stmt *ast.InsertStmt) (*Result, error) {
 				}
 			}
 
-			if err := e.db.storage.Insert(stmt.TableName, row); err != nil {
+			if err := db.storage.Insert(stmt.TableName, row); err != nil {
 				return nil, err
 			}
 		}
@@ -110,7 +110,7 @@ func (e *Executor) executeInsert(stmt *ast.InsertStmt) (*Result, error) {
 	return &Result{Message: msg}, nil
 }
 
-func (e *Executor) executeInsertSelect(stmt *ast.InsertStmt, info *TableInfo) (*Result, error) {
+func (e *Executor) executeInsertSelect(stmt *ast.InsertStmt, db *Database, info *TableInfo) (*Result, error) {
 	selectResult, err := e.executeInner(stmt.Select)
 	if err != nil {
 		return nil, err
@@ -133,7 +133,7 @@ func (e *Executor) executeInsertSelect(stmt *ast.InsertStmt, info *TableInfo) (*
 				}
 				row[i] = val
 			}
-			if err := e.db.storage.Insert(stmt.TableName, row); err != nil {
+			if err := db.storage.Insert(stmt.TableName, row); err != nil {
 				return nil, err
 			}
 			n++
@@ -186,7 +186,7 @@ func (e *Executor) executeInsertSelect(stmt *ast.InsertStmt, info *TableInfo) (*
 				}
 			}
 
-			if err := e.db.storage.Insert(stmt.TableName, row); err != nil {
+			if err := db.storage.Insert(stmt.TableName, row); err != nil {
 				return nil, err
 			}
 			n++

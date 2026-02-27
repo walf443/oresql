@@ -1506,3 +1506,102 @@ func TestParseUseDatabaseKeywordName(t *testing.T) {
 	s := stmt.(*ast.UseDatabaseStmt)
 	assert.Equal(t, "default", s.DatabaseName)
 }
+
+func TestParseQualifiedTableSelect(t *testing.T) {
+	stmt := parse(t, "SELECT * FROM mydb.users")
+	require.IsType(t, &ast.SelectStmt{}, stmt)
+	s := stmt.(*ast.SelectStmt)
+	assert.Equal(t, "mydb", s.DatabaseName)
+	assert.Equal(t, "users", s.TableName)
+}
+
+func TestParseQualifiedTableInsert(t *testing.T) {
+	stmt := parse(t, "INSERT INTO mydb.users VALUES (1, 'alice')")
+	require.IsType(t, &ast.InsertStmt{}, stmt)
+	s := stmt.(*ast.InsertStmt)
+	assert.Equal(t, "mydb", s.DatabaseName)
+	assert.Equal(t, "users", s.TableName)
+}
+
+func TestParseQualifiedTableUpdate(t *testing.T) {
+	stmt := parse(t, "UPDATE mydb.users SET name = 'bob' WHERE id = 1")
+	require.IsType(t, &ast.UpdateStmt{}, stmt)
+	s := stmt.(*ast.UpdateStmt)
+	assert.Equal(t, "mydb", s.DatabaseName)
+	assert.Equal(t, "users", s.TableName)
+}
+
+func TestParseQualifiedTableDelete(t *testing.T) {
+	stmt := parse(t, "DELETE FROM mydb.users WHERE id = 1")
+	require.IsType(t, &ast.DeleteStmt{}, stmt)
+	s := stmt.(*ast.DeleteStmt)
+	assert.Equal(t, "mydb", s.DatabaseName)
+	assert.Equal(t, "users", s.TableName)
+}
+
+func TestParseQualifiedTableJoin(t *testing.T) {
+	stmt := parse(t, "SELECT * FROM db1.users JOIN db2.orders ON db1.users.id = db2.orders.user_id")
+	require.IsType(t, &ast.SelectStmt{}, stmt)
+	s := stmt.(*ast.SelectStmt)
+	assert.Equal(t, "db1", s.DatabaseName)
+	assert.Equal(t, "users", s.TableName)
+	require.Len(t, s.Joins, 1)
+	assert.Equal(t, "db2", s.Joins[0].DatabaseName)
+	assert.Equal(t, "orders", s.Joins[0].TableName)
+}
+
+func TestParseQualifiedTableCreateTable(t *testing.T) {
+	stmt := parse(t, "CREATE TABLE mydb.users (id INT, name TEXT)")
+	require.IsType(t, &ast.CreateTableStmt{}, stmt)
+	s := stmt.(*ast.CreateTableStmt)
+	assert.Equal(t, "mydb", s.DatabaseName)
+	assert.Equal(t, "users", s.TableName)
+}
+
+func TestParseQualifiedTableDropTable(t *testing.T) {
+	stmt := parse(t, "DROP TABLE mydb.users")
+	require.IsType(t, &ast.DropTableStmt{}, stmt)
+	s := stmt.(*ast.DropTableStmt)
+	assert.Equal(t, "mydb", s.DatabaseName)
+	assert.Equal(t, "users", s.TableName)
+}
+
+func TestParseQualifiedTableTruncate(t *testing.T) {
+	stmt := parse(t, "TRUNCATE TABLE mydb.users")
+	require.IsType(t, &ast.TruncateTableStmt{}, stmt)
+	s := stmt.(*ast.TruncateTableStmt)
+	assert.Equal(t, "mydb", s.DatabaseName)
+	assert.Equal(t, "users", s.TableName)
+}
+
+func TestParseQualifiedTableCreateIndex(t *testing.T) {
+	stmt := parse(t, "CREATE INDEX idx_name ON mydb.users (name)")
+	require.IsType(t, &ast.CreateIndexStmt{}, stmt)
+	s := stmt.(*ast.CreateIndexStmt)
+	assert.Equal(t, "mydb", s.DatabaseName)
+	assert.Equal(t, "users", s.TableName)
+}
+
+func TestParseQualifiedTableAlterTableAdd(t *testing.T) {
+	stmt := parse(t, "ALTER TABLE mydb.users ADD COLUMN age INT")
+	require.IsType(t, &ast.AlterTableAddColumnStmt{}, stmt)
+	s := stmt.(*ast.AlterTableAddColumnStmt)
+	assert.Equal(t, "mydb", s.DatabaseName)
+	assert.Equal(t, "users", s.TableName)
+}
+
+func TestParseQualifiedTableAlterTableDrop(t *testing.T) {
+	stmt := parse(t, "ALTER TABLE mydb.users DROP COLUMN age")
+	require.IsType(t, &ast.AlterTableDropColumnStmt{}, stmt)
+	s := stmt.(*ast.AlterTableDropColumnStmt)
+	assert.Equal(t, "mydb", s.DatabaseName)
+	assert.Equal(t, "users", s.TableName)
+}
+
+func TestParseUnqualifiedTableStillWorks(t *testing.T) {
+	stmt := parse(t, "SELECT * FROM users")
+	require.IsType(t, &ast.SelectStmt{}, stmt)
+	s := stmt.(*ast.SelectStmt)
+	assert.Equal(t, "", s.DatabaseName)
+	assert.Equal(t, "users", s.TableName)
+}

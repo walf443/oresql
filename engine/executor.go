@@ -71,7 +71,8 @@ func (e *Executor) ExecuteSQL(sql string) (*Result, error) {
 		_, isSelect := stmt.(*ast.SelectStmt)
 		_, isSetOp := stmt.(*ast.SetOpStmt)
 		_, isShowDBs := stmt.(*ast.ShowDatabasesStmt)
-		if !isSelect && !isSetOp && !isShowDBs {
+		_, isShowTbls := stmt.(*ast.ShowTablesStmt)
+		if !isSelect && !isSetOp && !isShowDBs && !isShowTbls {
 			if err := e.wal.Append(sql); err != nil {
 				return nil, fmt.Errorf("WAL write error: %w", err)
 			}
@@ -182,6 +183,8 @@ func (e *Executor) executeInner(stmt ast.Statement) (*Result, error) {
 		return e.executeUseDatabase(s)
 	case *ast.ShowDatabasesStmt:
 		return e.executeShowDatabases(s)
+	case *ast.ShowTablesStmt:
+		return e.executeShowTables(s)
 	default:
 		return nil, fmt.Errorf("unknown statement type: %T", stmt)
 	}

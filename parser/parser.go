@@ -68,7 +68,11 @@ func (p *Parser) Parse() (ast.Statement, error) {
 	case token.USE:
 		stmt, err = p.parseUseDatabase()
 	case token.SHOW:
-		stmt, err = p.parseShowDatabases()
+		if p.peekToken.Type == token.TABLES {
+			stmt, err = p.parseShowTables()
+		} else {
+			stmt, err = p.parseShowDatabases()
+		}
 	case token.TRUNCATE:
 		stmt, err = p.parseTruncateTable()
 	case token.ALTER:
@@ -617,6 +621,18 @@ func (p *Parser) parseShowDatabases() (*ast.ShowDatabasesStmt, error) {
 	}
 
 	return &ast.ShowDatabasesStmt{}, nil
+}
+
+// parseShowTables parses: SHOW TABLES
+func (p *Parser) parseShowTables() (*ast.ShowTablesStmt, error) {
+	if err := p.expectToken(token.SHOW); err != nil {
+		return nil, err
+	}
+	if err := p.expectToken(token.TABLES); err != nil {
+		return nil, err
+	}
+
+	return &ast.ShowTablesStmt{}, nil
 }
 
 // parseTruncateTable parses: TRUNCATE TABLE <name>

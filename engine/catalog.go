@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
@@ -276,6 +277,19 @@ func (c *Catalog) RestoreTable(info *TableInfo) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.tables[info.Name] = info
+}
+
+// ListTables returns a sorted list of table names.
+func (c *Catalog) ListTables() []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	names := make([]string, 0, len(c.tables))
+	for name := range c.tables {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func (c *Catalog) GetTable(name string) (*TableInfo, error) {

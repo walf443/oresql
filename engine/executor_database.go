@@ -43,6 +43,19 @@ func (e *Executor) executeUseDatabase(stmt *ast.UseDatabaseStmt) (*Result, error
 	return &Result{Message: fmt.Sprintf("switched to database %q", db.Name)}, nil
 }
 
+func (e *Executor) executeShowTables(stmt *ast.ShowTablesStmt) (*Result, error) {
+	names := e.db.catalog.ListTables()
+	rows := make([]Row, len(names))
+	for i, name := range names {
+		rows[i] = Row{name}
+	}
+	return &Result{
+		Columns:     []string{"table"},
+		ColumnTypes: []string{"TEXT"},
+		Rows:        rows,
+	}, nil
+}
+
 func (e *Executor) executeShowDatabases(stmt *ast.ShowDatabasesStmt) (*Result, error) {
 	if e.dbManager == nil {
 		return nil, fmt.Errorf("database management is not enabled")

@@ -428,3 +428,9 @@ type ShowDatabasesStmt struct{}
 
 func (s *ShowDatabasesStmt) NodeType() string { return "ShowDatabases" }
 func (s *ShowDatabasesStmt) statementNode()   {}
+
+// ShowTablesStmt represents SHOW TABLES.
+type ShowTablesStmt struct{}
+
+func (s *ShowTablesStmt) NodeType() string { return "ShowTables" }
+func (s *ShowTablesStmt) statementNode()   {}

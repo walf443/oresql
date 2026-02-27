@@ -1486,6 +1486,19 @@ func TestParseCreateDatabaseError(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestParseShowTables(t *testing.T) {
+	tests := []string{
+		"SHOW TABLES",
+		"show tables;",
+	}
+	for _, input := range tests {
+		t.Run(input, func(t *testing.T) {
+			stmt := parse(t, input)
+			require.IsType(t, &ast.ShowTablesStmt{}, stmt)
+		})
+	}
+}
+
 func TestParseUseDatabaseKeywordName(t *testing.T) {
 	// Keywords should be usable as database names
 	stmt := parse(t, "USE default")

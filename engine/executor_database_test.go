@@ -140,6 +140,42 @@ func TestDatabaseTableIsolation(t *testing.T) {
 	assert.Equal(t, int64(1), result.Rows[0][0])
 }
 
+func TestShowTablesEmpty(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+
+	result := run(t, exec, "SHOW TABLES")
+	require.Len(t, result.Columns, 1)
+	assert.Equal(t, "table", result.Columns[0])
+	require.Len(t, result.Rows, 0)
+}
+
+func TestShowTables(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "CREATE TABLE orders (id INT, total INT)")
+
+	result := run(t, exec, "SHOW TABLES")
+	require.Len(t, result.Columns, 1)
+	assert.Equal(t, "table", result.Columns[0])
+	require.Len(t, result.Rows, 2)
+	// Results should be sorted
+	assert.Equal(t, "orders", result.Rows[0][0].(string))
+	assert.Equal(t, "users", result.Rows[1][0].(string))
+}
+
+func TestShowTablesAfterDrop(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+
+	run(t, exec, "CREATE TABLE users (id INT)")
+	run(t, exec, "CREATE TABLE orders (id INT)")
+	run(t, exec, "DROP TABLE users")
+
+	result := run(t, exec, "SHOW TABLES")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, "orders", result.Rows[0][0].(string))
+}
+
 func TestDatabaseManagementNotEnabled(t *testing.T) {
 	// Executor without DatabaseManager
 	exec := NewExecutor(NewDatabase("test"))

@@ -72,23 +72,22 @@ func (dsi *DiskSecondaryIndex) GetInfo() *storage.IndexInfo {
 
 // encodeCompositeKey builds compositeKey = KeyEncoding(column_values) || BigEndian(rowKey)
 func encodeCompositeKey(row storage.Row, columnIdxs []int, rowKey int64) []byte {
-	var buf strings.Builder
+	var buf []byte
 	for _, idx := range columnIdxs {
-		storage.EncodeValue(&buf, row[idx])
+		buf = storage.EncodeValueBytes(buf, row[idx])
 	}
 	var keyBuf [8]byte
 	binary.BigEndian.PutUint64(keyBuf[:], uint64(rowKey))
-	buf.Write(keyBuf[:])
-	return []byte(buf.String())
+	return append(buf, keyBuf[:]...)
 }
 
 // encodeValuesPrefix builds the prefix part (without rowKey suffix).
 func encodeValuesPrefix(vals []storage.Value) []byte {
-	var buf strings.Builder
+	var buf []byte
 	for _, v := range vals {
-		storage.EncodeValue(&buf, v)
+		buf = storage.EncodeValueBytes(buf, v)
 	}
-	return []byte(buf.String())
+	return buf
 }
 
 // extractRowKey extracts the int64 rowKey from the last 8 bytes of a composite key.

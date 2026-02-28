@@ -253,11 +253,45 @@ func EncodeValue(buf *strings.Builder, val Value) {
 	}
 }
 
+// EncodeValueBytes encodes a single value with a type prefix into a byte slice.
+// Same encoding as EncodeValue but appends directly to []byte instead of strings.Builder.
+func EncodeValueBytes(buf []byte, val Value) []byte {
+	switch v := val.(type) {
+	case nil:
+		return append(buf, 0x00)
+	case int64:
+		buf = append(buf, 0x01)
+		var b [8]byte
+		// Flip the sign bit so that negative values sort before positive values
+		// (two's complement → unsigned order-preserving encoding)
+		binary.BigEndian.PutUint64(b[:], uint64(v)^0x8000000000000000)
+		return append(buf, b[:]...)
+	case float64:
+		buf = append(buf, 0x02)
+		bits := math.Float64bits(v)
+		if v >= 0 {
+			// Positive (and +0): flip sign bit
+			bits ^= 0x8000000000000000
+		} else {
+			// Negative: flip all bits
+			bits = ^bits
+		}
+		var b [8]byte
+		binary.BigEndian.PutUint64(b[:], bits)
+		return append(buf, b[:]...)
+	case string:
+		buf = append(buf, 0x03)
+		buf = append(buf, v...)
+		return append(buf, 0x00) // null terminator
+	}
+	return buf
+}
+
 // EncodeValues encodes multiple values into a single KeyEncoding.
 func EncodeValues(vals []Value) KeyEncoding {
-	var buf strings.Builder
+	var buf []byte
 	for _, v := range vals {
-		EncodeValue(&buf, v)
+		buf = EncodeValueBytes(buf, v)
 	}
-	return KeyEncoding(buf.String())
+	return KeyEncoding(buf)
 }

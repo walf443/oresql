@@ -191,21 +191,27 @@ func (t *DiskSecondaryBTree) findLeaf(key []byte) (pager.PageID, error) {
 			t.pool.UnpinPage(pageID, false)
 			return pageID, nil
 		}
-		ip := decodeSecInternalPage(data)
-		t.pool.UnpinPage(pageID, false)
-
-		childIdx := int(ip.entryCount)
-		lo, hi := 0, int(ip.entryCount)
-		for lo < hi {
-			mid := (lo + hi) / 2
-			if bytes.Compare(ip.keys[mid], key) <= 0 {
-				lo = mid + 1
+		// inline internal page scan
+		entryCount := int(binary.BigEndian.Uint16(data[1:3]))
+		pos := internalHdrSize
+		child0 := pager.PageID(binary.BigEndian.Uint32(data[pos : pos+4]))
+		pos += 4
+		nextPageID := child0
+		for i := 0; i < entryCount; i++ {
+			keyLen := int(binary.BigEndian.Uint16(data[pos : pos+2]))
+			pos += 2
+			sepKey := data[pos : pos+keyLen]
+			pos += keyLen
+			childID := pager.PageID(binary.BigEndian.Uint32(data[pos : pos+4]))
+			pos += 4
+			if bytes.Compare(sepKey, key) <= 0 {
+				nextPageID = childID
 			} else {
-				hi = mid
+				break
 			}
 		}
-		childIdx = lo
-		pageID = ip.children[childIdx]
+		t.pool.UnpinPage(pageID, false)
+		pageID = nextPageID
 	}
 }
 
@@ -220,9 +226,9 @@ func (t *DiskSecondaryBTree) findLeftmostLeaf() (pager.PageID, error) {
 			t.pool.UnpinPage(pageID, false)
 			return pageID, nil
 		}
-		ip := decodeSecInternalPage(data)
+		next := pager.PageID(binary.BigEndian.Uint32(data[internalHdrSize : internalHdrSize+4]))
 		t.pool.UnpinPage(pageID, false)
-		pageID = ip.children[0]
+		pageID = next
 	}
 }
 
@@ -237,9 +243,16 @@ func (t *DiskSecondaryBTree) findSecRightmostLeaf() (pager.PageID, error) {
 			t.pool.UnpinPage(pageID, false)
 			return pageID, nil
 		}
-		ip := decodeSecInternalPage(data)
+		entryCount := int(binary.BigEndian.Uint16(data[1:3]))
+		pos := internalHdrSize + 4 // skip child0
+		for i := 0; i < entryCount; i++ {
+			keyLen := int(binary.BigEndian.Uint16(data[pos : pos+2]))
+			pos += 2 + keyLen + 4 // skip key + childID
+		}
+		// pos-4 is the last childID written
+		lastChild := pager.PageID(binary.BigEndian.Uint32(data[pos-4 : pos]))
 		t.pool.UnpinPage(pageID, false)
-		pageID = ip.children[ip.entryCount]
+		pageID = lastChild
 	}
 }
 
@@ -573,20 +586,30 @@ func (t *DiskSecondaryBTree) PrefixScan(prefix []byte, fn func(compositeKey []by
 		if err != nil {
 			return
 		}
-		lp := decodeSecLeafPage(data)
-		nextLeaf := lp.nextLeaf
-		t.pool.UnpinPage(pageID, false)
-
-		for _, e := range lp.entries {
-			if !bytes.HasPrefix(e.key, prefix) {
-				if bytes.Compare(e.key, prefix) > 0 {
-					return
+		entryCount := int(binary.BigEndian.Uint16(data[1:3]))
+		nextLeaf := pager.PageID(binary.BigEndian.Uint32(data[3:7]))
+		pos := secLeafHdrSize
+		done := false
+		for i := 0; i < entryCount; i++ {
+			keyLen := int(binary.BigEndian.Uint16(data[pos : pos+2]))
+			pos += 2
+			key := data[pos : pos+keyLen]
+			pos += keyLen
+			if !bytes.HasPrefix(key, prefix) {
+				if bytes.Compare(key, prefix) > 0 {
+					done = true
+					break
 				}
 				continue
 			}
-			if !fn(e.key) {
+			if !fn(key) {
+				t.pool.UnpinPage(pageID, false)
 				return
 			}
+		}
+		t.pool.UnpinPage(pageID, false)
+		if done {
+			return
 		}
 		pageID = nextLeaf
 	}
@@ -618,13 +641,17 @@ func (t *DiskSecondaryBTree) RangeScan(from, to []byte, fromInc, toInc bool, fn 
 		if err != nil {
 			return
 		}
-		lp := decodeSecLeafPage(data)
-		nextLeaf := lp.nextLeaf
-		t.pool.UnpinPage(pageID, false)
-
-		for _, e := range lp.entries {
+		entryCount := int(binary.BigEndian.Uint16(data[1:3]))
+		nextLeaf := pager.PageID(binary.BigEndian.Uint32(data[3:7]))
+		pos := secLeafHdrSize
+		done := false
+		for i := 0; i < entryCount; i++ {
+			keyLen := int(binary.BigEndian.Uint16(data[pos : pos+2]))
+			pos += 2
+			key := data[pos : pos+keyLen]
+			pos += keyLen
 			if from != nil {
-				cmp := bytes.Compare(e.key, from)
+				cmp := bytes.Compare(key, from)
 				if fromInc {
 					if cmp < 0 {
 						continue
@@ -636,20 +663,27 @@ func (t *DiskSecondaryBTree) RangeScan(from, to []byte, fromInc, toInc bool, fn 
 				}
 			}
 			if to != nil {
-				cmp := bytes.Compare(e.key, to)
+				cmp := bytes.Compare(key, to)
 				if toInc {
 					if cmp > 0 {
-						return
+						done = true
+						break
 					}
 				} else {
 					if cmp >= 0 {
-						return
+						done = true
+						break
 					}
 				}
 			}
-			if !fn(e.key) {
+			if !fn(key) {
+				t.pool.UnpinPage(pageID, false)
 				return
 			}
+		}
+		t.pool.UnpinPage(pageID, false)
+		if done {
+			return
 		}
 		pageID = nextLeaf
 	}
@@ -681,14 +715,25 @@ func (t *DiskSecondaryBTree) RangeScanReverse(from, to []byte, fromInc, toInc bo
 		if err != nil {
 			return
 		}
-		lp := decodeSecLeafPage(data)
-		prevLeaf := lp.prevLeaf
-		t.pool.UnpinPage(pageID, false)
+		entryCount := int(binary.BigEndian.Uint16(data[1:3]))
+		prevLeaf := pager.PageID(binary.BigEndian.Uint32(data[7:11]))
 
-		for j := len(lp.entries) - 1; j >= 0; j-- {
-			e := lp.entries[j]
+		// Collect entry offsets by forward scan, then iterate in reverse
+		offsets := make([]int, entryCount)
+		pos := secLeafHdrSize
+		for i := 0; i < entryCount; i++ {
+			offsets[i] = pos
+			keyLen := int(binary.BigEndian.Uint16(data[pos : pos+2]))
+			pos += 2 + keyLen
+		}
+
+		done := false
+		for j := entryCount - 1; j >= 0; j-- {
+			off := offsets[j]
+			keyLen := int(binary.BigEndian.Uint16(data[off : off+2]))
+			key := data[off+2 : off+2+keyLen]
 			if to != nil {
-				cmp := bytes.Compare(e.key, to)
+				cmp := bytes.Compare(key, to)
 				if toInc {
 					if cmp > 0 {
 						continue
@@ -700,20 +745,27 @@ func (t *DiskSecondaryBTree) RangeScanReverse(from, to []byte, fromInc, toInc bo
 				}
 			}
 			if from != nil {
-				cmp := bytes.Compare(e.key, from)
+				cmp := bytes.Compare(key, from)
 				if fromInc {
 					if cmp < 0 {
-						return
+						done = true
+						break
 					}
 				} else {
 					if cmp <= 0 {
-						return
+						done = true
+						break
 					}
 				}
 			}
-			if !fn(e.key) {
+			if !fn(key) {
+				t.pool.UnpinPage(pageID, false)
 				return
 			}
+		}
+		t.pool.UnpinPage(pageID, false)
+		if done {
+			return
 		}
 		pageID = prevLeaf
 	}
@@ -734,14 +786,23 @@ func (t *DiskSecondaryBTree) ForEach(fn func(compositeKey []byte) bool) {
 		if err != nil {
 			return
 		}
-		lp := decodeSecLeafPage(data)
-		nextLeaf := lp.nextLeaf
-		t.pool.UnpinPage(pageID, false)
-
-		for _, e := range lp.entries {
-			if !fn(e.key) {
-				return
+		entryCount := int(binary.BigEndian.Uint16(data[1:3]))
+		nextLeaf := pager.PageID(binary.BigEndian.Uint32(data[3:7]))
+		pos := secLeafHdrSize
+		stopped := false
+		for i := 0; i < entryCount; i++ {
+			keyLen := int(binary.BigEndian.Uint16(data[pos : pos+2]))
+			pos += 2
+			key := data[pos : pos+keyLen]
+			pos += keyLen
+			if !fn(key) {
+				stopped = true
+				break
 			}
+		}
+		t.pool.UnpinPage(pageID, false)
+		if stopped {
+			return
 		}
 		pageID = nextLeaf
 	}

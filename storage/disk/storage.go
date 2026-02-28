@@ -10,10 +10,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/walf443/oresql/btree"
 	"github.com/walf443/oresql/storage"
 	"github.com/walf443/oresql/storage/file"
-	"github.com/walf443/oresql/storage/memory"
 	"github.com/walf443/oresql/storage/pager"
 )
 
@@ -21,22 +19,30 @@ import (
 var _ storage.Engine = (*DiskStorage)(nil)
 var _ storage.TableLocker = (*DiskStorage)(nil)
 var _ storage.MetadataProvider = (*DiskStorage)(nil)
+var _ storage.IndexReader = (*DiskSecondaryIndex)(nil)
 
 // Header page format (.db file, page 0):
 //
 //	[magic: "ORESQL" 6B]
-//	[version: 0x10 1B]
+//	[version: 0x11 1B]
 //	[pageSize: 4B uint32 = 4096]
 //	[rootPageID: 4B uint32]
 //	[rowCount: 4B uint32]
 //	[nextRowID: 8B uint64]
 //	[freeListHead: 4B uint32]
 //	[schemaLen: 2B uint16]
-//	[schemaData: rest of page]
+//	[schemaData: variable]
+//	  -- after EncodeMeta data --
+//	  [numSecBTrees: 2B]
+//	  for each:
+//	    [indexNameLen: 2B][indexName: N bytes]
+//	    [rootPageID: 4B]
+//	    [entryCount: 4B]
 const (
 	dbMagic      = "ORESQL"
-	dbVersion    = byte(0x10)
-	bufPoolSize  = 256 // pages cached per table
+	dbVersionV11 = byte(0x11) // new version with persisted secondary indexes
+	dbVersionV10 = byte(0x10) // legacy version (rebuild indexes on load)
+	bufPoolSize  = 256        // pages cached per table
 	headerOffset = 0
 )
 
@@ -53,6 +59,257 @@ const (
 	hdrSchemaOff    = 33
 )
 
+// DiskSecondaryIndex implements storage.IndexReader backed by a DiskSecondaryBTree.
+// Each entry in the tree is a composite key: KeyEncoding(column_values) || BigEndian(rowKey).
+type DiskSecondaryIndex struct {
+	info *storage.IndexInfo
+	tree *DiskSecondaryBTree
+}
+
+func (dsi *DiskSecondaryIndex) GetInfo() *storage.IndexInfo {
+	return dsi.info
+}
+
+// encodeCompositeKey builds compositeKey = KeyEncoding(column_values) || BigEndian(rowKey)
+func encodeCompositeKey(row storage.Row, columnIdxs []int, rowKey int64) []byte {
+	var buf strings.Builder
+	for _, idx := range columnIdxs {
+		storage.EncodeValue(&buf, row[idx])
+	}
+	var keyBuf [8]byte
+	binary.BigEndian.PutUint64(keyBuf[:], uint64(rowKey))
+	buf.Write(keyBuf[:])
+	return []byte(buf.String())
+}
+
+// encodeValuesPrefix builds the prefix part (without rowKey suffix).
+func encodeValuesPrefix(vals []storage.Value) []byte {
+	var buf strings.Builder
+	for _, v := range vals {
+		storage.EncodeValue(&buf, v)
+	}
+	return []byte(buf.String())
+}
+
+// extractRowKey extracts the int64 rowKey from the last 8 bytes of a composite key.
+func extractRowKey(compositeKey []byte) int64 {
+	if len(compositeKey) < 8 {
+		return 0
+	}
+	return int64(binary.BigEndian.Uint64(compositeKey[len(compositeKey)-8:]))
+}
+
+// isAllNull returns true if all indexed columns in the row are NULL.
+func isAllNull(row storage.Row, columnIdxs []int) bool {
+	for _, idx := range columnIdxs {
+		if row[idx] != nil {
+			return false
+		}
+	}
+	return true
+}
+
+func (dsi *DiskSecondaryIndex) Lookup(vals []storage.Value) []int64 {
+	prefix := encodeValuesPrefix(vals)
+	var keys []int64
+	dsi.tree.PrefixScan(prefix, func(compositeKey []byte) bool {
+		keys = append(keys, extractRowKey(compositeKey))
+		return true
+	})
+	return keys
+}
+
+func (dsi *DiskSecondaryIndex) RangeScan(fromVal *storage.Value, fromInclusive bool, toVal *storage.Value, toInclusive bool) []int64 {
+	if len(dsi.info.ColumnIdxs) != 1 {
+		return nil
+	}
+
+	var from []byte
+	var to []byte
+	if fromVal != nil {
+		from = encodeValuesPrefix([]storage.Value{*fromVal})
+	}
+	if toVal != nil {
+		to = encodeValuesPrefix([]storage.Value{*toVal})
+	}
+
+	// For range scans, we need to handle the rowKey suffix.
+	// from inclusive: start at prefix (any rowKey suffix is >= prefix)
+	// from exclusive: start after prefix + 0xff...
+	// to inclusive: stop after prefix + 0xff...
+	// to exclusive: stop at prefix
+
+	var fromKey []byte
+	var toKey []byte
+
+	if from != nil {
+		if fromInclusive {
+			fromKey = from
+		} else {
+			// Skip past all entries with this prefix
+			fromKey = append(append([]byte{}, from...), 0xff)
+		}
+	}
+
+	if to != nil {
+		if toInclusive {
+			toKey = append(append([]byte{}, to...), 0xff)
+		} else {
+			toKey = to
+		}
+	}
+
+	var keys []int64
+	dsi.tree.RangeScan(fromKey, toKey, true, false, func(compositeKey []byte) bool {
+		keys = append(keys, extractRowKey(compositeKey))
+		return true
+	})
+	return keys
+}
+
+func (dsi *DiskSecondaryIndex) CompositeRangeScan(
+	prefixVals []storage.Value,
+	fromVal *storage.Value, fromInclusive bool,
+	toVal *storage.Value, toInclusive bool,
+) []int64 {
+	if len(prefixVals)+1 > len(dsi.info.ColumnIdxs) || len(prefixVals) < 1 {
+		return nil
+	}
+
+	isPartialPrefix := len(prefixVals)+1 < len(dsi.info.ColumnIdxs)
+
+	var fromKey []byte
+	var toKey []byte
+	fromInc := true
+	toInc := false
+
+	if fromVal != nil {
+		vals := append(append([]storage.Value{}, prefixVals...), *fromVal)
+		k := encodeValuesPrefix(vals)
+		if isPartialPrefix && !fromInclusive {
+			k = append(k, 0xff)
+		} else if !fromInclusive {
+			k = append(k, 0xff)
+		}
+		fromKey = k
+	} else {
+		k := encodeValuesPrefix(prefixVals)
+		fromKey = k
+		fromInc = false
+	}
+
+	if toVal != nil {
+		vals := append(append([]storage.Value{}, prefixVals...), *toVal)
+		k := encodeValuesPrefix(vals)
+		if isPartialPrefix && toInclusive {
+			k = append(k, 0xff)
+		} else if toInclusive {
+			k = append(k, 0xff)
+		}
+		toKey = k
+	} else {
+		k := append(encodeValuesPrefix(prefixVals), 0xff)
+		toKey = k
+	}
+
+	var keys []int64
+	dsi.tree.RangeScan(fromKey, toKey, fromInc, toInc, func(compositeKey []byte) bool {
+		keys = append(keys, extractRowKey(compositeKey))
+		return true
+	})
+	return keys
+}
+
+func (dsi *DiskSecondaryIndex) OrderedRangeScan(
+	fromVal *storage.Value, fromInclusive bool,
+	toVal *storage.Value, toInclusive bool,
+	reverse bool,
+	fn func(rowKey int64) bool,
+) {
+	if len(dsi.info.ColumnIdxs) != 1 {
+		return
+	}
+
+	var from []byte
+	var to []byte
+	if fromVal != nil {
+		from = encodeValuesPrefix([]storage.Value{*fromVal})
+	}
+	if toVal != nil {
+		to = encodeValuesPrefix([]storage.Value{*toVal})
+	}
+
+	var fromKey []byte
+	var toKey []byte
+
+	if from != nil {
+		if fromInclusive {
+			fromKey = from
+		} else {
+			fromKey = append(append([]byte{}, from...), 0xff)
+		}
+	}
+
+	if to != nil {
+		if toInclusive {
+			toKey = append(append([]byte{}, to...), 0xff)
+		} else {
+			toKey = to
+		}
+	}
+
+	iterFn := func(compositeKey []byte) bool {
+		return fn(extractRowKey(compositeKey))
+	}
+
+	if reverse {
+		dsi.tree.RangeScanReverse(fromKey, toKey, true, false, iterFn)
+	} else {
+		dsi.tree.RangeScan(fromKey, toKey, true, false, iterFn)
+	}
+}
+
+func (dsi *DiskSecondaryIndex) CheckUnique(row storage.Row, excludeKey int64) error {
+	if !dsi.info.Unique {
+		return nil
+	}
+	if isAllNull(row, dsi.info.ColumnIdxs) {
+		return nil
+	}
+	prefix := encodeValuesPrefix(extractIndexVals(row, dsi.info.ColumnIdxs))
+	found := false
+	dsi.tree.PrefixScan(prefix, func(compositeKey []byte) bool {
+		rk := extractRowKey(compositeKey)
+		if rk != excludeKey {
+			found = true
+			return false
+		}
+		return true
+	})
+	if found {
+		return fmt.Errorf("duplicate key value violates unique constraint %q", dsi.info.Name)
+	}
+	return nil
+}
+
+func extractIndexVals(row storage.Row, columnIdxs []int) []storage.Value {
+	vals := make([]storage.Value, len(columnIdxs))
+	for i, idx := range columnIdxs {
+		vals[i] = row[idx]
+	}
+	return vals
+}
+
+func (dsi *DiskSecondaryIndex) AddRow(key int64, row storage.Row) {
+	compositeKey := encodeCompositeKey(row, dsi.info.ColumnIdxs, key)
+	dsi.tree.Insert(compositeKey)
+}
+
+func (dsi *DiskSecondaryIndex) RemoveRow(key int64, row storage.Row) {
+	compositeKey := encodeCompositeKey(row, dsi.info.ColumnIdxs, key)
+	dsi.tree.Delete(compositeKey)
+}
+
 type diskTable struct {
 	mu        sync.RWMutex
 	info      *storage.TableInfo
@@ -60,13 +317,13 @@ type diskTable struct {
 	pool      *pager.BufferPool
 	btree     *DiskBTree
 	nextRowID int64
-	indexes   map[string]*memory.SecondaryIndex
+	indexes   map[string]*DiskSecondaryIndex
 	indexInfo []*storage.IndexInfo
 }
 
 // DiskStorage is a disk-based storage engine.
 // Each table is a separate .db file with a B+Tree.
-// Secondary indexes are kept in memory and rebuilt on startup.
+// Secondary indexes are persisted as B+Trees in the same file.
 type DiskStorage struct {
 	mu         sync.RWMutex
 	dataDir    string
@@ -99,39 +356,121 @@ func writeHeader(tbl *diskTable) error {
 		return err
 	}
 	copy(data[hdrMagicOff:hdrMagicOff+6], dbMagic)
-	data[hdrVersionOff] = dbVersion
+	data[hdrVersionOff] = dbVersionV11
 	binary.BigEndian.PutUint32(data[hdrPageSizeOff:hdrPageSizeOff+4], pager.PageSize)
 	binary.BigEndian.PutUint32(data[hdrRootOff:hdrRootOff+4], tbl.btree.RootPageID())
 	binary.BigEndian.PutUint32(data[hdrRowCountOff:hdrRowCountOff+4], uint32(tbl.btree.Len()))
 	binary.BigEndian.PutUint64(data[hdrNextRowOff:hdrNextRowOff+8], uint64(tbl.nextRowID))
 	binary.BigEndian.PutUint32(data[hdrFreeHeadOff:hdrFreeHeadOff+4], tbl.pager.FreeHead())
 
-	// Schema
+	// Schema (EncodeMeta)
 	schema := file.EncodeMeta(tbl.info, tbl.indexInfo)
-	if len(schema) > pager.PageSize-hdrSchemaOff {
-		tbl.pool.UnpinPage(0, false)
-		return fmt.Errorf("schema too large: %d bytes", len(schema))
+
+	// Append secondary index BTree metadata
+	var secMeta []byte
+	var numSecBuf [2]byte
+	binary.BigEndian.PutUint16(numSecBuf[:], uint16(len(tbl.indexInfo)))
+	secMeta = append(secMeta, numSecBuf[:]...)
+
+	for _, idxInfo := range tbl.indexInfo {
+		lowerName := strings.ToLower(idxInfo.Name)
+		dsi, ok := tbl.indexes[lowerName]
+
+		file.PutString(&secMeta, idxInfo.Name)
+
+		var rootBuf [4]byte
+		var countBuf [4]byte
+		if ok && dsi.tree != nil {
+			binary.BigEndian.PutUint32(rootBuf[:], dsi.tree.RootPageID())
+			binary.BigEndian.PutUint32(countBuf[:], uint32(dsi.tree.Len()))
+		} else {
+			binary.BigEndian.PutUint32(rootBuf[:], uint32(pager.InvalidPageID))
+			binary.BigEndian.PutUint32(countBuf[:], 0)
+		}
+		secMeta = append(secMeta, rootBuf[:]...)
+		secMeta = append(secMeta, countBuf[:]...)
 	}
-	binary.BigEndian.PutUint16(data[hdrSchemaLenOff:hdrSchemaLenOff+2], uint16(len(schema)))
-	copy(data[hdrSchemaOff:], schema)
+
+	fullSchema := append(schema, secMeta...)
+	if len(fullSchema) > pager.PageSize-hdrSchemaOff {
+		tbl.pool.UnpinPage(0, false)
+		return fmt.Errorf("schema too large: %d bytes", len(fullSchema))
+	}
+	// Clear rest of page after header to avoid stale data
+	for i := hdrSchemaOff; i < pager.PageSize; i++ {
+		data[i] = 0
+	}
+	binary.BigEndian.PutUint16(data[hdrSchemaLenOff:hdrSchemaLenOff+2], uint16(len(fullSchema)))
+	copy(data[hdrSchemaOff:], fullSchema)
 
 	tbl.pool.UnpinPage(0, true)
 	return nil
 }
 
-func readHeader(data []byte) (rootPageID pager.PageID, rowCount uint32, nextRowID int64, freeHead pager.PageID, schema []byte, err error) {
+// secIndexMeta holds secondary index BTree metadata read from header.
+type secIndexMeta struct {
+	indexName  string
+	rootPageID pager.PageID
+	entryCount int
+}
+
+func readHeader(data []byte) (version byte, rootPageID pager.PageID, rowCount uint32, nextRowID int64, freeHead pager.PageID, schema []byte, secMetas []secIndexMeta, err error) {
 	if string(data[hdrMagicOff:hdrMagicOff+6]) != dbMagic {
-		return 0, 0, 0, 0, nil, fmt.Errorf("invalid magic")
+		return 0, 0, 0, 0, 0, nil, nil, fmt.Errorf("invalid magic")
 	}
-	if data[hdrVersionOff] != dbVersion {
-		return 0, 0, 0, 0, nil, fmt.Errorf("unsupported version: 0x%02x", data[hdrVersionOff])
+	version = data[hdrVersionOff]
+	if version != dbVersionV11 && version != dbVersionV10 {
+		return 0, 0, 0, 0, 0, nil, nil, fmt.Errorf("unsupported version: 0x%02x", version)
 	}
 	rootPageID = binary.BigEndian.Uint32(data[hdrRootOff : hdrRootOff+4])
 	rowCount = binary.BigEndian.Uint32(data[hdrRowCountOff : hdrRowCountOff+4])
 	nextRowID = int64(binary.BigEndian.Uint64(data[hdrNextRowOff : hdrNextRowOff+8]))
 	freeHead = binary.BigEndian.Uint32(data[hdrFreeHeadOff : hdrFreeHeadOff+4])
 	schemaLen := binary.BigEndian.Uint16(data[hdrSchemaLenOff : hdrSchemaLenOff+2])
-	schema = data[hdrSchemaOff : hdrSchemaOff+int(schemaLen)]
+	fullSchema := data[hdrSchemaOff : hdrSchemaOff+int(schemaLen)]
+
+	// Decode base schema to find where it ends
+	schemaCopy := make([]byte, len(fullSchema))
+	copy(schemaCopy, fullSchema)
+	info, indexes, decErr := file.DecodeMeta(schemaCopy)
+	if decErr != nil {
+		// Return raw schema for caller to handle
+		schema = schemaCopy
+		return
+	}
+
+	// Re-encode to find boundary
+	baseSchema := file.EncodeMeta(info, indexes)
+	schema = schemaCopy[:len(baseSchema)]
+
+	if version == dbVersionV11 && len(schemaCopy) > len(baseSchema) {
+		secData := schemaCopy[len(baseSchema):]
+		pos := 0
+		if pos+2 <= len(secData) {
+			numSec := int(binary.BigEndian.Uint16(secData[pos : pos+2]))
+			pos += 2
+			for i := 0; i < numSec; i++ {
+				name, newPos, nameErr := file.GetString(secData, pos)
+				if nameErr != nil {
+					break
+				}
+				pos = newPos
+				if pos+8 > len(secData) {
+					break
+				}
+				rootPID := binary.BigEndian.Uint32(secData[pos : pos+4])
+				pos += 4
+				count := int(binary.BigEndian.Uint32(secData[pos : pos+4]))
+				pos += 4
+				secMetas = append(secMetas, secIndexMeta{
+					indexName:  name,
+					rootPageID: rootPID,
+					entryCount: count,
+				})
+			}
+		}
+	}
+
 	return
 }
 
@@ -170,7 +509,7 @@ func (ds *DiskStorage) CreateTable(info *storage.TableInfo) {
 		pool:      pool,
 		btree:     bt,
 		nextRowID: 1,
-		indexes:   make(map[string]*memory.SecondaryIndex),
+		indexes:   make(map[string]*DiskSecondaryIndex),
 	}
 
 	if err := writeHeader(tbl); err != nil {
@@ -241,9 +580,16 @@ func (ds *DiskStorage) TruncateTable(name string) {
 	tbl.btree = bt
 	tbl.nextRowID = 1
 
-	// Clear index data but keep structure
-	for _, idx := range tbl.indexes {
-		idx.SetTree(btree.New[storage.KeyEncoding](32))
+	// Recreate empty secondary index BTrees
+	for lowerName, idx := range tbl.indexes {
+		newTree, err := NewDiskSecondaryBTree(pool)
+		if err != nil {
+			continue
+		}
+		tbl.indexes[lowerName] = &DiskSecondaryIndex{
+			info: idx.info,
+			tree: newTree,
+		}
 	}
 
 	writeHeader(tbl)
@@ -447,8 +793,8 @@ func (ds *DiskStorage) DropColumn(tableName string, colIdx int) error {
 	}
 	ds.mu.Unlock()
 
-	// Adjust column indexes for remaining indexes
-	var toRebuild []*memory.SecondaryIndex
+	// Adjust column indexes for remaining indexes and rebuild
+	var toRebuild []*DiskSecondaryIndex
 	for _, idx := range tbl.indexes {
 		info := idx.GetInfo()
 		needsRebuild := false
@@ -483,7 +829,11 @@ func (ds *DiskStorage) DropColumn(tableName string, colIdx int) error {
 
 	// Rebuild affected indexes
 	for _, idx := range toRebuild {
-		idx.SetTree(btree.New[storage.KeyEncoding](32))
+		newTree, err := NewDiskSecondaryBTree(tbl.pool)
+		if err != nil {
+			continue
+		}
+		idx.tree = newTree
 		tbl.btree.ForEach(func(key int64, row storage.Row) bool {
 			idx.AddRow(key, row)
 			return true
@@ -506,10 +856,15 @@ func (ds *DiskStorage) CreateIndex(info *storage.IndexInfo) error {
 		return fmt.Errorf("table %q does not exist", info.TableName)
 	}
 
-	idx := &memory.SecondaryIndex{
-		Info: info,
+	tree, err := NewDiskSecondaryBTree(tbl.pool)
+	if err != nil {
+		return fmt.Errorf("create secondary btree: %w", err)
 	}
-	idx.SetTree(btree.New[storage.KeyEncoding](32))
+
+	idx := &DiskSecondaryIndex{
+		info: info,
+		tree: tree,
+	}
 
 	// Build from existing data
 	var buildErr error
@@ -919,7 +1274,7 @@ func (ds *DiskStorage) loadTable(tableName string) error {
 		return err
 	}
 
-	rootPageID, _, nextRowID, freeHead, schemaBytes, err := readHeader(data)
+	version, rootPageID, _, nextRowID, freeHead, schemaBytes, secMetas, err := readHeader(data)
 	if err != nil {
 		pool.UnpinPage(0, false)
 		pool.Close()
@@ -955,24 +1310,65 @@ func (ds *DiskStorage) loadTable(tableName string) error {
 		pool:      pool,
 		btree:     bt,
 		nextRowID: nextRowID,
-		indexes:   make(map[string]*memory.SecondaryIndex),
+		indexes:   make(map[string]*DiskSecondaryIndex),
 		indexInfo: indexes,
 	}
 
-	// Rebuild secondary indexes from primary tree
-	for _, idxInfo := range indexes {
-		idx := &memory.SecondaryIndex{
-			Info: idxInfo,
+	if version == dbVersionV11 && len(secMetas) > 0 {
+		// Load secondary indexes from disk (no rebuild needed)
+		secMetaMap := make(map[string]secIndexMeta)
+		for _, sm := range secMetas {
+			secMetaMap[strings.ToLower(sm.indexName)] = sm
 		}
-		idx.SetTree(btree.New[storage.KeyEncoding](32))
 
-		tbl.btree.ForEach(func(key int64, row storage.Row) bool {
-			idx.AddRow(key, row)
-			return true
-		})
+		for _, idxInfo := range indexes {
+			lowerName := strings.ToLower(idxInfo.Name)
+			sm, ok := secMetaMap[lowerName]
+			if ok && sm.rootPageID != pager.InvalidPageID {
+				tree := LoadDiskSecondaryBTree(pool, sm.rootPageID, sm.entryCount)
+				tbl.indexes[lowerName] = &DiskSecondaryIndex{
+					info: idxInfo,
+					tree: tree,
+				}
+			} else {
+				// No persisted tree, rebuild
+				tree, treeErr := NewDiskSecondaryBTree(pool)
+				if treeErr != nil {
+					pool.Close()
+					return fmt.Errorf("create sec btree: %w", treeErr)
+				}
+				idx := &DiskSecondaryIndex{info: idxInfo, tree: tree}
+				tbl.btree.ForEach(func(key int64, row storage.Row) bool {
+					idx.AddRow(key, row)
+					return true
+				})
+				tbl.indexes[lowerName] = idx
+			}
+			ds.indexTable[lowerName] = strings.ToLower(tableName)
+		}
+	} else {
+		// Legacy v0x10 format: rebuild secondary indexes from primary tree
+		for _, idxInfo := range indexes {
+			tree, treeErr := NewDiskSecondaryBTree(pool)
+			if treeErr != nil {
+				pool.Close()
+				return fmt.Errorf("create sec btree: %w", treeErr)
+			}
+			idx := &DiskSecondaryIndex{info: idxInfo, tree: tree}
+			tbl.btree.ForEach(func(key int64, row storage.Row) bool {
+				idx.AddRow(key, row)
+				return true
+			})
 
-		tbl.indexes[strings.ToLower(idxInfo.Name)] = idx
-		ds.indexTable[strings.ToLower(idxInfo.Name)] = strings.ToLower(tableName)
+			tbl.indexes[strings.ToLower(idxInfo.Name)] = idx
+			ds.indexTable[strings.ToLower(idxInfo.Name)] = strings.ToLower(tableName)
+		}
+
+		// Upgrade to v0x11 by writing new header
+		if len(indexes) > 0 {
+			writeHeader(tbl)
+			pool.FlushAll()
+		}
 	}
 
 	ds.tables[strings.ToLower(tableName)] = tbl

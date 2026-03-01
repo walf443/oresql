@@ -17,6 +17,15 @@ const (
 	entryKeySize         = 8                 // int64 key
 	entryValLenSize      = 2                 // uint16 value length
 	childSize            = 4                 // uint32 page ID
+
+	// Leaf page header field offsets
+	leafOffEntryCount = 1  // uint16 at [1:3]
+	leafOffNextLeaf   = 3  // uint32 at [3:7]
+	leafOffPrevLeaf   = 7  // uint32 at [7:11]
+	leafOffHighKey    = 11 // int64  at [11:19]
+
+	// Internal page header field offset
+	internalOffEntryCount = 1 // uint16 at [1:3]
 )
 
 // leafEntry is a key-value pair stored in a leaf page.
@@ -59,10 +68,10 @@ func NewDiskBTree(pool *pager.BufferPool, numCols int) (*DiskBTree, error) {
 	}
 	// Initialize as empty leaf
 	data[0] = flagLeaf
-	binary.BigEndian.PutUint16(data[1:3], 0)                            // entryCount
-	binary.BigEndian.PutUint32(data[3:7], uint32(pager.InvalidPageID))  // nextLeaf
-	binary.BigEndian.PutUint32(data[7:11], uint32(pager.InvalidPageID)) // prevLeaf
-	binary.BigEndian.PutUint64(data[11:19], uint64(math.MaxInt64))      // highKey
+	binary.BigEndian.PutUint16(data[leafOffEntryCount:leafOffEntryCount+2], 0)
+	binary.BigEndian.PutUint32(data[leafOffNextLeaf:leafOffNextLeaf+4], uint32(pager.InvalidPageID))
+	binary.BigEndian.PutUint32(data[leafOffPrevLeaf:leafOffPrevLeaf+4], uint32(pager.InvalidPageID))
+	binary.BigEndian.PutUint64(data[leafOffHighKey:leafOffHighKey+8], uint64(math.MaxInt64))
 	pool.UnpinPage(id, true)
 
 	return &DiskBTree{
@@ -110,10 +119,10 @@ const maxInternalKeys = (pager.PageSize - internalHdrSize - childSize) / (entryK
 
 func decodeLeafPage(data []byte) leafPage {
 	lp := leafPage{
-		entryCount: binary.BigEndian.Uint16(data[1:3]),
-		nextLeaf:   binary.BigEndian.Uint32(data[3:7]),
-		prevLeaf:   binary.BigEndian.Uint32(data[7:11]),
-		highKey:    int64(binary.BigEndian.Uint64(data[11:19])),
+		entryCount: binary.BigEndian.Uint16(data[leafOffEntryCount : leafOffEntryCount+2]),
+		nextLeaf:   binary.BigEndian.Uint32(data[leafOffNextLeaf : leafOffNextLeaf+4]),
+		prevLeaf:   binary.BigEndian.Uint32(data[leafOffPrevLeaf : leafOffPrevLeaf+4]),
+		highKey:    int64(binary.BigEndian.Uint64(data[leafOffHighKey : leafOffHighKey+8])),
 	}
 	pos := leafHdrSize
 	lp.entries = make([]leafEntry, lp.entryCount)
@@ -133,9 +142,9 @@ func decodeLeafPage(data []byte) leafPage {
 // decodeLeafHeader reads only the leaf page header (19 bytes) without
 // decoding entries. Used to check highKey for skip decisions.
 func decodeLeafHeader(data []byte) (entryCount uint16, nextLeaf pager.PageID, highKey int64) {
-	entryCount = binary.BigEndian.Uint16(data[1:3])
-	nextLeaf = binary.BigEndian.Uint32(data[3:7])
-	highKey = int64(binary.BigEndian.Uint64(data[11:19]))
+	entryCount = binary.BigEndian.Uint16(data[leafOffEntryCount : leafOffEntryCount+2])
+	nextLeaf = binary.BigEndian.Uint32(data[leafOffNextLeaf : leafOffNextLeaf+4])
+	highKey = int64(binary.BigEndian.Uint64(data[leafOffHighKey : leafOffHighKey+8]))
 	return
 }
 
@@ -144,10 +153,10 @@ func encodeLeafPage(lp leafPage, data []byte) {
 		data[i] = 0
 	}
 	data[0] = flagLeaf
-	binary.BigEndian.PutUint16(data[1:3], lp.entryCount)
-	binary.BigEndian.PutUint32(data[3:7], lp.nextLeaf)
-	binary.BigEndian.PutUint32(data[7:11], lp.prevLeaf)
-	binary.BigEndian.PutUint64(data[11:19], uint64(lp.highKey))
+	binary.BigEndian.PutUint16(data[leafOffEntryCount:leafOffEntryCount+2], lp.entryCount)
+	binary.BigEndian.PutUint32(data[leafOffNextLeaf:leafOffNextLeaf+4], lp.nextLeaf)
+	binary.BigEndian.PutUint32(data[leafOffPrevLeaf:leafOffPrevLeaf+4], lp.prevLeaf)
+	binary.BigEndian.PutUint64(data[leafOffHighKey:leafOffHighKey+8], uint64(lp.highKey))
 	pos := leafHdrSize
 	for _, e := range lp.entries {
 		binary.BigEndian.PutUint64(data[pos:pos+entryKeySize], uint64(e.key))
@@ -161,7 +170,7 @@ func encodeLeafPage(lp leafPage, data []byte) {
 
 func decodeInternalPage(data []byte) internalPage {
 	ip := internalPage{
-		entryCount: binary.BigEndian.Uint16(data[1:3]),
+		entryCount: binary.BigEndian.Uint16(data[internalOffEntryCount : internalOffEntryCount+2]),
 	}
 	pos := internalHdrSize
 	ip.keys = make([]int64, ip.entryCount)
@@ -184,7 +193,7 @@ func encodeInternalPage(ip internalPage, data []byte) {
 		data[i] = 0
 	}
 	data[0] = 0 // not leaf
-	binary.BigEndian.PutUint16(data[1:3], ip.entryCount)
+	binary.BigEndian.PutUint16(data[internalOffEntryCount:internalOffEntryCount+2], ip.entryCount)
 	pos := internalHdrSize
 	binary.BigEndian.PutUint32(data[pos:pos+childSize], ip.children[0])
 	pos += childSize
@@ -253,7 +262,7 @@ func (t *DiskBTree) Get(key int64) (storage.Row, bool) {
 		return nil, false
 	}
 
-	entryCount := int(binary.BigEndian.Uint16(data[1:3]))
+	entryCount := int(binary.BigEndian.Uint16(data[leafOffEntryCount : leafOffEntryCount+2]))
 	pos := leafHdrSize
 	for i := 0; i < entryCount; i++ {
 		entryKey := int64(binary.BigEndian.Uint64(data[pos : pos+entryKeySize]))
@@ -1027,24 +1036,36 @@ func (t *DiskBTree) ForEach(fn func(key int64, row storage.Row) bool) {
 		pageID = ip.children[0]
 	}
 
-	// Traverse leaf chain
+	// Traverse leaf chain with inline page scanning
 	for pageID != pager.InvalidPageID {
 		data, err := t.pool.FetchPage(pageID)
 		if err != nil {
 			return
 		}
-		lp := decodeLeafPage(data)
-		nextLeaf := lp.nextLeaf
-		t.pool.UnpinPage(pageID, false)
+		entryCount := int(binary.BigEndian.Uint16(data[leafOffEntryCount : leafOffEntryCount+2]))
+		nextLeaf := pager.PageID(binary.BigEndian.Uint32(data[leafOffNextLeaf : leafOffNextLeaf+4]))
 
-		for _, e := range lp.entries {
-			row, err := storage.DecodeRowN(e.val, t.numCols)
+		pos := leafHdrSize
+		stopped := false
+		for i := 0; i < entryCount; i++ {
+			entryKey := int64(binary.BigEndian.Uint64(data[pos : pos+entryKeySize]))
+			pos += entryKeySize
+			valLen := int(binary.BigEndian.Uint16(data[pos : pos+entryValLenSize]))
+			pos += entryValLenSize
+			row, err := storage.DecodeRowN(data[pos:pos+valLen], t.numCols)
 			if err != nil {
+				t.pool.UnpinPage(pageID, false)
 				return
 			}
-			if !fn(e.key, row) {
-				return
+			if !fn(entryKey, row) {
+				stopped = true
+				break
 			}
+			pos += valLen
+		}
+		t.pool.UnpinPage(pageID, false)
+		if stopped {
+			return
 		}
 		pageID = nextLeaf
 	}
@@ -1081,20 +1102,41 @@ func (t *DiskBTree) ForEachReverse(fn func(key int64, row storage.Row) bool) {
 		if err != nil {
 			return
 		}
-		lp := decodeLeafPage(data)
-		prev := lp.prevLeaf
-		t.pool.UnpinPage(pageID, false)
+		entryCount := int(binary.BigEndian.Uint16(data[leafOffEntryCount : leafOffEntryCount+2]))
+		prevLeaf := pager.PageID(binary.BigEndian.Uint32(data[leafOffPrevLeaf : leafOffPrevLeaf+4]))
 
-		for j := len(lp.entries) - 1; j >= 0; j-- {
-			row, err := storage.DecodeRowN(lp.entries[j].val, t.numCols)
+		// Collect entry offsets in forward pass (variable-length entries)
+		offsets := make([]int, entryCount)
+		pos := leafHdrSize
+		for i := 0; i < entryCount; i++ {
+			offsets[i] = pos
+			pos += entryKeySize
+			valLen := int(binary.BigEndian.Uint16(data[pos : pos+entryValLenSize]))
+			pos += entryValLenSize + valLen
+		}
+
+		// Scan entries in reverse order
+		stopped := false
+		for j := entryCount - 1; j >= 0; j-- {
+			off := offsets[j]
+			entryKey := int64(binary.BigEndian.Uint64(data[off : off+entryKeySize]))
+			valLen := int(binary.BigEndian.Uint16(data[off+entryKeySize : off+entryKeySize+entryValLenSize]))
+			valOff := off + entryKeySize + entryValLenSize
+			row, err := storage.DecodeRowN(data[valOff:valOff+valLen], t.numCols)
 			if err != nil {
+				t.pool.UnpinPage(pageID, false)
 				return
 			}
-			if !fn(lp.entries[j].key, row) {
-				return
+			if !fn(entryKey, row) {
+				stopped = true
+				break
 			}
 		}
-		pageID = prev
+		t.pool.UnpinPage(pageID, false)
+		if stopped {
+			return
+		}
+		pageID = prevLeaf
 	}
 }
 
@@ -1131,40 +1173,58 @@ func (t *DiskBTree) ForEachRange(from *int64, fromInclusive bool, to *int64, toI
 		if err != nil {
 			return
 		}
-		lp := decodeLeafPage(data)
-		nextLeaf := lp.nextLeaf
-		t.pool.UnpinPage(pageID, false)
+		entryCount := int(binary.BigEndian.Uint16(data[leafOffEntryCount : leafOffEntryCount+2]))
+		nextLeaf := pager.PageID(binary.BigEndian.Uint32(data[leafOffNextLeaf : leafOffNextLeaf+4]))
 
-		for _, e := range lp.entries {
+		pos := leafHdrSize
+		stopped := false
+		for i := 0; i < entryCount; i++ {
+			entryKey := int64(binary.BigEndian.Uint64(data[pos : pos+entryKeySize]))
+			pos += entryKeySize
+			valLen := int(binary.BigEndian.Uint16(data[pos : pos+entryValLenSize]))
+			pos += entryValLenSize
+			// from boundary check — skip entries before range
 			if from != nil {
 				if fromInclusive {
-					if e.key < *from {
+					if entryKey < *from {
+						pos += valLen
 						continue
 					}
 				} else {
-					if e.key <= *from {
+					if entryKey <= *from {
+						pos += valLen
 						continue
 					}
 				}
 			}
+			// to boundary check — stop when past range
 			if to != nil {
 				if toInclusive {
-					if e.key > *to {
-						return
+					if entryKey > *to {
+						stopped = true
+						break
 					}
 				} else {
-					if e.key >= *to {
-						return
+					if entryKey >= *to {
+						stopped = true
+						break
 					}
 				}
 			}
-			row, err := storage.DecodeRowN(e.val, t.numCols)
+			row, err := storage.DecodeRowN(data[pos:pos+valLen], t.numCols)
 			if err != nil {
+				t.pool.UnpinPage(pageID, false)
 				return
 			}
-			if !fn(e.key, row) {
-				return
+			if !fn(entryKey, row) {
+				stopped = true
+				break
 			}
+			pos += valLen
+		}
+		t.pool.UnpinPage(pageID, false)
+		if stopped {
+			return
 		}
 		pageID = nextLeaf
 	}

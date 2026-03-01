@@ -455,8 +455,9 @@ func (s *ShowTablesStmt) statementNode()   {}
 
 // CTEDef represents a single CTE definition: name AS (query).
 type CTEDef struct {
-	Name  string
-	Query Statement // *SelectStmt or *SetOpStmt
+	Name      string
+	Query     Statement // *SelectStmt or *SetOpStmt
+	Recursive bool      // true when WITH RECURSIVE is used
 }
 
 // WithStmt represents WITH name AS (...) [, name AS (...)] SELECT ...

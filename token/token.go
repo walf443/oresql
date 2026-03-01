@@ -132,6 +132,7 @@ const (
 	TABLES    // TABLES keyword
 	USING     // USING keyword
 	WITH      // WITH keyword
+	RECURSIVE // RECURSIVE keyword
 )
 
 var tokenNames = map[TokenType]string{
@@ -251,6 +252,7 @@ var tokenNames = map[TokenType]string{
 	TABLES:       "TABLES",
 	USING:        "USING",
 	WITH:         "WITH",
+	RECURSIVE:    "RECURSIVE",
 }
 
 func (t TokenType) String() string {
@@ -360,6 +362,7 @@ var keywords = map[string]TokenType{
 	"TABLES":     TABLES,
 	"USING":      USING,
 	"WITH":       WITH,
+	"RECURSIVE":  RECURSIVE,
 }
 
 // IsKeyword returns true if the given token type is a SQL keyword.

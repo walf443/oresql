@@ -336,3 +336,160 @@ func TestCTEError(t *testing.T) {
 	_, err = e.ExecuteSQL("WITH t AS SELECT 1 SELECT * FROM t")
 	assert.Error(t, err, "expected error for missing parentheses")
 }
+
+func TestRecursiveCTESequence(t *testing.T) {
+	e := NewExecutor(NewDatabase("test"))
+
+	// Generate sequence 1..5
+	result, err := e.ExecuteSQL(`
+		WITH RECURSIVE seq AS (
+			SELECT 1 AS n
+			UNION ALL
+			SELECT n + 1 FROM seq WHERE n < 5
+		)
+		SELECT * FROM seq
+	`)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"n"}, result.Columns)
+	require.Len(t, result.Rows, 5)
+	for i, row := range result.Rows {
+		assert.Equal(t, int64(i+1), row[0], "row[%d]", i)
+	}
+}
+
+func TestRecursiveCTEHierarchy(t *testing.T) {
+	e := NewExecutor(NewDatabase("test"))
+
+	setup := []string{
+		"CREATE TABLE employees (id INT, name TEXT, manager_id INT)",
+		"INSERT INTO employees VALUES (1, 'CEO', 0)",
+		"INSERT INTO employees VALUES (2, 'VP', 1)",
+		"INSERT INTO employees VALUES (3, 'Director', 2)",
+		"INSERT INTO employees VALUES (4, 'Manager', 3)",
+	}
+	for _, sql := range setup {
+		_, err := e.ExecuteSQL(sql)
+		require.NoError(t, err, "setup: %s", sql)
+	}
+
+	// Traverse hierarchy from CEO down
+	result, err := e.ExecuteSQL(`
+		WITH RECURSIVE org AS (
+			SELECT id, name, manager_id FROM employees WHERE id = 1
+			UNION ALL
+			SELECT e.id, e.name, e.manager_id FROM employees AS e JOIN org ON e.manager_id = org.id
+		)
+		SELECT * FROM org ORDER BY id
+	`)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"id", "name", "manager_id"}, result.Columns)
+	require.Len(t, result.Rows, 4)
+	assert.Equal(t, int64(1), result.Rows[0][0])
+	assert.Equal(t, "CEO", result.Rows[0][1])
+	assert.Equal(t, int64(4), result.Rows[3][0])
+	assert.Equal(t, "Manager", result.Rows[3][1])
+}
+
+func TestRecursiveCTEUnionDistinct(t *testing.T) {
+	e := NewExecutor(NewDatabase("test"))
+
+	// UNION (without ALL) should deduplicate.
+	// Anchor: {1}
+	// Iter 1: n=1, n<5 → {2}. New: {2}
+	// Iter 2: n=2, n<5 → {3}. New: {3}
+	// Iter 3: n=3, n<5 → {4}. New: {4}
+	// Iter 4: n=4, n<5 → {5}. New: {5}
+	// Iter 5: n=5, n<5 is false → empty. Stop.
+	// UNION ALL would produce the same here; test that UNION path works.
+	result, err := e.ExecuteSQL(`
+		WITH RECURSIVE seq AS (
+			SELECT 1 AS n
+			UNION
+			SELECT n + 1 FROM seq WHERE n < 5
+		)
+		SELECT * FROM seq ORDER BY n
+	`)
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 5)
+	for i, row := range result.Rows {
+		assert.Equal(t, int64(i+1), row[0], "row[%d]", i)
+	}
+
+	// Verify UNION deduplication actually works: anchor produces duplicate values
+	// that the recursive term also generates.
+	result2, err := e.ExecuteSQL(`
+		WITH RECURSIVE dup AS (
+			SELECT 1 AS n
+			UNION
+			SELECT CASE WHEN n < 3 THEN n + 1 ELSE 1 END FROM dup WHERE n < 4
+		)
+		SELECT * FROM dup ORDER BY n
+	`)
+	require.NoError(t, err)
+	// Anchor: {1}, Iter1: {2}, Iter2: {3}, Iter3: {1} (deduped) → stop
+	require.Len(t, result2.Rows, 3)
+	assert.Equal(t, int64(1), result2.Rows[0][0])
+	assert.Equal(t, int64(2), result2.Rows[1][0])
+	assert.Equal(t, int64(3), result2.Rows[2][0])
+}
+
+func TestRecursiveCTEMaxDepthError(t *testing.T) {
+	e := NewExecutor(NewDatabase("test"))
+
+	// Infinite recursion: no termination condition
+	_, err := e.ExecuteSQL(`
+		WITH RECURSIVE inf AS (
+			SELECT 1 AS n
+			UNION ALL
+			SELECT n + 1 FROM inf
+		)
+		SELECT * FROM inf
+	`)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeded maximum depth")
+}
+
+func TestRecursiveCTENonUnionError(t *testing.T) {
+	e := NewExecutor(NewDatabase("test"))
+
+	// Recursive CTE without UNION should error
+	_, err := e.ExecuteSQL(`
+		WITH RECURSIVE t AS (
+			SELECT 1 AS n
+		)
+		SELECT * FROM t
+	`)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must use UNION")
+}
+
+func TestRecursiveCTEWithOuterJoin(t *testing.T) {
+	e := NewExecutor(NewDatabase("test"))
+
+	setup := []string{
+		"CREATE TABLE items (id INT, label TEXT)",
+		"INSERT INTO items VALUES (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e')",
+	}
+	for _, sql := range setup {
+		_, err := e.ExecuteSQL(sql)
+		require.NoError(t, err, "setup: %s", sql)
+	}
+
+	// Recursive CTE joined with a real table
+	result, err := e.ExecuteSQL(`
+		WITH RECURSIVE seq AS (
+			SELECT 1 AS n
+			UNION ALL
+			SELECT n + 1 FROM seq WHERE n < 3
+		)
+		SELECT seq.n, items.label FROM seq JOIN items ON seq.n = items.id ORDER BY seq.n
+	`)
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 3)
+	assert.Equal(t, int64(1), result.Rows[0][0])
+	assert.Equal(t, "a", result.Rows[0][1])
+	assert.Equal(t, int64(2), result.Rows[1][0])
+	assert.Equal(t, "b", result.Rows[1][1])
+	assert.Equal(t, int64(3), result.Rows[2][0])
+	assert.Equal(t, "c", result.Rows[2][1])
+}

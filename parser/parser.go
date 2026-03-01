@@ -2023,6 +2023,13 @@ func (p *Parser) parseAlterTable() (ast.Statement, error) {
 func (p *Parser) parseWith() (ast.Statement, error) {
 	p.nextToken() // consume WITH
 
+	// Check for RECURSIVE keyword
+	recursive := false
+	if p.curToken.Type == token.RECURSIVE {
+		recursive = true
+		p.nextToken() // consume RECURSIVE
+	}
+
 	var ctes []ast.CTEDef
 	for {
 		// CTE name
@@ -2052,7 +2059,7 @@ func (p *Parser) parseWith() (ast.Statement, error) {
 			return nil, fmt.Errorf("expected ')' after CTE %q query, got %s (%q)", cteName, p.curToken.Type, p.curToken.Literal)
 		}
 
-		ctes = append(ctes, ast.CTEDef{Name: cteName, Query: cteQuery})
+		ctes = append(ctes, ast.CTEDef{Name: cteName, Query: cteQuery, Recursive: recursive})
 
 		// Check for comma (more CTEs) or break
 		if p.curToken.Type != token.COMMA {

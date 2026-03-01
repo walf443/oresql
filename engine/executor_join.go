@@ -15,19 +15,22 @@ type tableRange struct {
 
 // JoinContext tracks column information across multiple joined tables.
 type JoinContext struct {
-	MergedInfo *TableInfo            // virtual TableInfo with all columns concatenated
-	tableMap   map[string]tableRange // table name/alias → column offset
-	tableNames []string              // ordered table names for ambiguity detection
+	MergedInfo   *TableInfo            // virtual TableInfo with all columns concatenated
+	tableMap     map[string]tableRange // table name/alias → column offset
+	tableNames   []string              // ordered table names for ambiguity detection
+	usingExclude map[int]bool          // MergedInfo column indices excluded from SELECT *
 }
 
 // newJoinContext creates a JoinContext from a list of (TableInfo, alias) pairs.
+// usingCols maps table effective name (lowercase) to USING column names to exclude from SELECT *.
 func newJoinContext(tables []struct {
 	info  *TableInfo
 	alias string
-}) *JoinContext {
+}, usingCols map[string][]string) *JoinContext {
 	jc := &JoinContext{
-		MergedInfo: &TableInfo{Name: "joined"},
-		tableMap:   make(map[string]tableRange),
+		MergedInfo:   &TableInfo{Name: "joined"},
+		tableMap:     make(map[string]tableRange),
+		usingExclude: make(map[int]bool),
 	}
 	offset := 0
 	for _, t := range tables {
@@ -39,18 +42,51 @@ func newJoinContext(tables []struct {
 			jc.tableMap[strings.ToLower(t.alias)] = tr
 		}
 		jc.tableNames = append(jc.tableNames, strings.ToLower(t.info.Name))
+
+		// Build USING exclude set for this table
+		effName := strings.ToLower(t.info.Name)
+		if t.alias != "" {
+			effName = strings.ToLower(t.alias)
+		}
+		var excludeSet map[string]bool
+		if cols, ok := usingCols[effName]; ok {
+			excludeSet = make(map[string]bool, len(cols))
+			for _, c := range cols {
+				excludeSet[strings.ToLower(c)] = true
+			}
+		}
+
 		for _, col := range t.info.Columns {
+			mergedIdx := offset + col.Index
 			mergedCol := ColumnInfo{
 				Name:     col.Name,
 				DataType: col.DataType,
-				Index:    offset + col.Index,
+				Index:    mergedIdx,
 				NotNull:  col.NotNull,
 			}
 			jc.MergedInfo.Columns = append(jc.MergedInfo.Columns, mergedCol)
+			if excludeSet != nil && excludeSet[strings.ToLower(col.Name)] {
+				jc.usingExclude[mergedIdx] = true
+			}
 		}
 		offset += len(t.info.Columns)
 	}
 	return jc
+}
+
+// StarColumnList returns columns for SELECT * expansion,
+// excluding USING columns from right tables.
+func (jc *JoinContext) StarColumnList() []ColumnInfo {
+	if len(jc.usingExclude) == 0 {
+		return jc.MergedInfo.Columns
+	}
+	cols := make([]ColumnInfo, 0, len(jc.MergedInfo.Columns)-len(jc.usingExclude))
+	for _, col := range jc.MergedInfo.Columns {
+		if !jc.usingExclude[col.Index] {
+			cols = append(cols, col)
+		}
+	}
+	return cols
 }
 
 // FindColumn resolves a column reference in the join context.

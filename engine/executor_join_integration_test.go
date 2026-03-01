@@ -402,3 +402,71 @@ func TestTableAlias(t *testing.T) {
 	require.Len(t, result.Rows, 1, "expected 1 row")
 	assert.Equal(t, "alice", result.Rows[0][0])
 }
+
+func TestInnerJoinUsingBasic(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "CREATE TABLE orders (id INT, product TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO orders VALUES (1, 'laptop')")
+	run(t, exec, "INSERT INTO orders VALUES (2, 'phone')")
+
+	result := run(t, exec, "SELECT users.name, orders.product FROM users JOIN orders USING (id)")
+	require.Len(t, result.Rows, 2, "expected 2 rows")
+	assert.Equal(t, "alice", result.Rows[0][0])
+	assert.Equal(t, "laptop", result.Rows[0][1])
+	assert.Equal(t, "bob", result.Rows[1][0])
+	assert.Equal(t, "phone", result.Rows[1][1])
+}
+
+func TestLeftJoinUsingWithNull(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "CREATE TABLE orders (id INT, product TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
+	run(t, exec, "INSERT INTO orders VALUES (1, 'laptop')")
+
+	result := run(t, exec, "SELECT users.name, orders.product FROM users LEFT JOIN orders USING (id) ORDER BY users.id")
+	require.Len(t, result.Rows, 2, "expected 2 rows")
+	assert.Equal(t, "alice", result.Rows[0][0])
+	assert.Equal(t, "laptop", result.Rows[0][1])
+	assert.Equal(t, "bob", result.Rows[1][0])
+	assert.Nil(t, result.Rows[1][1])
+}
+
+func TestJoinUsingMultipleColumns(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t1 (a INT, b INT, val TEXT)")
+	run(t, exec, "CREATE TABLE t2 (a INT, b INT, val TEXT)")
+	run(t, exec, "INSERT INTO t1 VALUES (1, 10, 'x')")
+	run(t, exec, "INSERT INTO t1 VALUES (2, 20, 'y')")
+	run(t, exec, "INSERT INTO t2 VALUES (1, 10, 'p')")
+	run(t, exec, "INSERT INTO t2 VALUES (2, 99, 'q')")
+
+	result := run(t, exec, "SELECT t1.val, t2.val FROM t1 JOIN t2 USING (a, b)")
+	require.Len(t, result.Rows, 1, "expected 1 row")
+	assert.Equal(t, "x", result.Rows[0][0])
+	assert.Equal(t, "p", result.Rows[0][1])
+}
+
+func TestJoinUsingStarDedup(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "CREATE TABLE orders (id INT, product TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	run(t, exec, "INSERT INTO orders VALUES (1, 'laptop')")
+
+	result := run(t, exec, "SELECT * FROM users JOIN orders USING (id)")
+	// Standard SQL: USING columns appear once. Expected: id, name, product (3 cols, not 4)
+	require.Len(t, result.Columns, 3, "expected 3 columns (id should not be duplicated)")
+	require.Len(t, result.Rows, 1, "expected 1 row")
+	// Columns should be: id, name, product
+	assert.Equal(t, "id", result.Columns[0])
+	assert.Equal(t, "name", result.Columns[1])
+	assert.Equal(t, "product", result.Columns[2])
+	assert.Equal(t, int64(1), result.Rows[0][0])
+	assert.Equal(t, "alice", result.Rows[0][1])
+	assert.Equal(t, "laptop", result.Rows[0][2])
+}

@@ -667,7 +667,7 @@ func (e *Executor) executeSelectCorrelated(stmt *ast.SelectStmt, outerEval ExprE
 			info  *TableInfo
 			alias string
 		}{{info: info, alias: stmt.TableAlias}}
-		jc := newJoinContext(tables)
+		jc := newJoinContext(tables, nil)
 		innerEval = newJoinEvaluator(e, jc)
 	} else {
 		innerEval = newTableEvaluator(e, info)

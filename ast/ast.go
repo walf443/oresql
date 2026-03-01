@@ -72,6 +72,7 @@ type JoinClause struct {
 	TableName    string
 	TableAlias   string
 	On           Expr
+	Using        []string // USING column names (nil = ON clause used)
 }
 
 // NamedWindowDef represents a named window definition in a WINDOW clause.

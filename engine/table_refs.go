@@ -77,6 +77,14 @@ func collectLockRefs(stmt ast.Statement) (refs []lockRef, catalogWrite bool) {
 
 	case *ast.SetOpStmt:
 		refs = append(refs, collectLockSetOpRefs(s)...)
+
+	case *ast.WithStmt:
+		for _, cte := range s.CTEs {
+			cteRefs, _ := collectLockRefs(cte.Query)
+			refs = append(refs, cteRefs...)
+		}
+		bodyRefs, _ := collectLockRefs(s.Query)
+		refs = append(refs, bodyRefs...)
 	}
 
 	return refs, catalogWrite

@@ -34,11 +34,18 @@ func WithDatabaseManager(mgr *DatabaseManager) Option {
 	}
 }
 
+// cteEntry holds a materialized CTE (Common Table Expression).
+type cteEntry struct {
+	info *TableInfo
+	rows []Row
+}
+
 // Executor runs SQL statements.
 type Executor struct {
 	db        *Database
 	dbManager *DatabaseManager
 	wal       *WAL
+	cteScope  map[string]*cteEntry
 }
 
 // NewExecutor creates a new Executor for the given Database.
@@ -72,7 +79,8 @@ func (e *Executor) ExecuteSQL(sql string) (*Result, error) {
 		_, isSetOp := stmt.(*ast.SetOpStmt)
 		_, isShowDBs := stmt.(*ast.ShowDatabasesStmt)
 		_, isShowTbls := stmt.(*ast.ShowTablesStmt)
-		if !isSelect && !isSetOp && !isShowDBs && !isShowTbls {
+		_, isWith := stmt.(*ast.WithStmt)
+		if !isSelect && !isSetOp && !isShowDBs && !isShowTbls && !isWith {
 			if err := e.wal.Append(sql); err != nil {
 				return nil, fmt.Errorf("WAL write error: %w", err)
 			}
@@ -215,6 +223,8 @@ func (e *Executor) executeInner(stmt ast.Statement) (*Result, error) {
 		return e.executeShowDatabases(s)
 	case *ast.ShowTablesStmt:
 		return e.executeShowTables(s)
+	case *ast.WithStmt:
+		return e.executeWith(s)
 	default:
 		return nil, fmt.Errorf("unknown statement type: %T", stmt)
 	}

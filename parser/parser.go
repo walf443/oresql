@@ -77,6 +77,8 @@ func (p *Parser) Parse() (ast.Statement, error) {
 		stmt, err = p.parseTruncateTable()
 	case token.ALTER:
 		stmt, err = p.parseAlterTable()
+	case token.WITH:
+		stmt, err = p.parseWith()
 	default:
 		return nil, fmt.Errorf("unexpected token %s (%q)", p.curToken.Type, p.curToken.Literal)
 	}
@@ -2015,4 +2017,55 @@ func (p *Parser) parseAlterTable() (ast.Statement, error) {
 	default:
 		return nil, fmt.Errorf("expected ADD or DROP after ALTER TABLE, got %s (%q)", p.curToken.Type, p.curToken.Literal)
 	}
+}
+
+// parseWith parses WITH name AS (query) [, name AS (query)] ... SELECT ...
+func (p *Parser) parseWith() (ast.Statement, error) {
+	p.nextToken() // consume WITH
+
+	var ctes []ast.CTEDef
+	for {
+		// CTE name
+		if !p.isNameToken() {
+			return nil, fmt.Errorf("expected CTE name, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+		}
+		cteName := p.curToken.Literal
+		p.nextToken()
+
+		// AS
+		if err := p.expectToken(token.AS); err != nil {
+			return nil, fmt.Errorf("expected AS after CTE name %q, got %s (%q)", cteName, p.curToken.Type, p.curToken.Literal)
+		}
+
+		// ( query )
+		if p.curToken.Type != token.LPAREN {
+			return nil, fmt.Errorf("expected '(' after AS in CTE %q, got %s (%q)", cteName, p.curToken.Type, p.curToken.Literal)
+		}
+		p.nextToken() // consume (
+
+		cteQuery, err := p.parseSelect()
+		if err != nil {
+			return nil, fmt.Errorf("error parsing CTE %q query: %w", cteName, err)
+		}
+
+		if err := p.expectToken(token.RPAREN); err != nil {
+			return nil, fmt.Errorf("expected ')' after CTE %q query, got %s (%q)", cteName, p.curToken.Type, p.curToken.Literal)
+		}
+
+		ctes = append(ctes, ast.CTEDef{Name: cteName, Query: cteQuery})
+
+		// Check for comma (more CTEs) or break
+		if p.curToken.Type != token.COMMA {
+			break
+		}
+		p.nextToken() // consume ,
+	}
+
+	// Parse the body SELECT
+	body, err := p.parseSelect()
+	if err != nil {
+		return nil, fmt.Errorf("error parsing WITH body: %w", err)
+	}
+
+	return &ast.WithStmt{CTEs: ctes, Query: body}, nil
 }

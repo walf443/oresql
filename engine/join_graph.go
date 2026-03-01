@@ -225,6 +225,9 @@ func (e *Executor) buildJoinGraph(stmt *ast.SelectStmt) (*JoinGraph, error) {
 		if err != nil {
 			return nil, err
 		}
+	} else if cteInfo, cteRows, ok := e.lookupCTE(stmt.TableName); ok {
+		fromInfo = cteInfo
+		fromRows = cteRows
 	} else {
 		db, fromInfoResolved, err := e.resolveTable(stmt.DatabaseName, stmt.TableName)
 		if err != nil {
@@ -247,15 +250,26 @@ func (e *Executor) buildJoinGraph(stmt *ast.SelectStmt) (*JoinGraph, error) {
 
 	// 2. Create nodes for each JOIN table
 	for _, join := range stmt.Joins {
-		joinDB, joinInfo, err := e.resolveTable(join.DatabaseName, join.TableName)
-		if err != nil {
-			return nil, err
+		var joinDB *Database
+		var joinInfo *TableInfo
+		var joinRows []Row
+		if cteInfo, cteRows, ok := e.lookupCTE(join.TableName); ok {
+			joinInfo = cteInfo
+			joinRows = cteRows
+		} else {
+			db, resolved, err := e.resolveTable(join.DatabaseName, join.TableName)
+			if err != nil {
+				return nil, err
+			}
+			joinInfo = resolved
+			joinDB = db
 		}
 		joinNode := &JoinGraphNode{
 			TableName: strings.ToLower(join.TableName),
 			Alias:     join.TableAlias,
 			Info:      joinInfo,
 			DB:        joinDB,
+			Rows:      joinRows,
 		}
 		effName := joinNode.effectiveName()
 		graph.Nodes[effName] = joinNode

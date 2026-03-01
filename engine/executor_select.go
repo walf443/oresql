@@ -7,6 +7,41 @@ import (
 	"github.com/walf443/oresql/ast"
 )
 
+// executeWith materializes all CTEs and then executes the body statement.
+func (e *Executor) executeWith(stmt *ast.WithStmt) (*Result, error) {
+	prevScope := e.cteScope
+	e.cteScope = make(map[string]*cteEntry)
+	// Inherit outer CTE scope so nested WITH can see enclosing CTEs.
+	for k, v := range prevScope {
+		e.cteScope[k] = v
+	}
+	defer func() { e.cteScope = prevScope }()
+
+	for _, cte := range stmt.CTEs {
+		info, rows, err := e.materializeSubquery(cte.Query, cte.Name)
+		if err != nil {
+			return nil, fmt.Errorf("error materializing CTE %q: %w", cte.Name, err)
+		}
+		e.cteScope[strings.ToLower(cte.Name)] = &cteEntry{info: info, rows: rows}
+	}
+	return e.executeInner(stmt.Query)
+}
+
+// lookupCTE checks whether the given table name refers to a CTE in scope.
+func (e *Executor) lookupCTE(name string) (*TableInfo, []Row, bool) {
+	if e.cteScope == nil {
+		return nil, nil, false
+	}
+	entry, ok := e.cteScope[strings.ToLower(name)]
+	if !ok {
+		return nil, nil, false
+	}
+	// Return a copy of rows so each reference gets its own slice.
+	rowsCopy := make([]Row, len(entry.rows))
+	copy(rowsCopy, entry.rows)
+	return entry.info, rowsCopy, true
+}
+
 func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 	// SELECT without FROM: evaluate expressions directly
 	if stmt.TableName == "" && stmt.FromSubquery == nil {
@@ -474,6 +509,11 @@ func (e *Executor) scanSourceSubquery(stmt *ast.SelectStmt, earlyLimit int) ([]R
 
 // scanSourceSingle scans a single table with optional index optimization.
 func (e *Executor) scanSourceSingle(stmt *ast.SelectStmt, earlyLimit int) ([]Row, ExprEvaluator, error) {
+	// Check CTE scope before resolving from catalog.
+	if cteInfo, cteRows, ok := e.lookupCTE(stmt.TableName); ok {
+		return cteRows, newTableEvaluator(e, cteInfo), nil
+	}
+
 	db, info, err := e.resolveTable(stmt.DatabaseName, stmt.TableName)
 	if err != nil {
 		return nil, nil, err
@@ -651,13 +691,22 @@ func (e *Executor) executeSelectMaybeCorrelated(stmt *ast.SelectStmt, outerEval 
 // that can resolve both inner and outer column references to evaluate the full pipeline.
 func (e *Executor) executeSelectCorrelated(stmt *ast.SelectStmt, outerEval ExprEvaluator, outerRow Row) (*Result, error) {
 	// Phase 1: Source rows + inner evaluator (without WHERE)
-	db, info, err := e.resolveTable(stmt.DatabaseName, stmt.TableName)
-	if err != nil {
-		return nil, err
-	}
-	rows, err := db.storage.Scan(stmt.TableName)
-	if err != nil {
-		return nil, err
+	var info *TableInfo
+	var rows []Row
+	var err error
+	if cteInfo, cteRows, ok := e.lookupCTE(stmt.TableName); ok {
+		info = cteInfo
+		rows = cteRows
+	} else {
+		var db *Database
+		db, info, err = e.resolveTable(stmt.DatabaseName, stmt.TableName)
+		if err != nil {
+			return nil, err
+		}
+		rows, err = db.storage.Scan(stmt.TableName)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Create inner evaluator that handles alias

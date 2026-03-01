@@ -452,3 +452,18 @@ type ShowTablesStmt struct{}
 
 func (s *ShowTablesStmt) NodeType() string { return "ShowTables" }
 func (s *ShowTablesStmt) statementNode()   {}
+
+// CTEDef represents a single CTE definition: name AS (query).
+type CTEDef struct {
+	Name  string
+	Query Statement // *SelectStmt or *SetOpStmt
+}
+
+// WithStmt represents WITH name AS (...) [, name AS (...)] SELECT ...
+type WithStmt struct {
+	CTEs  []CTEDef
+	Query Statement // body: *SelectStmt or *SetOpStmt
+}
+
+func (s *WithStmt) NodeType() string { return "With" }
+func (s *WithStmt) statementNode()   {}

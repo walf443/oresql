@@ -14,6 +14,9 @@ const (
 	flagLeaf        byte = 0x01
 	leafHdrSize          = 1 + 2 + 4 + 4 + 8 // flags(1) + entryCount(2) + nextLeaf(4) + prevLeaf(4) + highKey(8)
 	internalHdrSize      = 1 + 2             // flags(1) + entryCount(2)
+	entryKeySize         = 8                 // int64 key
+	entryValLenSize      = 2                 // uint16 value length
+	childSize            = 4                 // uint32 page ID
 )
 
 // leafEntry is a key-value pair stored in a leaf page.
@@ -90,18 +93,18 @@ func (t *DiskBTree) Len() int {
 	return t.length
 }
 
-// maxLeafEntrySize is a rough check: key(8) + valLen(2) + val(N)
-const leafEntryOverhead = 8 + 2
+// leafEntryOverhead is the fixed overhead per leaf entry: key + valLen header.
+const leafEntryOverhead = entryKeySize + entryValLenSize
 
 // maxLeafPayload is available space for entries in a leaf page.
 const maxLeafPayload = pager.PageSize - leafHdrSize
 
 // maxInternalKeys calculates the max keys in an internal page.
-// Each key is 8 bytes, each child is 4 bytes. children = keys + 1.
-// internalHdrSize + keys*8 + (keys+1)*4 <= PageSize
-// keys*(8+4) + 4 <= PageSize - internalHdrSize
-// keys <= (PageSize - internalHdrSize - 4) / 12
-const maxInternalKeys = (pager.PageSize - internalHdrSize - 4) / 12
+// Each key is entryKeySize bytes, each child is childSize bytes. children = keys + 1.
+// internalHdrSize + keys*entryKeySize + (keys+1)*childSize <= PageSize
+// keys*(entryKeySize+childSize) + childSize <= PageSize - internalHdrSize
+// keys <= (PageSize - internalHdrSize - childSize) / (entryKeySize + childSize)
+const maxInternalKeys = (pager.PageSize - internalHdrSize - childSize) / (entryKeySize + childSize)
 
 // --- Page encoding/decoding ---
 
@@ -115,10 +118,10 @@ func decodeLeafPage(data []byte) leafPage {
 	pos := leafHdrSize
 	lp.entries = make([]leafEntry, lp.entryCount)
 	for i := 0; i < int(lp.entryCount); i++ {
-		key := int64(binary.BigEndian.Uint64(data[pos : pos+8]))
-		pos += 8
-		valLen := binary.BigEndian.Uint16(data[pos : pos+2])
-		pos += 2
+		key := int64(binary.BigEndian.Uint64(data[pos : pos+entryKeySize]))
+		pos += entryKeySize
+		valLen := binary.BigEndian.Uint16(data[pos : pos+entryValLenSize])
+		pos += entryValLenSize
 		val := make([]byte, valLen)
 		copy(val, data[pos:pos+int(valLen)])
 		pos += int(valLen)
@@ -147,10 +150,10 @@ func encodeLeafPage(lp leafPage, data []byte) {
 	binary.BigEndian.PutUint64(data[11:19], uint64(lp.highKey))
 	pos := leafHdrSize
 	for _, e := range lp.entries {
-		binary.BigEndian.PutUint64(data[pos:pos+8], uint64(e.key))
-		pos += 8
-		binary.BigEndian.PutUint16(data[pos:pos+2], e.valLen)
-		pos += 2
+		binary.BigEndian.PutUint64(data[pos:pos+entryKeySize], uint64(e.key))
+		pos += entryKeySize
+		binary.BigEndian.PutUint16(data[pos:pos+entryValLenSize], e.valLen)
+		pos += entryValLenSize
 		copy(data[pos:], e.val)
 		pos += int(e.valLen)
 	}
@@ -165,13 +168,13 @@ func decodeInternalPage(data []byte) internalPage {
 	ip.children = make([]pager.PageID, ip.entryCount+1)
 
 	// First child
-	ip.children[0] = binary.BigEndian.Uint32(data[pos : pos+4])
-	pos += 4
+	ip.children[0] = binary.BigEndian.Uint32(data[pos : pos+childSize])
+	pos += childSize
 	for i := 0; i < int(ip.entryCount); i++ {
-		ip.keys[i] = int64(binary.BigEndian.Uint64(data[pos : pos+8]))
-		pos += 8
-		ip.children[i+1] = binary.BigEndian.Uint32(data[pos : pos+4])
-		pos += 4
+		ip.keys[i] = int64(binary.BigEndian.Uint64(data[pos : pos+entryKeySize]))
+		pos += entryKeySize
+		ip.children[i+1] = binary.BigEndian.Uint32(data[pos : pos+childSize])
+		pos += childSize
 	}
 	return ip
 }
@@ -183,13 +186,13 @@ func encodeInternalPage(ip internalPage, data []byte) {
 	data[0] = 0 // not leaf
 	binary.BigEndian.PutUint16(data[1:3], ip.entryCount)
 	pos := internalHdrSize
-	binary.BigEndian.PutUint32(data[pos:pos+4], ip.children[0])
-	pos += 4
+	binary.BigEndian.PutUint32(data[pos:pos+childSize], ip.children[0])
+	pos += childSize
 	for i := 0; i < int(ip.entryCount); i++ {
-		binary.BigEndian.PutUint64(data[pos:pos+8], uint64(ip.keys[i]))
-		pos += 8
-		binary.BigEndian.PutUint32(data[pos:pos+4], ip.children[i+1])
-		pos += 4
+		binary.BigEndian.PutUint64(data[pos:pos+entryKeySize], uint64(ip.keys[i]))
+		pos += entryKeySize
+		binary.BigEndian.PutUint32(data[pos:pos+childSize], ip.children[i+1])
+		pos += childSize
 	}
 }
 
@@ -249,17 +252,28 @@ func (t *DiskBTree) Get(key int64) (storage.Row, bool) {
 	if err != nil {
 		return nil, false
 	}
-	lp := decodeLeafPage(data)
-	t.pool.UnpinPage(leafID, false)
 
-	idx := searchLeaf(lp.entries, key)
-	if idx < int(lp.entryCount) && lp.entries[idx].key == key {
-		row, err := storage.DecodeRowN(lp.entries[idx].val, t.numCols)
-		if err != nil {
-			return nil, false
+	entryCount := int(binary.BigEndian.Uint16(data[1:3]))
+	pos := leafHdrSize
+	for i := 0; i < entryCount; i++ {
+		entryKey := int64(binary.BigEndian.Uint64(data[pos : pos+entryKeySize]))
+		pos += entryKeySize
+		valLen := int(binary.BigEndian.Uint16(data[pos : pos+entryValLenSize]))
+		pos += entryValLenSize
+		if entryKey == key {
+			row, err := storage.DecodeRowN(data[pos:pos+valLen], t.numCols)
+			t.pool.UnpinPage(leafID, false)
+			if err != nil {
+				return nil, false
+			}
+			return row, true
 		}
-		return row, true
+		if entryKey > key {
+			break // エントリはキー昇順なのでこれ以降にはない
+		}
+		pos += valLen
 	}
+	t.pool.UnpinPage(leafID, false)
 	return nil, false
 }
 
@@ -336,10 +350,10 @@ func (t *DiskBTree) GetByKeysSorted(sortedKeys []int64) []storage.KeyRow {
 
 		pos := leafHdrSize
 		for i := 0; i < int(entryCount) && keyIdx < len(sortedKeys); i++ {
-			entryKey := int64(binary.BigEndian.Uint64(data[pos : pos+8]))
-			pos += 8
-			valLen := int(binary.BigEndian.Uint16(data[pos : pos+2]))
-			pos += 2
+			entryKey := int64(binary.BigEndian.Uint64(data[pos : pos+entryKeySize]))
+			pos += entryKeySize
+			valLen := int(binary.BigEndian.Uint16(data[pos : pos+entryValLenSize]))
+			pos += entryValLenSize
 
 			for keyIdx < len(sortedKeys) && sortedKeys[keyIdx] < entryKey {
 				keyIdx++

@@ -107,7 +107,7 @@ func TestJoinEvaluator_Eval(t *testing.T) {
 				},
 			},
 		},
-	})
+	}, nil)
 	eval := newJoinEvaluator(nil, jc)
 	row := Row{int64(1), "Alice", int64(10), int64(1)}
 

@@ -53,6 +53,7 @@ type JoinGraph struct {
 	CrossWhere []ast.Expr                // WHERE conditions spanning multiple tables
 	FromTable  string                    // effective name of the FROM table
 	TableOrder []string                  // original FROM + JOIN1 + JOIN2... order (effective names)
+	UsingCols  map[string][]string       // effective name -> USING column names (for SELECT * dedup)
 }
 
 // edgeKey returns a canonical key for an edge between two tables.
@@ -211,6 +212,7 @@ func (e *Executor) buildJoinGraph(stmt *ast.SelectStmt) (*JoinGraph, error) {
 		Nodes:     make(map[string]*JoinGraphNode),
 		Edges:     make(map[string]*JoinGraphEdge),
 		Adjacency: make(map[string][]string),
+		UsingCols: make(map[string][]string),
 	}
 
 	// 1. Create node for FROM table
@@ -258,6 +260,9 @@ func (e *Executor) buildJoinGraph(stmt *ast.SelectStmt) (*JoinGraph, error) {
 		effName := joinNode.effectiveName()
 		graph.Nodes[effName] = joinNode
 		graph.TableOrder = append(graph.TableOrder, effName)
+		if len(join.Using) > 0 {
+			graph.UsingCols[effName] = join.Using
+		}
 	}
 
 	// 3. Create edges from ON clauses
@@ -618,7 +623,7 @@ func buildJoinContextFromGraph(graph *JoinGraph) *JoinContext {
 			alias string
 		}{info: node.Info, alias: node.Alias}
 	}
-	return newJoinContext(jcEntries)
+	return newJoinContext(jcEntries, graph.UsingCols)
 }
 
 // compositeJoinPlan describes how to use a composite index for a JOIN lookup

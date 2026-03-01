@@ -897,6 +897,79 @@ func TestParseCrossJoinWithOnError(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestParseJoinUsingSingleColumn(t *testing.T) {
+	stmt := parse(t, "SELECT * FROM users JOIN orders USING (id)")
+	require.IsType(t, &ast.SelectStmt{}, stmt)
+	sel := stmt.(*ast.SelectStmt)
+	require.Len(t, sel.Joins, 1, "expected 1 join")
+	assert.Equal(t, ast.JoinInner, sel.Joins[0].JoinType)
+	assert.Equal(t, "orders", sel.Joins[0].TableName)
+	assert.Equal(t, []string{"id"}, sel.Joins[0].Using)
+	// ON should be: users.id = orders.id
+	require.NotNil(t, sel.Joins[0].On)
+	bin, ok := sel.Joins[0].On.(*ast.BinaryExpr)
+	require.True(t, ok, "expected BinaryExpr")
+	assert.Equal(t, "=", bin.Op)
+	assert.Equal(t, "users", bin.Left.(*ast.IdentExpr).Table)
+	assert.Equal(t, "id", bin.Left.(*ast.IdentExpr).Name)
+	assert.Equal(t, "orders", bin.Right.(*ast.IdentExpr).Table)
+	assert.Equal(t, "id", bin.Right.(*ast.IdentExpr).Name)
+}
+
+func TestParseJoinUsingMultipleColumns(t *testing.T) {
+	stmt := parse(t, "SELECT * FROM t1 JOIN t2 USING (a, b)")
+	require.IsType(t, &ast.SelectStmt{}, stmt)
+	sel := stmt.(*ast.SelectStmt)
+	require.Len(t, sel.Joins, 1)
+	assert.Equal(t, []string{"a", "b"}, sel.Joins[0].Using)
+	// ON should be: t1.a = t2.a AND t1.b = t2.b
+	require.NotNil(t, sel.Joins[0].On)
+	logical, ok := sel.Joins[0].On.(*ast.LogicalExpr)
+	require.True(t, ok, "expected LogicalExpr for multi-column USING")
+	assert.Equal(t, "AND", logical.Op)
+}
+
+func TestParseLeftJoinUsing(t *testing.T) {
+	stmt := parse(t, "SELECT * FROM users LEFT JOIN orders USING (id)")
+	sel := stmt.(*ast.SelectStmt)
+	require.Len(t, sel.Joins, 1)
+	assert.Equal(t, ast.JoinLeft, sel.Joins[0].JoinType)
+	assert.Equal(t, []string{"id"}, sel.Joins[0].Using)
+	require.NotNil(t, sel.Joins[0].On)
+}
+
+func TestParseJoinUsingWithAlias(t *testing.T) {
+	stmt := parse(t, "SELECT * FROM users u JOIN orders o USING (id)")
+	sel := stmt.(*ast.SelectStmt)
+	require.Len(t, sel.Joins, 1)
+	assert.Equal(t, []string{"id"}, sel.Joins[0].Using)
+	// Left table should use alias "u", right table should use alias "o"
+	bin := sel.Joins[0].On.(*ast.BinaryExpr)
+	assert.Equal(t, "u", bin.Left.(*ast.IdentExpr).Table)
+	assert.Equal(t, "o", bin.Right.(*ast.IdentExpr).Table)
+}
+
+func TestParseCrossJoinUsingError(t *testing.T) {
+	l := lexer.New("SELECT * FROM t1 CROSS JOIN t2 USING (id)")
+	p := New(l)
+	_, err := p.Parse()
+	assert.Error(t, err)
+}
+
+func TestParseMultiJoinUsing(t *testing.T) {
+	stmt := parse(t, "SELECT * FROM t1 JOIN t2 USING (id) JOIN t3 USING (id)")
+	sel := stmt.(*ast.SelectStmt)
+	require.Len(t, sel.Joins, 2)
+	// First join: left=t1, right=t2
+	bin1 := sel.Joins[0].On.(*ast.BinaryExpr)
+	assert.Equal(t, "t1", bin1.Left.(*ast.IdentExpr).Table)
+	assert.Equal(t, "t2", bin1.Right.(*ast.IdentExpr).Table)
+	// Second join: left=t2, right=t3
+	bin2 := sel.Joins[1].On.(*ast.BinaryExpr)
+	assert.Equal(t, "t2", bin2.Left.(*ast.IdentExpr).Table)
+	assert.Equal(t, "t3", bin2.Right.(*ast.IdentExpr).Table)
+}
+
 func TestParseCaseSearched(t *testing.T) {
 	stmt := parse(t, "SELECT CASE WHEN id > 0 THEN 'positive' ELSE 'non-positive' END FROM t")
 	sel := stmt.(*ast.SelectStmt)

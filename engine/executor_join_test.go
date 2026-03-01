@@ -30,7 +30,7 @@ func TestNewJoinContext(t *testing.T) {
 	}{
 		{info: usersInfo, alias: ""},
 		{info: ordersInfo, alias: "o"},
-	})
+	}, nil)
 
 	// Check merged columns count
 	assert.Len(t, jc.MergedInfo.Columns, 5, "MergedInfo.Columns count")
@@ -72,7 +72,7 @@ func TestJoinContextFindColumn(t *testing.T) {
 	}{
 		{info: usersInfo, alias: "u"},
 		{info: ordersInfo, alias: "o"},
-	})
+	}, nil)
 
 	tests := []struct {
 		name      string

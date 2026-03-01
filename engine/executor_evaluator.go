@@ -64,7 +64,7 @@ func (je *joinEvaluator) ResolveColumn(tableName, colName string) (*ColumnInfo, 
 }
 
 func (je *joinEvaluator) ColumnList() []ColumnInfo {
-	return je.jc.MergedInfo.Columns
+	return je.jc.StarColumnList()
 }
 
 // groupEvaluator evaluates expressions in a GROUP BY context.

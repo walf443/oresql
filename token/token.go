@@ -130,6 +130,7 @@ const (
 	SHOW      // SHOW keyword
 	DATABASES // DATABASES keyword
 	TABLES    // TABLES keyword
+	USING     // USING keyword
 )
 
 var tokenNames = map[TokenType]string{
@@ -247,6 +248,7 @@ var tokenNames = map[TokenType]string{
 	SHOW:         "SHOW",
 	DATABASES:    "DATABASES",
 	TABLES:       "TABLES",
+	USING:        "USING",
 }
 
 func (t TokenType) String() string {
@@ -354,6 +356,7 @@ var keywords = map[string]TokenType{
 	"SHOW":       SHOW,
 	"DATABASES":  DATABASES,
 	"TABLES":     TABLES,
+	"USING":      USING,
 }
 
 // IsKeyword returns true if the given token type is a SQL keyword.

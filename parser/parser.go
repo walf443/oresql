@@ -913,10 +913,51 @@ func (p *Parser) parseSelectCore() (*ast.SelectStmt, error) {
 			joinAlias := p.parseTableAlias()
 
 			var onExpr ast.Expr
+			var usingCols []string
 			if joinType == ast.JoinCross {
-				if p.curToken.Type == token.ON {
-					return nil, fmt.Errorf("CROSS JOIN does not support ON clause")
+				if p.curToken.Type == token.ON || p.curToken.Type == token.USING {
+					return nil, fmt.Errorf("CROSS JOIN does not support ON/USING clause")
 				}
+			} else if p.curToken.Type == token.USING {
+				p.nextToken() // skip USING
+				if err := p.expectToken(token.LPAREN); err != nil {
+					return nil, err
+				}
+				for {
+					if !p.isNameToken() {
+						return nil, fmt.Errorf("expected column name in USING, got %s", p.curToken.Type)
+					}
+					usingCols = append(usingCols, p.curToken.Literal)
+					p.nextToken()
+					if p.curToken.Type != token.COMMA {
+						break
+					}
+					p.nextToken() // skip comma
+				}
+				if err := p.expectToken(token.RPAREN); err != nil {
+					return nil, err
+				}
+				// Determine left table name/alias
+				var leftName string
+				if len(joins) > 0 {
+					prev := joins[len(joins)-1]
+					if prev.TableAlias != "" {
+						leftName = prev.TableAlias
+					} else {
+						leftName = prev.TableName
+					}
+				} else {
+					if tableAlias != "" {
+						leftName = tableAlias
+					} else {
+						leftName = tableName
+					}
+				}
+				rightName := joinAlias
+				if rightName == "" {
+					rightName = joinTable
+				}
+				onExpr = buildUsingOnExpr(leftName, rightName, usingCols)
 			} else {
 				if err := p.expectToken(token.ON); err != nil {
 					return nil, err
@@ -933,6 +974,7 @@ func (p *Parser) parseSelectCore() (*ast.SelectStmt, error) {
 				TableName:    joinTable,
 				TableAlias:   joinAlias,
 				On:           onExpr,
+				Using:        usingCols,
 			})
 		}
 
@@ -1067,6 +1109,37 @@ func (p *Parser) parseWindowDef() (ast.NamedWindowDef, error) {
 
 // parseTableAlias parses an optional table alias: [AS] ident
 // Returns empty string if no alias is present.
+// buildUsingOnExpr constructs an ON expression from USING column names.
+// For a single column: leftTable.col = rightTable.col
+// For multiple columns: leftTable.col1 = rightTable.col1 AND leftTable.col2 = rightTable.col2
+func buildUsingOnExpr(leftTable, rightTable string, columns []string) ast.Expr {
+	var exprs []ast.Expr
+	for _, col := range columns {
+		eq := &ast.BinaryExpr{
+			Left:  &ast.IdentExpr{Table: leftTable, Name: col},
+			Op:    "=",
+			Right: &ast.IdentExpr{Table: rightTable, Name: col},
+		}
+		exprs = append(exprs, eq)
+	}
+	if len(exprs) == 1 {
+		return exprs[0]
+	}
+	result := &ast.LogicalExpr{
+		Left:  exprs[0],
+		Op:    "AND",
+		Right: exprs[1],
+	}
+	for i := 2; i < len(exprs); i++ {
+		result = &ast.LogicalExpr{
+			Left:  result,
+			Op:    "AND",
+			Right: exprs[i],
+		}
+	}
+	return result
+}
+
 func (p *Parser) parseTableAlias() string {
 	if p.curToken.Type == token.AS {
 		p.nextToken() // skip AS

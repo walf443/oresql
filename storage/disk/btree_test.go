@@ -19,7 +19,7 @@ func newTestBTree(t *testing.T) *DiskBTree {
 	p, err := pager.Create(path)
 	require.NoError(t, err)
 	pool := pager.NewBufferPool(p, 256)
-	bt, err := NewDiskBTree(pool)
+	bt, err := NewDiskBTree(pool, 2)
 	require.NoError(t, err)
 	t.Cleanup(func() { pool.Close() })
 	return bt
@@ -330,7 +330,7 @@ func TestPersistence(t *testing.T) {
 	require.NoError(t, err)
 	pool1 := pager.NewBufferPool(p1, 256)
 
-	bt1, err := NewDiskBTree(pool1)
+	bt1, err := NewDiskBTree(pool1, 2)
 	require.NoError(t, err)
 
 	for i := int64(1); i <= 50; i++ {
@@ -348,7 +348,7 @@ func TestPersistence(t *testing.T) {
 	pool2 := pager.NewBufferPool(p2, 256)
 	defer pool2.Close()
 
-	bt2 := LoadDiskBTree(pool2, rootID, length)
+	bt2 := LoadDiskBTree(pool2, rootID, length, 2)
 	assert.Equal(t, 50, bt2.Len())
 
 	for i := int64(1); i <= 50; i++ {

@@ -171,10 +171,14 @@ func EncodeRow(row Row) []byte {
 	return buf
 }
 
-// DecodeRow decodes a byte slice into a row (slice of Values).
-// Returns the row and any decoding error.
-func DecodeRow(data []byte) (Row, error) {
+// DecodeRowN decodes a byte slice into a row (slice of Values) with
+// pre-allocated capacity. When numCols > 0, the result slice is allocated
+// with that capacity to avoid repeated grow/copy during append.
+func DecodeRowN(data []byte, numCols int) (Row, error) {
 	var row Row
+	if numCols > 0 {
+		row = make(Row, 0, numCols)
+	}
 	pos := 0
 	for pos < len(data) {
 		if pos >= len(data) {
@@ -215,6 +219,12 @@ func DecodeRow(data []byte) (Row, error) {
 		}
 	}
 	return row, nil
+}
+
+// DecodeRow decodes a byte slice into a row (slice of Values).
+// Returns the row and any decoding error.
+func DecodeRow(data []byte) (Row, error) {
+	return DecodeRowN(data, 0)
 }
 
 // EncodeValue encodes a single value with a type prefix into the builder.

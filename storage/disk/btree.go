@@ -44,10 +44,11 @@ type DiskBTree struct {
 	pool       *pager.BufferPool
 	rootPageID pager.PageID
 	length     int
+	numCols    int
 }
 
 // NewDiskBTree creates a new empty DiskBTree.
-func NewDiskBTree(pool *pager.BufferPool) (*DiskBTree, error) {
+func NewDiskBTree(pool *pager.BufferPool, numCols int) (*DiskBTree, error) {
 	// Allocate root leaf page
 	id, data, err := pool.NewPage()
 	if err != nil {
@@ -65,15 +66,17 @@ func NewDiskBTree(pool *pager.BufferPool) (*DiskBTree, error) {
 		pool:       pool,
 		rootPageID: id,
 		length:     0,
+		numCols:    numCols,
 	}, nil
 }
 
 // LoadDiskBTree loads an existing DiskBTree from disk.
-func LoadDiskBTree(pool *pager.BufferPool, rootPageID pager.PageID, length int) *DiskBTree {
+func LoadDiskBTree(pool *pager.BufferPool, rootPageID pager.PageID, length int, numCols int) *DiskBTree {
 	return &DiskBTree{
 		pool:       pool,
 		rootPageID: rootPageID,
 		length:     length,
+		numCols:    numCols,
 	}
 }
 
@@ -251,7 +254,7 @@ func (t *DiskBTree) Get(key int64) (storage.Row, bool) {
 
 	idx := searchLeaf(lp.entries, key)
 	if idx < int(lp.entryCount) && lp.entries[idx].key == key {
-		row, err := storage.DecodeRow(lp.entries[idx].val)
+		row, err := storage.DecodeRowN(lp.entries[idx].val, t.numCols)
 		if err != nil {
 			return nil, false
 		}
@@ -345,8 +348,8 @@ func (t *DiskBTree) GetByKeysSorted(sortedKeys []int64) []storage.KeyRow {
 				break
 			}
 			if sortedKeys[keyIdx] == entryKey {
-				// DecodeRow while page is pinned — safe because DecodeRow copies all values
-				row, err := storage.DecodeRow(data[pos : pos+valLen])
+				// DecodeRowN while page is pinned — safe because DecodeRowN copies all values
+				row, err := storage.DecodeRowN(data[pos:pos+valLen], t.numCols)
 				if err != nil {
 					t.pool.UnpinPage(pageID, false)
 					return result
@@ -1021,7 +1024,7 @@ func (t *DiskBTree) ForEach(fn func(key int64, row storage.Row) bool) {
 		t.pool.UnpinPage(pageID, false)
 
 		for _, e := range lp.entries {
-			row, err := storage.DecodeRow(e.val)
+			row, err := storage.DecodeRowN(e.val, t.numCols)
 			if err != nil {
 				return
 			}
@@ -1069,7 +1072,7 @@ func (t *DiskBTree) ForEachReverse(fn func(key int64, row storage.Row) bool) {
 		t.pool.UnpinPage(pageID, false)
 
 		for j := len(lp.entries) - 1; j >= 0; j-- {
-			row, err := storage.DecodeRow(lp.entries[j].val)
+			row, err := storage.DecodeRowN(lp.entries[j].val, t.numCols)
 			if err != nil {
 				return
 			}
@@ -1141,7 +1144,7 @@ func (t *DiskBTree) ForEachRange(from *int64, fromInclusive bool, to *int64, toI
 					}
 				}
 			}
-			row, err := storage.DecodeRow(e.val)
+			row, err := storage.DecodeRowN(e.val, t.numCols)
 			if err != nil {
 				return
 			}

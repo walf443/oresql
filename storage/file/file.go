@@ -856,7 +856,7 @@ func replayLog(info *storage.TableInfo, mem *memory.MemoryStorage, logData []byt
 		pos += dataLen
 
 		if status == statusActive {
-			row, err := storage.DecodeRow(rowBytes)
+			row, err := storage.DecodeRowN(rowBytes, len(info.Columns))
 			if err != nil {
 				return fmt.Errorf("failed to decode log row (key=%d): %w", key, err)
 			}
@@ -972,7 +972,7 @@ func (fs *FileStorage) loadTableV1(path string) error {
 		pos += dataLen
 
 		if status == statusActive {
-			row, err := storage.DecodeRow(data)
+			row, err := storage.DecodeRowN(data, len(info.Columns))
 			if err != nil {
 				return fmt.Errorf("failed to decode row (key=%d): %w", key, err)
 			}

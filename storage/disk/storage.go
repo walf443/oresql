@@ -497,7 +497,7 @@ func (ds *DiskStorage) CreateTable(info *storage.TableInfo) {
 	pool.UnpinPage(0, false)
 
 	// Create B+Tree (root starts at page 1+)
-	bt, err := NewDiskBTree(pool)
+	bt, err := NewDiskBTree(pool, len(info.Columns))
 	if err != nil {
 		panic(fmt.Sprintf("disk storage: create btree: %v", err))
 	}
@@ -568,7 +568,7 @@ func (ds *DiskStorage) TruncateTable(name string) {
 	pool.NewPage()
 	pool.UnpinPage(0, false)
 
-	bt, err := NewDiskBTree(pool)
+	bt, err := NewDiskBTree(pool, len(tbl.info.Columns))
 	if err != nil {
 		pool.Close()
 		return
@@ -1294,14 +1294,14 @@ func (ds *DiskStorage) loadTable(tableName string) error {
 	p.SetFreeHead(freeHead)
 
 	// Load B+Tree
-	bt := LoadDiskBTree(pool, rootPageID, 0)
+	bt := LoadDiskBTree(pool, rootPageID, 0, len(info.Columns))
 	// Count actual rows by walking the tree
 	count := 0
 	bt.ForEach(func(key int64, row storage.Row) bool {
 		count++
 		return true
 	})
-	bt = LoadDiskBTree(pool, rootPageID, count)
+	bt = LoadDiskBTree(pool, rootPageID, count, len(info.Columns))
 
 	tbl := &diskTable{
 		info:      info,

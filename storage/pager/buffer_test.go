@@ -185,3 +185,61 @@ func TestBufferPoolConcurrentFetch(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func newBenchPool(b *testing.B, capacity int) (*BufferPool, []PageID) {
+	b.Helper()
+	dir := b.TempDir()
+	path := filepath.Join(dir, "bench.db")
+	p, err := Create(path)
+	if err != nil {
+		b.Fatal(err)
+	}
+	bp := NewBufferPool(p, capacity)
+
+	// Pre-populate pages so benchmarks measure pure FetchPage/UnpinPage
+	const numPages = 64
+	ids := make([]PageID, numPages)
+	for i := range ids {
+		id, data, err := bp.NewPage()
+		if err != nil {
+			b.Fatal(err)
+		}
+		data[0] = byte(i + 1)
+		bp.UnpinPage(id, true)
+		ids[i] = id
+	}
+	if err := bp.FlushAll(); err != nil {
+		b.Fatal(err)
+	}
+	return bp, ids
+}
+
+func BenchmarkBufferPoolFetch(b *testing.B) {
+	bp, ids := newBenchPool(b, 256)
+	defer bp.Close()
+	numPages := len(ids)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		id := ids[i%numPages]
+		_, _ = bp.FetchPage(id)
+		bp.UnpinPage(id, false)
+	}
+}
+
+func BenchmarkBufferPoolFetchParallel(b *testing.B) {
+	bp, ids := newBenchPool(b, 256)
+	defer bp.Close()
+	numPages := len(ids)
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		i := 0
+		for pb.Next() {
+			id := ids[i%numPages]
+			_, _ = bp.FetchPage(id)
+			bp.UnpinPage(id, false)
+			i++
+		}
+	})
+}

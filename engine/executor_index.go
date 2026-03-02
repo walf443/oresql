@@ -708,6 +708,10 @@ func collectColumnRefs(expr ast.Expr, info *TableInfo, needed map[int]bool) {
 		}
 	case *ast.CallExpr:
 		for _, arg := range e.Args {
+			// Aggregate functions with * (e.g. COUNT(*)) don't need column data
+			if _, isStar := arg.(*ast.StarExpr); isStar {
+				continue
+			}
 			collectColumnRefs(arg, info, needed)
 		}
 	case *ast.CastExpr:
@@ -789,4 +793,26 @@ func (e *Executor) tryIndexLookupCovering(where ast.Expr, info *TableInfo, neede
 		return rows, true
 	}
 	return nil, false
+}
+
+// isPKOnlyCovering returns true if neededCols contains only the PK column (or is empty).
+// An empty neededCols means the query doesn't need any column data (e.g. COUNT(*)).
+func isPKOnlyCovering(neededCols map[int]bool, pkColIdx int) bool {
+	if pkColIdx < 0 {
+		return false
+	}
+	for col := range neededCols {
+		if col != pkColIdx {
+			return false
+		}
+	}
+	return true
+}
+
+// buildPKOnlyRow constructs a Row with only the PK column populated.
+// Other columns are left as nil.
+func buildPKOnlyRow(key int64, numCols int, pkColIdx int) Row {
+	row := make(Row, numCols)
+	row[pkColIdx] = key
+	return row
 }

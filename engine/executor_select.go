@@ -410,23 +410,51 @@ func (e *Executor) scanFullOrder(
 		if stmt.Where == nil && needed > 0 {
 			forEachLimit = needed
 		}
-		db.storage.ForEachRow(info.Name, ior.reverse, func(key int64, row Row) bool {
-			if stmt.Where != nil {
-				val, err := eval.Eval(stmt.Where, row)
-				if err != nil {
+
+		// PK Covering: if only PK column (or no columns) are needed, skip row decoding
+		neededCols := collectNeededColumns(stmt.Columns, stmt.Where, stmt.OrderBy, info)
+		if isPKOnlyCovering(neededCols, info.PrimaryKeyCol) {
+			numCols := len(info.Columns)
+			pkIdx := info.PrimaryKeyCol
+			db.storage.ForEachRowKeyOnly(info.Name, ior.reverse, func(key int64) bool {
+				if stmt.Where != nil {
+					row := buildPKOnlyRow(key, numCols, pkIdx)
+					val, err := eval.Eval(stmt.Where, row)
+					if err != nil {
+						return false
+					}
+					b, ok := val.(bool)
+					if !ok || !b {
+						return true
+					}
+					rows = append(rows, row)
+				} else {
+					rows = append(rows, buildPKOnlyRow(key, numCols, pkIdx))
+				}
+				if needed > 0 && len(rows) >= needed {
 					return false
 				}
-				b, ok := val.(bool)
-				if !ok || !b {
-					return true
+				return true
+			}, forEachLimit)
+		} else {
+			db.storage.ForEachRow(info.Name, ior.reverse, func(key int64, row Row) bool {
+				if stmt.Where != nil {
+					val, err := eval.Eval(stmt.Where, row)
+					if err != nil {
+						return false
+					}
+					b, ok := val.(bool)
+					if !ok || !b {
+						return true
+					}
 				}
-			}
-			rows = append(rows, row)
-			if needed > 0 && len(rows) >= needed {
-				return false
-			}
-			return true
-		}, forEachLimit)
+				rows = append(rows, row)
+				if needed > 0 && len(rows) >= needed {
+					return false
+				}
+				return true
+			}, forEachLimit)
+		}
 	} else {
 		// Secondary index order scan — try covering first
 		neededCols := collectNeededColumns(stmt.Columns, stmt.Where, stmt.OrderBy, info)
@@ -715,6 +743,21 @@ func (e *Executor) scanSourceSingle(stmt *ast.SelectStmt, earlyLimit int) ([]Row
 	neededCols := collectNeededColumns(stmt.Columns, stmt.Where, stmt.OrderBy, info)
 	if coveringRows, ok := e.tryIndexLookupCovering(stmt.Where, info, neededCols); ok {
 		return coveringRows, newTableEvaluator(e, info), nil
+	}
+
+	// PK Covering: if only PK column (or no columns) are needed, skip row decoding
+	if isPKOnlyCovering(neededCols, info.PrimaryKeyCol) {
+		numCols := len(info.Columns)
+		pkIdx := info.PrimaryKeyCol
+		limit := 0
+		if earlyLimit > 0 && stmt.Where == nil {
+			limit = earlyLimit
+		}
+		db.storage.ForEachRowKeyOnly(info.Name, false, func(key int64) bool {
+			rows = append(rows, buildPKOnlyRow(key, numCols, pkIdx))
+			return true
+		}, limit)
+		return rows, newTableEvaluator(e, info), nil
 	}
 
 	if keys, indexUsed := e.tryIndexScan(stmt.Where, info); indexUsed {

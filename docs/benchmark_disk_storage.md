@@ -220,6 +220,7 @@ memory ストレージのセカンダリインデックスはメモリ上の B-t
 | Covering Index 等値検索 | 1.3x 高速化 (vs Non-Covering) | 良好（PK lookup スキップ） |
 | Covering Index 範囲 + LIMIT | 1.7x 高速化 (vs Non-Covering) | 良好（PK lookup スキップ） |
 | Covering Index ORDER BY + LIMIT | 2.0x 高速化 (vs Non-Covering) | 良好（PK lookup スキップ） |
+| PK Covering ORDER BY + LIMIT | 1.2x 高速化 (vs Full Row)、Disk/Memory 1.1x | 良好（行デコードスキップ） |
 
 ### 主要な知見
 
@@ -247,6 +248,35 @@ memory ストレージのセカンダリインデックスはメモリ上の B-t
 
 12. **Covering Index で PK ルックアップを完全にスキップ**: セカンダリインデックスの composite key からカラム値を直接デコードする `DecodeCompositeKeyValues` を導入し、クエリが参照する全カラムがインデックスカラム + PK に含まれる場合に PK ルックアップを排除。`CoveringIndexReader` インターフェースの `LookupCovering` / `OrderedCoveringScan` メソッドで実装。カラム依存性分析（`collectNeededColumns` + `isIndexCovering`）により自動的に covering 判定。等値で **1.3x**、範囲 + LIMIT で **1.7x**、ORDER BY + LIMIT で **2.0x** の高速化（Non-Covering 比）。メモリ使用量も 26〜42% 削減。
 
+13. **PK Covering Index で行デコードを完全にスキップ**: PK カラムのみを参照するクエリ（`SELECT id` や `COUNT(*)`）で、Primary B+Tree のリーフエントリからキー（int64）を直接読み取り、バリュー領域の `DecodeRowN` を完全にスキップ。`ForEachKeyOnly` / `ForEachKeyOnlyReverse` メソッドでリーフページのバリュー領域を `pos += valLen` で飛ばす。Disk で ORDER BY PK + LIMIT が **1.2x 高速化**（1,873 vs 2,273 ns/op）、B/op **28% 削減**（2,496 vs 3,480）。Disk/Memory 比率も Full Row の 1.5x から PK Covering の **1.1x** に改善され、ほぼ Memory 同等に到達。`collectColumnRefs` の `COUNT(*)` 特殊処理（`CallExpr` 内の `StarExpr` をスキップ）により、`COUNT(*)` も自動的に PK Covering の対象となる。
+
+### 13. PK Covering Index（行デコードスキップ）
+
+PK カラムのみを参照するクエリ（`SELECT id FROM t ORDER BY id LIMIT 10` や `SELECT COUNT(*) FROM t`）では、Primary B+Tree のリーフエントリからキー（int64）を直接読み取り、バリュー領域の `DecodeRowN` を完全にスキップする。セカンダリ Covering Index（`DecodeCompositeKeyValues`）と異なり、PK Covering は**デコードコストがゼロ**（キーが直接使える）なので、Disk ストレージでも効果が得られる。
+
+`collectColumnRefs` の `CallExpr` 内 `StarExpr` 処理も修正し、`COUNT(*)` を PK Covering の対象にした（集約関数内の `*` は全カラムデータを必要としない）。
+
+#### 13a. ORDER BY PK ASC + LIMIT 10 (`SELECT id` vs `SELECT *`)
+
+| パターン | Disk (ns/op) | Disk (B/op) | Disk (allocs/op) |
+|---------|-------------|------------|------------------|
+| PK Covering (`SELECT id ORDER BY id LIMIT 10`) | 1,873 | 2,496 | 47 |
+| Full Row (`SELECT * ORDER BY id LIMIT 10`) | 2,273 | 3,480 | 64 |
+| **改善** | **1.2x 高速化** | **28% 削減** | **27% 削減** |
+
+#### 13b. Memory vs Disk 比較
+
+| パターン | Memory (ns/op) | Disk (ns/op) | Disk/Memory |
+|---------|---------------|-------------|-------------|
+| PK Covering (`SELECT id ORDER BY id LIMIT 10`) | 1,756 | 1,873 | **1.1x** |
+| Full Row (`SELECT * ORDER BY id LIMIT 10`) | 1,528 | 2,273 | **1.5x** |
+
+**考察:** Disk ストレージでは PK Covering により ORDER BY PK ASC + LIMIT が **1.2x 高速化**、B/op **28% 削減**、allocs/op **27% 削減**。`ForEachKeyOnly` でリーフページのバリュー領域を `pos += valLen` でスキップし、`DecodeRowN` のアロケーション（Row スライス割り当て + 各カラム値のデコード）を完全に排除した。Disk/Memory 比率も Full Row の **1.5x** から PK Covering の **1.1x** に改善され、ほぼ Memory 同等の性能に到達した。これは PK Covering パスではバッファプール経由のページフェッチのオーバーヘッドのみが残り、`DecodeRowN` の差分が消えるためである。
+
+メモリストレージでは PK Covering (1,756 ns/op) が Full Row (1,528 ns/op) より微増する。メモリ上の行アクセスが Go ポインタ直接参照で非常に高速なため、`isPKOnlyCovering` の判定 + `buildPKOnlyRow` の Row 構築オーバーヘッドが行コピーの節約分を上回る。ただし B/op は 2,352 vs 2,456 と **4% 削減**される。
+
+---
+
 ## 改善優先度
 
 | 改善項目 | 影響 | 難易度 |
@@ -263,3 +293,4 @@ memory ストレージのセカンダリインデックスはメモリ上の B-t
 | ~~`ScanEach` ストリーミングを WHERE + LIMIT に拡張~~ | **改善済み (Memory 16x, Disk 12x 高速化)** — `executeScanEachStreaming` を汎用化 | — |
 | ~~WHERE + LIMIT のインデックスストリーミング~~ | **改善済み (等値: ~1.0x, 範囲: Disk 318x 高速化)** — `OrderedRangeScan` + `findLeaf` インライン化 | — |
 | ~~Covering Index（PK ルックアップスキップ）~~ | **改善済み (等値: 1.3x, 範囲: 1.7x, ORDER BY: 2.0x)** — `DecodeCompositeKeyValues` + `CoveringIndexReader` | — |
+| ~~PK Covering Index（行デコードスキップ）~~ | **改善済み (Disk: 1.2x 高速化, Disk/Memory: 1.1x)** — `ForEachKeyOnly` + `COUNT(*)` 特殊処理 | — |

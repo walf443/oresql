@@ -549,6 +549,26 @@ WHERE 条件が PK (o.id = X) を指定し 1行のみヒット。
 
 ---
 
+### 15. PK Covering Index（行デコードスキップ）
+
+PK カラムのみを参照するクエリ（`SELECT id FROM t ORDER BY id LIMIT 10` や `SELECT COUNT(*) FROM t`）では、B-tree のエントリからキー（int64）を直接取得し、行データの読み取りを完全にスキップする。セカンダリ Covering Index（`DecodeCompositeKeyValues`）と異なり、PK Covering は**デコードコストがゼロ**（キーが直接使える）。
+
+`collectColumnRefs` の `CallExpr` 内 `StarExpr` 処理も修正し、`COUNT(*)` を PK Covering の対象にした（集約関数内の `*` は全カラムデータを必要としない）。
+
+#### 15a. ORDER BY PK ASC + LIMIT 10 (`SELECT id` vs `SELECT *`)
+
+| パターン | Memory (ns/op) | Memory (B/op) | Memory (allocs/op) |
+|---------|---------------|--------------|-------------------|
+| PK Covering (`SELECT id ORDER BY id LIMIT 10`) | 1,756 | 2,352 | 44 |
+| Full Row (`SELECT * ORDER BY id LIMIT 10`) | 1,528 | 2,456 | 31 |
+| **差異** | **-15% (遅い)** | **4% 削減** | +13 |
+
+**考察:** メモリストレージでは PK Covering の**速度面の効果はマイナス（微増）**。メモリ上の行アクセスが Go ポインタ直接参照で非常に高速なため、`isPKOnlyCovering` の判定 + `buildPKOnlyRow` の Row 構築（`make(Row, numCols)` + PK 値設定）のオーバーヘッドが、行参照の節約分を上回る。allocs/op も PK Covering の方が多い（+13）のは、キーのみ収集後に毎行 `buildPKOnlyRow` で新しいスライスを割り当てるため。一方、B/op は 4% 削減される（フル行の参照が不要になるため）。
+
+**Disk ストレージとの比較:** Disk では `DecodeRowN`（バイト列からの Row 構築 + 各カラム値のデコード）のコストが大きいため、PK Covering で **1.2x 高速化**、B/op **28% 削減**、Disk/Memory 比率も 1.5x → **1.1x** に改善される（`docs/benchmark_disk_storage.md` セクション 13 参照）。PK Covering Index は Covering Index と同様に**ディスクストレージ向けの最適化**であり、メモリストレージでの効果はメモリ使用量の微削減に限られる。
+
+---
+
 ## まとめ
 
 | クエリパターン | 高速化効果 | 推奨度 |
@@ -573,6 +593,7 @@ WHERE 条件が PK (o.id = X) を指定し 1行のみヒット。
 | Hash Join + PK WHERE（inner 1行） | 1.3x〜1.6x | 効果小 |
 | JOIN inner WHERE（PK条件 + JOINインデックス） | 1.0x | PK効果が支配的 |
 | Covering Index（メモリストレージ） | -5〜-7%（微減）、B/op 6〜20% 削減 | Disk 向け最適化 |
+| PK Covering Index（メモリストレージ） | -15%（微増）、B/op 4% 削減 | Disk 向け最適化 |
 
 ### 主要な知見
 
@@ -592,3 +613,4 @@ WHERE 条件が PK (o.id = X) を指定し 1行のみヒット。
 14. **Hash Join はインデックスなし equi-join を劇的に高速化**: equi-join カラムにインデックスがない場合、inner 行からハッシュテーブルを構築し outer 行ごとにプローブすることで O(N*M) → O(N+M) に改善。10,000行で 209x の高速化・メモリ 181x 削減を実現。スケーリングも二次的（1K→10K で 123倍増加）から線形（12.8倍増加）に改善された。WHERE インデックスとの組み合わせで inner テーブルを pre-filter してからハッシュテーブルを構築すると、さらに高速化（245x）する。複数カラム equi-join、LEFT JOIN、residual ON 条件にも対応
 15. **WHERE + LIMIT のインデックスストリーミングで範囲検索が劇的に高速化**: `OrderedRangeScan` のコールバックベース走査を `executeIndexScanStreaming` で再利用し、LIMIT 件数に達した時点でインデックス走査を早期打ち切り。従来のバッチパス（全マッチキー収集 → 全行フェッチ → LIMIT 適用）に比べ、マッチ行数が多い範囲検索（`WHERE val > 5000 LIMIT 10`、5,000行マッチ）で Memory **410x**・Disk **124x** の高速化、メモリ使用量も Memory **399x**・Disk **113x** 削減。等値検索（100行マッチ）でも Disk **3.2x** 高速化。単一カラムインデックスの等値/範囲条件に適用し、PK・IN・複合インデックスは既存バッチパスにフォールスルー。コールバック内で全 WHERE を再評価するためポストフィルタも正しく動作する
 16. **Covering Index はメモリストレージでは速度改善なし（Disk 向け最適化）**: composite key から直接カラム値をデコードして PK ルックアップをスキップする Covering Index は、メモリストレージでは速度が微減（-5〜-7%）となる。メモリ上の PK ルックアップが Go ポインタ直接参照で非常に高速なため、`DecodeCompositeKeyValues` のデコードオーバーヘッドが節約分を上回る。ただし B/op は 6〜20% 削減される。一方、Disk ストレージではバッファプール経由のページフェッチコストが大きいため、等値 **1.3x**、範囲 + LIMIT **1.7x**、ORDER BY + LIMIT **2.0x** の高速化が得られる。Covering Index は**ディスクストレージ向けの最適化**
+17. **PK Covering Index もメモリストレージでは速度改善なし（Disk 向け最適化）**: PK カラムのみ参照するクエリで行データの読み取りをスキップする PK Covering Index は、メモリストレージでは速度が微増（-15%）となる。`isPKOnlyCovering` の判定 + `buildPKOnlyRow` の Row 構築のオーバーヘッドが、Go ポインタ直接参照の行アクセス節約分を上回る。B/op は 4% 削減（2,352 vs 2,456）。Disk ストレージでは `DecodeRowN` スキップにより **1.2x 高速化**、B/op **28% 削減**、Disk/Memory 比率が 1.5x → **1.1x** に改善。`COUNT(*)` も `collectColumnRefs` の `CallExpr` 内 `StarExpr` 特殊処理で自動的に PK Covering 対象となる

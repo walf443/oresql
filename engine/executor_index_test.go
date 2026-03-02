@@ -643,3 +643,70 @@ func TestPrimaryKeyLookupNotFound(t *testing.T) {
 	result := run(t, exec, "SELECT * FROM items WHERE id = 999")
 	require.Len(t, result.Rows, 0, "expected 0 rows for non-existent PK")
 }
+
+func TestIsPKOnlyCovering(t *testing.T) {
+	tests := []struct {
+		name       string
+		neededCols map[int]bool
+		pkColIdx   int
+		want       bool
+	}{
+		{"empty needed, valid PK", map[int]bool{}, 0, true},
+		{"PK only", map[int]bool{0: true}, 0, true},
+		{"PK + other col", map[int]bool{0: true, 1: true}, 0, false},
+		{"non-PK col only", map[int]bool{1: true}, 0, false},
+		{"no PK defined", map[int]bool{}, -1, false},
+		{"empty needed, no PK", map[int]bool{0: true}, -1, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isPKOnlyCovering(tt.neededCols, tt.pkColIdx)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestCollectColumnRefsCountStar(t *testing.T) {
+	info := &TableInfo{
+		Name: "t",
+		Columns: []ColumnInfo{
+			{Name: "id", DataType: "INT", Index: 0, PrimaryKey: true},
+			{Name: "val", DataType: "INT", Index: 1},
+		},
+		PrimaryKeyCol: 0,
+	}
+
+	tests := []struct {
+		name string
+		expr ast.Expr
+		want map[int]bool
+	}{
+		{
+			"COUNT(*) needs no columns",
+			&ast.CallExpr{Name: "COUNT", Args: []ast.Expr{&ast.StarExpr{}}},
+			map[int]bool{},
+		},
+		{
+			"COUNT(1) needs no columns",
+			&ast.CallExpr{Name: "COUNT", Args: []ast.Expr{&ast.IntLitExpr{Value: 1}}},
+			map[int]bool{},
+		},
+		{
+			"COUNT(val) needs val column",
+			&ast.CallExpr{Name: "COUNT", Args: []ast.Expr{&ast.IdentExpr{Name: "val"}}},
+			map[int]bool{1: true},
+		},
+		{
+			"SUM(1) needs no columns",
+			&ast.CallExpr{Name: "SUM", Args: []ast.Expr{&ast.IntLitExpr{Value: 1}}},
+			map[int]bool{},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := make(map[int]bool)
+			collectColumnRefs(tt.expr, info, got)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}

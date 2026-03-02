@@ -1217,6 +1217,45 @@ func (ds *DiskStorage) ForEachRow(tableName string, reverse bool, fn func(key in
 	return nil
 }
 
+// ForEachRowKeyOnly iterates over primary keys without decoding row values.
+// It follows the same collect-then-iterate pattern as ForEachRow.
+func (ds *DiskStorage) ForEachRowKeyOnly(tableName string, reverse bool, fn func(key int64) bool, limit int) error {
+	tbl, ok := ds.getTable(tableName)
+	if !ok {
+		return fmt.Errorf("table %q does not exist", tableName)
+	}
+
+	cap := 64
+	if limit > 0 && limit < cap {
+		cap = limit
+	}
+	keys := make([]int64, 0, cap)
+
+	tbl.mu.RLock()
+	collected := 0
+	iterFn := func(key int64) bool {
+		keys = append(keys, key)
+		collected++
+		if limit > 0 && collected >= limit {
+			return false
+		}
+		return true
+	}
+	if reverse {
+		tbl.btree.ForEachKeyOnlyReverse(iterFn)
+	} else {
+		tbl.btree.ForEachKeyOnly(iterFn)
+	}
+	tbl.mu.RUnlock()
+
+	for _, k := range keys {
+		if !fn(k) {
+			break
+		}
+	}
+	return nil
+}
+
 // ScanEach iterates rows inline under the table read-lock, calling fn for each row.
 // fn returning false stops the iteration (enabling early exit with minimal page decoding).
 func (ds *DiskStorage) ScanEach(tableName string, fn func(row storage.Row) bool) error {

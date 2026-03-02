@@ -122,6 +122,7 @@ type Engine interface {
 	// limit > 0: collect at most limit rows from the B-tree before calling fn.
 	// limit <= 0: collect all rows (safe for callbacks that re-read the same table).
 	ForEachRow(tableName string, reverse bool, fn func(key int64, row Row) bool, limit int) error
+	ForEachRowKeyOnly(tableName string, reverse bool, fn func(key int64) bool, limit int) error
 	GetRow(tableName string, key int64) (Row, bool)
 
 	// ScanEach iterates rows inline under the table lock, calling fn for each row.

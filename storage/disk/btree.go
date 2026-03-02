@@ -1091,6 +1091,98 @@ func (t *DiskBTree) ForEach(fn func(key int64, row storage.Row) bool) {
 	}
 }
 
+// ForEachKeyOnly iterates over all entries in key order, passing only the key
+// to the callback. Value bytes are skipped without decoding (no DecodeRowN),
+// making this ideal for PK-covering queries that only need the primary key.
+func (t *DiskBTree) ForEachKeyOnly(fn func(key int64) bool) {
+	// Find leftmost leaf
+	pageID := t.rootPageID
+	for {
+		data, err := t.pool.FetchPage(pageID)
+		if err != nil {
+			return
+		}
+		if isLeafPage(data) {
+			t.pool.UnpinPage(pageID, false)
+			break
+		}
+		nextPageID := internalLeftmostChild(data)
+		t.pool.UnpinPage(pageID, false)
+		pageID = nextPageID
+	}
+
+	// Traverse leaf chain, skipping value bytes
+	for pageID != pager.InvalidPageID {
+		data, err := t.pool.FetchPage(pageID)
+		if err != nil {
+			return
+		}
+		entryCount := int(binary.BigEndian.Uint16(data[leafOffEntryCount : leafOffEntryCount+2]))
+		nextLeaf := pager.PageID(binary.BigEndian.Uint32(data[leafOffNextLeaf : leafOffNextLeaf+4]))
+
+		pos := leafHdrSize
+		stopped := false
+		for i := 0; i < entryCount; i++ {
+			entryKey := int64(binary.BigEndian.Uint64(data[pos : pos+entryKeySize]))
+			pos += entryKeySize
+			valLen := int(binary.BigEndian.Uint16(data[pos : pos+entryValLenSize]))
+			pos += entryValLenSize
+			if !fn(entryKey) {
+				stopped = true
+				break
+			}
+			pos += valLen // skip value bytes
+		}
+		t.pool.UnpinPage(pageID, false)
+		if stopped {
+			return
+		}
+		pageID = nextLeaf
+	}
+}
+
+// ForEachKeyOnlyReverse iterates over all entries in reverse key order,
+// passing only the key to the callback. Value bytes are skipped without decoding.
+func (t *DiskBTree) ForEachKeyOnlyReverse(fn func(key int64) bool) {
+	pageID, err := t.findRightmostLeaf()
+	if err != nil {
+		return
+	}
+	for pageID != pager.InvalidPageID {
+		data, err := t.pool.FetchPage(pageID)
+		if err != nil {
+			return
+		}
+		entryCount := int(binary.BigEndian.Uint16(data[leafOffEntryCount : leafOffEntryCount+2]))
+		prevLeaf := pager.PageID(binary.BigEndian.Uint32(data[leafOffPrevLeaf : leafOffPrevLeaf+4]))
+
+		// Collect key offsets in forward pass (variable-length entries)
+		keyOffsets := make([]int, entryCount)
+		pos := leafHdrSize
+		for i := 0; i < entryCount; i++ {
+			keyOffsets[i] = pos
+			pos += entryKeySize
+			valLen := int(binary.BigEndian.Uint16(data[pos : pos+entryValLenSize]))
+			pos += entryValLenSize + valLen
+		}
+
+		// Scan keys in reverse order
+		stopped := false
+		for j := entryCount - 1; j >= 0; j-- {
+			entryKey := int64(binary.BigEndian.Uint64(data[keyOffsets[j] : keyOffsets[j]+entryKeySize]))
+			if !fn(entryKey) {
+				stopped = true
+				break
+			}
+		}
+		t.pool.UnpinPage(pageID, false)
+		if stopped {
+			return
+		}
+		pageID = prevLeaf
+	}
+}
+
 // findRightmostLeaf returns the PageID of the rightmost leaf page.
 func (t *DiskBTree) findRightmostLeaf() (pager.PageID, error) {
 	pageID := t.rootPageID

@@ -859,6 +859,45 @@ func (s *MemoryStorage) ForEachRow(tableName string, reverse bool, fn func(key i
 	return nil
 }
 
+// ForEachRowKeyOnly iterates over primary keys without reading row values.
+// It follows the same collect-then-iterate pattern as ForEachRow.
+func (s *MemoryStorage) ForEachRowKeyOnly(tableName string, reverse bool, fn func(key int64) bool, limit int) error {
+	tbl, ok := s.getTable(tableName)
+	if !ok {
+		return fmt.Errorf("table %q does not exist in storage", tableName)
+	}
+
+	cap := 64
+	if limit > 0 && limit < cap {
+		cap = limit
+	}
+	keys := make([]int64, 0, cap)
+
+	tbl.mu.RLock()
+	collected := 0
+	iterFn := func(key int64, value any) bool {
+		keys = append(keys, key)
+		collected++
+		if limit > 0 && collected >= limit {
+			return false
+		}
+		return true
+	}
+	if reverse {
+		tbl.tree.ForEachReverse(iterFn)
+	} else {
+		tbl.tree.ForEach(iterFn)
+	}
+	tbl.mu.RUnlock()
+
+	for _, k := range keys {
+		if !fn(k) {
+			break
+		}
+	}
+	return nil
+}
+
 // ScanEach iterates rows inline under the table read-lock, calling fn for each row.
 // fn returning false stops the iteration. The callback runs while the lock is held,
 // so fn must not re-read the same table (no subqueries).

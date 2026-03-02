@@ -118,9 +118,14 @@ memory ストレージのセカンダリインデックスはメモリ上の B-t
 
 | パターン | Memory (ns/op) | Disk (ns/op) | Disk/Memory |
 |---------|---------------|-------------|-------------|
-| DISTINCT LIMIT 10 | 235,948 | 1,350,039 | **5.7x** |
+| DISTINCT LIMIT 10 (改善前) | 235,948 | 1,350,039 | **5.7x** |
+| DISTINCT LIMIT 10 (ScanEach 改善後) | 2,335 | 3,894 | **1.7x** |
 
-**考察:** LIMIT 10 + ORDER BY なし でも 5.7x。Scan() の全行収集がボトルネック。
+**メモリ使用量 (10,000行、改善後):**
+- Memory: 2,264 B/op, 62 allocs/op
+- Disk: 6,352 B/op, 97 allocs/op
+
+**考察:** `ScanEach` ストリーミング最適化により、DISTINCT + LIMIT が **5.7x → 1.7x** に大幅改善。`ScanEach` はテーブルロック保持中にコールバックをインラインで実行し、WHERE → projection → dedup → early exit を 1 パスで処理する。ユニーク値が limit 個集まった時点でスキャンを打ち切るため、disk ではデコードするページ数が大幅に削減される。Memory も `Scan()` 全行収集から `ScanEach` ストリーミングに切り替わったことで 235,948 → 2,335 ns/op（**101x 高速化**）。Disk は 1,350,039 → 3,894 ns/op（**347x 高速化**）。安全性のため、WHERE/SELECT にサブクエリがある場合、JOIN、CTE、テーブルエイリアス、インデックススキャン使用時は従来の `filterProjectDedupLimit` パスにフォールスルーする。
 
 ---
 
@@ -139,6 +144,7 @@ memory ストレージのセカンダリインデックスはメモリ上の B-t
 | ORDER BY PK ASC + LIMIT | 2.1x | 良好 |
 | ORDER BY PK DESC + LIMIT | 2.2x | 良好 |
 | LIMIT (ORDER BY なし) | 2.2x | 良好 |
+| DISTINCT + LIMIT (ScanEach ストリーミング) | 1.7x | 良好（ScanEach 最適化で改善） |
 | JOIN (Hash Join) | 1.2x〜1.7x | 良好 |
 | JOIN (インデックス利用) | 1.3x〜2.0x | 良好 |
 
@@ -154,9 +160,11 @@ memory ストレージのセカンダリインデックスはメモリ上の B-t
 
 5. **`ForEachReverse` は `prevLeaf` バックポインタで ASC 同等に改善済み**: リーフページヘッダに `prevLeaf` (4B) バックポインタを追加し、`findRightmostLeaf` (O(H)) + `prevLeaf` チェーン逆方向走査に変更。ORDER BY PK DESC + LIMIT が **2.2x** で ASC (2.1x) とほぼ同等の水準。
 
-6. **LIMIT (ORDER BY なし) は `earlyLimit` 伝搬で改善済み**: `scanSourceSingle` が WHERE なし + LIMIT の場合に `ScanOrdered(name, false, limit)` を呼ぶことで **2.2x**。DISTINCT + LIMIT は重複排除のため全行スキャンが必要なので 5.7x。**改善案**: DISTINCT + LIMIT には `Scan()` のイテレータ化が必要。
+6. **LIMIT (ORDER BY なし) は `earlyLimit` 伝搬で改善済み**: `scanSourceSingle` が WHERE なし + LIMIT の場合に `ScanOrdered(name, false, limit)` を呼ぶことで **2.2x**。DISTINCT + LIMIT も `ScanEach` ストリーミング最適化により **5.7x → 1.7x** に改善済み（後述 8 を参照）。
 
 7. **Hash Join は disk で最も効率的な JOIN パス**: inner テーブルのフルスキャン 1 回でハッシュテーブルを構築するため、個別 Get の積算が発生せず 1.2〜1.7x に留まる。
+
+8. **`ScanEach` ストリーミングで DISTINCT + LIMIT が 5.7x → 1.7x に改善**: `ScanEach` メソッドをストレージインターフェースに追加し、テーブルロック保持中にコールバックをインラインで実行する方式に変更。`ForEachRow` の二段階収集（ロック下で全行をスライスに収集 → ロック解放後にコールバック）と異なり、コールバック内で WHERE → projection → dedup → early exit を 1 パスで処理する。disk ではユニーク値が揃った時点でページデコードを打ち切るため、デコードするページ数が大幅に削減された。安全性のため、サブクエリ・JOIN・CTE・テーブルエイリアス・インデックススキャン使用時は従来パスにフォールスルーする。
 
 ## 改善優先度
 
@@ -169,4 +177,4 @@ memory ストレージのセカンダリインデックスはメモリ上の B-t
 | ~~セカンダリインデックスのディスク永続化~~ | **実施済み** — 起動時再構築不要 | — |
 | ~~DiskSecondaryBTree のインラインページスキャン最適化~~ | **改善済み (6.4x → 2.4x)** — 読み取り系メソッドでページバッファ直接走査 | — |
 | ~~`DecodeRowN` プリアロケーション最適化~~ | **改善済み** — 全パスで allocs/op -2, B/op -48 | — |
-| `Scan()` のイテレータ化 (DISTINCT + LIMIT 向け) | DISTINCT + LIMIT が 5.7x → 3x に改善見込み | 高 |
+| ~~`ScanEach` ストリーミング (DISTINCT + LIMIT 向け)~~ | **改善済み (5.7x → 1.7x)** — `ScanEach` で inline callback + early exit | — |

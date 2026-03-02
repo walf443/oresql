@@ -1132,6 +1132,21 @@ func (ds *DiskStorage) ForEachRow(tableName string, reverse bool, fn func(key in
 	return nil
 }
 
+// ScanEach iterates rows inline under the table read-lock, calling fn for each row.
+// fn returning false stops the iteration (enabling early exit with minimal page decoding).
+func (ds *DiskStorage) ScanEach(tableName string, fn func(row storage.Row) bool) error {
+	tbl, ok := ds.getTable(tableName)
+	if !ok {
+		return fmt.Errorf("table %q does not exist", tableName)
+	}
+	tbl.mu.RLock()
+	defer tbl.mu.RUnlock()
+	tbl.btree.ForEach(func(key int64, row storage.Row) bool {
+		return fn(row)
+	})
+	return nil
+}
+
 func (ds *DiskStorage) GetRow(tableName string, key int64) (storage.Row, bool) {
 	tbl, ok := ds.getTable(tableName)
 	if !ok {

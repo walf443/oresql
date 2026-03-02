@@ -184,6 +184,22 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 		}
 	}
 
+	// Streaming DISTINCT + LIMIT: scan rows inline under lock with early exit.
+	// Safe only when there are no subqueries in WHERE/SELECT, no JOINs, no CTE,
+	// no table alias, no subquery source, and no index scan.
+	if canEarlyLimit && stmt.Distinct &&
+		stmt.FromSubquery == nil && len(stmt.Joins) == 0 && stmt.TableAlias == "" &&
+		!containsSubquery(stmt.Where) && !columnsContainSubquery(stmt.Columns) {
+		if _, _, cteOk := e.lookupCTE(stmt.TableName); !cteOk {
+			db, info, err := e.resolveTable(stmt.DatabaseName, stmt.TableName)
+			if err == nil {
+				if _, indexUsed := e.tryIndexScan(stmt.Where, info); !indexUsed {
+					return e.executeDistinctLimitStreaming(stmt, db, info, earlyLimit)
+				}
+			}
+		}
+	}
+
 	// Phase 1: Source rows + evaluator
 	// For DISTINCT, don't pass earlyLimit to scanSource (JOIN needs all rows for dedup)
 	scanLimit := earlyLimit
@@ -1185,4 +1201,100 @@ func dedup(rows []Row) []Row {
 		}
 	}
 	return result
+}
+
+// columnsContainSubquery returns true if any SELECT column contains a subquery.
+func columnsContainSubquery(columns []ast.Expr) bool {
+	for _, col := range columns {
+		inner := col
+		if a, ok := col.(*ast.AliasExpr); ok {
+			inner = a.Expr
+		}
+		if containsSubquery(inner) {
+			return true
+		}
+	}
+	return false
+}
+
+// executeDistinctLimitStreaming uses ScanEach to stream rows inline under the
+// table lock, applying WHERE → projection → dedup → early exit in one pass.
+// This avoids materializing all rows and allows the disk backend to stop
+// decoding pages once enough unique rows have been collected.
+func (e *Executor) executeDistinctLimitStreaming(
+	stmt *ast.SelectStmt, db *Database, info *TableInfo, earlyLimit int,
+) (*Result, error) {
+	eval := newTableEvaluator(e, info)
+	colTypes := resolveColumnTypes(stmt.Columns, eval)
+	colNames, colExprs, isStar, err := resolveSelectColumns(stmt.Columns, eval)
+	if err != nil {
+		return nil, err
+	}
+
+	// Optimise WHERE TRUE / WHERE FALSE
+	where := stmt.Where
+	if b, ok := where.(*ast.BoolLitExpr); ok {
+		if !b.Value {
+			return &Result{Columns: colNames, ColumnTypes: colTypes, Rows: nil}, nil
+		}
+		where = nil
+	}
+
+	seen := make(map[string]bool)
+	result := make([]Row, 0, earlyLimit)
+	cols := eval.ColumnList()
+	var scanErr error
+
+	db.storage.ScanEach(info.Name, func(row Row) bool {
+		// WHERE filter
+		if where != nil {
+			val, err := eval.Eval(where, row)
+			if err != nil {
+				scanErr = err
+				return false
+			}
+			b, ok := val.(bool)
+			if !ok {
+				scanErr = fmt.Errorf("WHERE expression must evaluate to boolean, got %T", val)
+				return false
+			}
+			if !b {
+				return true
+			}
+		}
+		// Projection
+		var projected Row
+		if isStar {
+			projected = make(Row, len(cols))
+			for i, col := range cols {
+				projected[i] = row[col.Index]
+			}
+		} else {
+			projected = make(Row, len(colExprs))
+			for i, expr := range colExprs {
+				val, err := eval.Eval(expr, row)
+				if err != nil {
+					scanErr = err
+					return false
+				}
+				projected[i] = val
+			}
+		}
+		// Dedup
+		key := string(encodeValues(projected))
+		if seen[key] {
+			return true
+		}
+		seen[key] = true
+		result = append(result, projected)
+		// Early exit once we have enough unique rows (earlyLimit = limit + offset)
+		return len(result) < earlyLimit
+	})
+	if scanErr != nil {
+		return nil, scanErr
+	}
+
+	result = applyOffset(result, stmt.Offset)
+	result = applyLimit(result, stmt.Limit)
+	return &Result{Columns: colNames, ColumnTypes: colTypes, Rows: result}, nil
 }

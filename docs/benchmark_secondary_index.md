@@ -250,21 +250,35 @@ users (N/10行) JOIN orders (N行) のネステッドループ JOIN で LIMIT 10
 
 category は `i%100` で 100 種類の distinct 値を持つ。DISTINCT + LIMIT 10 で、重複排除後のユニーク行が 10 件に達した時点で打ち切る。
 
+**改善前（`filterProjectDedupLimit` — `Scan()` 全行収集後に 1 パス処理）:**
+
 | データ量 | DISTINCT (LIMIT なし) | DISTINCT LIMIT 10 (ORDER BY なし) | DISTINCT ORDER BY LIMIT 10 | 早期打ち切り高速化 |
 |---------|----------------------|----------------------------------|---------------------------|-----------------|
 | 10,000行 | 2,456,256 ns/op | 261,256 ns/op | 11,023,802 ns/op | **9.4x** vs LIMIT なし |
 
-**メモリ使用量 (10,000行):**
+**メモリ使用量 (10,000行、改善前):**
 - DISTINCT LIMIT なし: 2,409,177 B/op, 30,066 allocs/op
 - DISTINCT LIMIT 10 (ORDER BY なし): 979,497 B/op, 68 allocs/op
 - DISTINCT ORDER BY LIMIT 10: 2,409,367 B/op, 30,073 allocs/op
 
-**考察:** `filterProjectDedupLimit` により WHERE フィルタリング・projection・重複排除・早期打ち切りを 1 パスで実行する。category = `i%100` で 100 種類あるため、テーブルの先頭約 10%（1,000行程度）をスキャンした時点で 10 個の distinct 値が揃い打ち切りが発生する。
+**改善後（`ScanEach` ストリーミング — ロック保持中に inline callback + early exit）:**
 
-- **10,000行: 9.4x 高速化**、allocs 30,066 → 68（**99.8% 削減**）
-- ORDER BY ありと比べると **42x 高速**（10,000行）。ORDER BY がある場合は全行の projection + dedup + sort が必要
+| データ量 | DISTINCT LIMIT 10 (改善前) | DISTINCT LIMIT 10 (ScanEach 改善後) | 高速化倍率 |
+|---------|--------------------------|-----------------------------------|----------|
+| 10,000行 | 261,256 ns/op | 2,335 ns/op | **112x** |
 
-allocs がほぼ定数（68）でデータ量に依存しない点が特徴的。必要なユニーク行数が少ないほど、またデータの distinct 値が早期に出現するほど効果が大きくなる。
+**メモリ使用量 (10,000行、改善後):**
+- DISTINCT LIMIT 10 (ScanEach): 2,264 B/op, 62 allocs/op
+
+**考察:** `ScanEach` ストリーミング最適化により、DISTINCT + LIMIT が **261,256 → 2,335 ns/op（112x 高速化）** に大幅改善。
+
+改善前の `filterProjectDedupLimit` は `Scan()` で全 10,000 行を `[]Row` に実体化してから 1 パス処理していたため、スキャン自体の打ち切りはできなかった。改善後は `ScanEach` メソッドでテーブルロック保持中にコールバックをインラインで実行し、WHERE → projection → dedup → early exit を B-tree 走査の中で直接処理する。category = `i%100` で 100 種類あるため、先頭約 1,000 行をスキャンした時点で 10 個の distinct 値が揃いスキャンを打ち切る。
+
+- **10,000行: 112x 高速化**（261,256 → 2,335 ns/op）
+- **メモリ: 99.8% 削減**（979,497 → 2,264 B/op）、allocs も 68 → 62 に削減
+- ORDER BY ありと比べると **4,722x 高速**（11,023,802 → 2,335 ns/op）
+
+安全性のため、WHERE/SELECT にサブクエリがある場合、JOIN、CTE、テーブルエイリアス、インデックススキャン使用時は従来の `filterProjectDedupLimit` パスにフォールスルーする（コールバックがロック保持中に実行されるため、再入読み取りが必要な操作は除外）。
 
 #### 9d. ORDER BY + LIMIT の Heap Top-K 最適化
 
@@ -462,7 +476,7 @@ WHERE 条件が PK (o.id = X) を指定し 1行のみヒット。
 | LIKE 前方一致 | 40x | 強く推奨 |
 | 複合インデックス（プレフィックス等値+範囲） | 69x | 強く推奨 |
 | IN 検索（多数ヒット） | 15x | 推奨 |
-| DISTINCT + LIMIT 早期打ち切り（ORDER BY なし） | 9.4x | 推奨 |
+| DISTINCT + LIMIT ScanEach ストリーミング（ORDER BY なし） | ~~9.4x~~ 112x（ScanEach 改善後） | 強く推奨 |
 | 単一テーブル + LIMIT 早期打ち切り（ORDER BY なし） | 562x | 強く推奨 |
 | ORDER BY + LIMIT heap top-K | 1.9x | 推奨 |
 | PK ORDER BY（LIMIT なし、ソートスキップ） | 1.6x | 推奨 |
@@ -483,7 +497,7 @@ WHERE 条件が PK (o.id = X) を指定し 1行のみヒット。
 7. **メモリ使用量もインデックスで大幅削減**: インデックスにより不要な行のスキャンを回避し、メモリ割り当てが劇的に削減
 8. **JOIN の inner テーブル WHERE インデックスは補助的**: JOIN カラムのインデックスがない場合でも Hash Join により大幅に改善されるが、inner WHERE のインデックス単体の効果は限定的。PK WHERE 条件は強力で、インデックス有無に関わらず inner 候補を即座に 1行に絞れる
 9. **ORDER BY なし + LIMIT の早期打ち切りは全パスで劇的に効果的**: 単一テーブルでは `earlyLimit` を `ScanOrdered` に伝搬し、B-tree の先頭から limit 行だけ読み取ることで 10,000行で 562x の高速化を実現（データ量非依存の ~1,200 ns/op）。JOIN ではネステッドループで LIMIT 件数に達した時点でループを脱出することで、10,000行で 4,863x の高速化・メモリ 2,364x 削減を実現。ORDER BY がない LIMIT クエリでは自動的に適用される
-10. **DISTINCT + LIMIT でも早期打ち切りが有効**: WHERE・projection・dedup を 1 パスに統合し、ユニーク行が必要件数に達した時点でスキャンを打ち切る。allocs がデータ量に依存せずほぼ定数（68）になり、10,000行で 9.4x の高速化を実現
+10. **DISTINCT + LIMIT は `ScanEach` ストリーミングで劇的に高速化**: `ScanEach` メソッドでテーブルロック保持中にコールバックをインラインで実行し、WHERE → projection → dedup → early exit を B-tree 走査の中で直接処理する。`Scan()` 全行収集 + `filterProjectDedupLimit` の 261,256 ns/op から `ScanEach` ストリーミングの 2,335 ns/op へ **112x 高速化**。メモリも 979,497 → 2,264 B/op（**99.8% 削減**）。サブクエリ・JOIN・CTE 使用時は安全のため従来パスにフォールスルー
 11. **ORDER BY + LIMIT の heap top-K は安定した改善**: max-heap を使った O(N log K) アルゴリズムにより、full sort（O(N log N)）に対して 1.9x の高速化とメモリ 43% 削減を実現。ソートキー事前計算のコストが共通のため理論値ほどの改善にはならないが、K << N の条件で確実に効果がある
 12. **PK ORDER BY + LIMIT はインデックス順スキャンで劇的に高速化**: B-tree の先頭/末尾から K 件を読むだけで完了するため、全行スキャン + ソートを完全にスキップ。10,000行で 429x の高速化・メモリ 545x 削減を実現。データ量に実質依存しない O(K log N) の性能を達成。ASC/DESC の性能差もほぼなし。LIMIT なしでもソートスキップにより 1.6x の改善がある。セカンダリインデックスでは Nullable カラム + LIMIT で NULL 順序問題を回避するためフォールバックするが、NOT NULL 制約付きカラムでは同等の最適化が適用される
 13. **スライス事前容量確保は低リスクで安定した改善**: LIMIT 値や入力サイズが既知の箇所で `make([]T, 0, cap)` を使用することで、Go ランタイムのスライス再配置を回避。PK ORDER BY + LIMIT で速度 1.37x〜1.43x 改善・メモリ 37% 削減を実現。アルゴリズム変更を伴わないため、レグレッションリスクが極めて低い

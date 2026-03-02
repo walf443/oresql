@@ -123,6 +123,11 @@ type Engine interface {
 	// limit <= 0: collect all rows (safe for callbacks that re-read the same table).
 	ForEachRow(tableName string, reverse bool, fn func(key int64, row Row) bool, limit int) error
 	GetRow(tableName string, key int64) (Row, bool)
+
+	// ScanEach iterates rows inline under the table lock, calling fn for each row.
+	// fn returning false stops the iteration early. Unlike ForEachRow, the callback
+	// runs while the lock is held, so fn must not re-read the same table.
+	ScanEach(tableName string, fn func(row Row) bool) error
 }
 
 // IndexReader is the interface for reading index data.

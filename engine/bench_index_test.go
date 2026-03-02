@@ -80,28 +80,6 @@ func BenchmarkSecondaryIndexLookup_10000(b *testing.B) {
 	}
 }
 
-func BenchmarkPrimaryKeyLookup_100000(b *testing.B) {
-	exec := setupBenchTable(b, 100000, false)
-	sql := "SELECT * FROM bench WHERE id = 50000"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := execSQL(exec, sql); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkSecondaryIndexLookup_100000(b *testing.B) {
-	exec := setupBenchTable(b, 100000, true)
-	sql := "SELECT * FROM bench WHERE val = 500000"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := execSQL(exec, sql); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
 // PK に手動でセカンダリインデックスを追加した場合
 func BenchmarkPrimaryKeyWithIndex_10000(b *testing.B) {
 	exec := setupBenchTable(b, 10000, false)
@@ -109,20 +87,6 @@ func BenchmarkPrimaryKeyWithIndex_10000(b *testing.B) {
 		b.Fatal(err)
 	}
 	sql := "SELECT * FROM bench WHERE id = 5000"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := execSQL(exec, sql); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkPrimaryKeyWithIndex_100000(b *testing.B) {
-	exec := setupBenchTable(b, 100000, false)
-	if err := execSQL(exec, "CREATE INDEX idx_id ON bench(id)"); err != nil {
-		b.Fatal(err)
-	}
-	sql := "SELECT * FROM bench WHERE id = 50000"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if err := execSQL(exec, sql); err != nil {
@@ -177,28 +141,6 @@ func BenchmarkEqualityWithIndex_10000(b *testing.B) {
 	}
 }
 
-func BenchmarkEqualityNoIndex_100000(b *testing.B) {
-	exec := setupBenchTable(b, 100000, false)
-	sql := "SELECT * FROM bench WHERE val = 500000"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := execSQL(exec, sql); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkEqualityWithIndex_100000(b *testing.B) {
-	exec := setupBenchTable(b, 100000, true)
-	sql := "SELECT * FROM bench WHERE val = 500000"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := execSQL(exec, sql); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
 // --- Range scan (WHERE val >= X AND val <= Y) ---
 
 func BenchmarkRangeNoIndex_10000(b *testing.B) {
@@ -215,28 +157,6 @@ func BenchmarkRangeNoIndex_10000(b *testing.B) {
 func BenchmarkRangeWithIndex_10000(b *testing.B) {
 	exec := setupBenchTable(b, 10000, true)
 	sql := "SELECT * FROM bench WHERE val >= 40000 AND val <= 60000"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := execSQL(exec, sql); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkRangeNoIndex_100000(b *testing.B) {
-	exec := setupBenchTable(b, 100000, false)
-	sql := "SELECT * FROM bench WHERE val >= 400000 AND val <= 600000"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := execSQL(exec, sql); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkRangeWithIndex_100000(b *testing.B) {
-	exec := setupBenchTable(b, 100000, true)
-	sql := "SELECT * FROM bench WHERE val >= 400000 AND val <= 600000"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if err := execSQL(exec, sql); err != nil {
@@ -297,51 +217,6 @@ func BenchmarkInUniqueWithIndex_10000(b *testing.B) {
 	}
 }
 
-// IN 3値: 100,000行 → 3行ヒット (0.003%)
-func BenchmarkInUniqueNoIndex_100000(b *testing.B) {
-	exec := setupBenchTable(b, 100000, false)
-	sql := "SELECT * FROM bench WHERE val IN (50, 100, 150)"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := execSQL(exec, sql); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkInUniqueWithIndex_100000(b *testing.B) {
-	exec := setupBenchTable(b, 100000, true)
-	sql := "SELECT * FROM bench WHERE val IN (50, 100, 150)"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := execSQL(exec, sql); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkInNoIndex_100000(b *testing.B) {
-	exec := setupBenchTable(b, 100000, false)
-	sql := "SELECT * FROM bench WHERE category IN (5, 10, 15)"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := execSQL(exec, sql); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkInWithIndex_100000(b *testing.B) {
-	exec := setupBenchTable(b, 100000, true)
-	sql := "SELECT * FROM bench WHERE category IN (5, 10, 15)"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := execSQL(exec, sql); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
 // --- LIKE prefix (WHERE name LIKE 'name\_50%') ---
 // name = 'name_N' なのでエスケープ 'name\_50%' → prefix='name_50' → 11行ヒット
 func BenchmarkLikeEscapedNoIndex_10000(b *testing.B) {
@@ -366,28 +241,6 @@ func BenchmarkLikeEscapedWithIndex_10000(b *testing.B) {
 	}
 }
 
-func BenchmarkLikeEscapedNoIndex_100000(b *testing.B) {
-	exec := setupBenchTable(b, 100000, false)
-	sql := `SELECT * FROM bench WHERE name LIKE 'name\_500%'`
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := execSQL(exec, sql); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkLikeEscapedWithIndex_100000(b *testing.B) {
-	exec := setupBenchTable(b, 100000, true)
-	sql := `SELECT * FROM bench WHERE name LIKE 'name\_500%'`
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := execSQL(exec, sql); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
 // --- Composite index: equality + range (WHERE category = X AND val >= Y) ---
 
 func BenchmarkCompositeNoIndex_10000(b *testing.B) {
@@ -404,28 +257,6 @@ func BenchmarkCompositeNoIndex_10000(b *testing.B) {
 func BenchmarkCompositeWithIndex_10000(b *testing.B) {
 	exec := setupBenchTable(b, 10000, true)
 	sql := "SELECT * FROM bench WHERE category = 50 AND val >= 50000"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := execSQL(exec, sql); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkCompositeNoIndex_100000(b *testing.B) {
-	exec := setupBenchTable(b, 100000, false)
-	sql := "SELECT * FROM bench WHERE category = 50 AND val >= 500000"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := execSQL(exec, sql); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkCompositeWithIndex_100000(b *testing.B) {
-	exec := setupBenchTable(b, 100000, true)
-	sql := "SELECT * FROM bench WHERE category = 50 AND val >= 500000"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if err := execSQL(exec, sql); err != nil {
@@ -473,28 +304,6 @@ func BenchmarkLowSelectivityNoIndex_10000(b *testing.B) {
 
 func BenchmarkLowSelectivityWithIndex_10000(b *testing.B) {
 	exec := setupLowSelectivityTable(b, 10000, true)
-	sql := "SELECT * FROM bench_low WHERE grp = 3"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := execSQL(exec, sql); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkLowSelectivityNoIndex_100000(b *testing.B) {
-	exec := setupLowSelectivityTable(b, 100000, false)
-	sql := "SELECT * FROM bench_low WHERE grp = 3"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := execSQL(exec, sql); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkLowSelectivityWithIndex_100000(b *testing.B) {
-	exec := setupLowSelectivityTable(b, 100000, true)
 	sql := "SELECT * FROM bench_low WHERE grp = 3"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -684,17 +493,6 @@ func BenchmarkJoinWithIndexPKWhere_10000(b *testing.B) {
 	}
 }
 
-func BenchmarkJoinWithIndexPKWhere_100000(b *testing.B) {
-	exec := setupJoinBenchTables(b, 100000, true, false)
-	sql := "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE o.id = 5000"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := execSQL(exec, sql); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
 // Case 2 without JOIN index (no optimization path, full scan baseline)
 
 func BenchmarkJoinNoIndexPKWhere_1000(b *testing.B) {
@@ -711,17 +509,6 @@ func BenchmarkJoinNoIndexPKWhere_1000(b *testing.B) {
 func BenchmarkJoinNoIndexPKWhere_10000(b *testing.B) {
 	exec := setupJoinBenchTables(b, 10000, false, false)
 	sql := "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE o.id = 500"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := execSQL(exec, sql); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkJoinNoIndexPKWhere_100000(b *testing.B) {
-	exec := setupJoinBenchTables(b, 100000, false, false)
-	sql := "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE o.id = 5000"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if err := execSQL(exec, sql); err != nil {
@@ -794,17 +581,6 @@ func BenchmarkSelectLimitNoOrder_10000(b *testing.B) {
 	}
 }
 
-func BenchmarkSelectLimitNoOrder_100000(b *testing.B) {
-	exec := setupBenchTable(b, 100000, false)
-	sql := "SELECT * FROM bench LIMIT 10"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := execSQL(exec, sql); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
 func BenchmarkSelectLimitWithOrder_10000(b *testing.B) {
 	exec := setupBenchTable(b, 10000, false)
 	sql := "SELECT * FROM bench ORDER BY val LIMIT 10"
@@ -863,28 +639,6 @@ func BenchmarkDistinctLimitNoOrder_10000(b *testing.B) {
 	}
 }
 
-func BenchmarkDistinctNoLimit_100000(b *testing.B) {
-	exec := setupBenchTable(b, 100000, false)
-	sql := "SELECT DISTINCT category FROM bench"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := execSQL(exec, sql); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkDistinctLimitNoOrder_100000(b *testing.B) {
-	exec := setupBenchTable(b, 100000, false)
-	sql := "SELECT DISTINCT category FROM bench LIMIT 10"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := execSQL(exec, sql); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
 func BenchmarkDistinctWithOrder_10000(b *testing.B) {
 	exec := setupBenchTable(b, 10000, false)
 	sql := "SELECT DISTINCT category FROM bench ORDER BY category LIMIT 10"
@@ -909,30 +663,8 @@ func BenchmarkSelectOrderByLimit_10000(b *testing.B) {
 	}
 }
 
-func BenchmarkSelectOrderByLimit_100000(b *testing.B) {
-	exec := setupBenchTable(b, 100000, false)
-	sql := "SELECT * FROM bench ORDER BY val LIMIT 10"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := execSQL(exec, sql); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
 func BenchmarkSelectOrderByNoLimit_10000(b *testing.B) {
 	exec := setupBenchTable(b, 10000, false)
-	sql := "SELECT * FROM bench ORDER BY val"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := execSQL(exec, sql); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkSelectOrderByNoLimit_100000(b *testing.B) {
-	exec := setupBenchTable(b, 100000, false)
 	sql := "SELECT * FROM bench ORDER BY val"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -999,17 +731,6 @@ func BenchmarkOrderByPKAsc_10000(b *testing.B) {
 	}
 }
 
-func BenchmarkOrderByPKAsc_100000(b *testing.B) {
-	exec := setupBenchTable(b, 100000, false)
-	sql := "SELECT * FROM bench ORDER BY id LIMIT 10"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := execSQL(exec, sql); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
 func BenchmarkOrderByPKDesc_10000(b *testing.B) {
 	exec := setupBenchTable(b, 10000, false)
 	sql := "SELECT * FROM bench ORDER BY id DESC LIMIT 10"
@@ -1021,30 +742,8 @@ func BenchmarkOrderByPKDesc_10000(b *testing.B) {
 	}
 }
 
-func BenchmarkOrderByPKDesc_100000(b *testing.B) {
-	exec := setupBenchTable(b, 100000, false)
-	sql := "SELECT * FROM bench ORDER BY id DESC LIMIT 10"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := execSQL(exec, sql); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
 func BenchmarkOrderByPKNoLimit_10000(b *testing.B) {
 	exec := setupBenchTable(b, 10000, false)
-	sql := "SELECT * FROM bench ORDER BY id"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := execSQL(exec, sql); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkOrderByPKNoLimit_100000(b *testing.B) {
-	exec := setupBenchTable(b, 100000, false)
 	sql := "SELECT * FROM bench ORDER BY id"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

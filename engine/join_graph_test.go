@@ -24,8 +24,8 @@ func TestExtractAllEquiJoinPairs(t *testing.T) {
 			{Name: "name", DataType: "TEXT", Index: 2},
 		},
 	}
-	tableA := &joinTableInfo{info: usersInfo, tableName: "users", alias: "u"}
-	tableB := &joinTableInfo{info: ordersInfo, tableName: "orders", alias: "o"}
+	tableA := &joinTableInfo{info: usersInfo, tableName: "users", alias: "u", effectiveName: "u"}
+	tableB := &joinTableInfo{info: ordersInfo, tableName: "orders", alias: "o", effectiveName: "o"}
 
 	t.Run("single pair", func(t *testing.T) {
 		on := &ast.BinaryExpr{

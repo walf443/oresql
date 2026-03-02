@@ -101,16 +101,16 @@ func extractAllEquiJoinPairs(
 
 		if leftIsA && rightIsB {
 			pairs = append(pairs, equiJoinPair{
-				leftTable:  tableA.tableName,
+				leftTable:  tableA.effectiveName,
 				leftCol:    strings.ToLower(leftIdent.Name),
-				rightTable: tableB.tableName,
+				rightTable: tableB.effectiveName,
 				rightCol:   strings.ToLower(rightIdent.Name),
 			})
 		} else if leftIsB && rightIsA {
 			pairs = append(pairs, equiJoinPair{
-				leftTable:  tableA.tableName,
+				leftTable:  tableA.effectiveName,
 				leftCol:    strings.ToLower(rightIdent.Name),
-				rightTable: tableB.tableName,
+				rightTable: tableB.effectiveName,
 				rightCol:   strings.ToLower(leftIdent.Name),
 			})
 		} else {
@@ -314,14 +314,16 @@ func (e *Executor) buildJoinGraph(stmt *ast.SelectStmt) (*JoinGraph, error) {
 		_ = joinNode // the join node is either A or B
 
 		tableAInfo := &joinTableInfo{
-			info:      nodeA.Info,
-			tableName: nodeA.TableName,
-			alias:     nodeA.Alias,
+			info:          nodeA.Info,
+			tableName:     nodeA.TableName,
+			alias:         nodeA.Alias,
+			effectiveName: tableAName,
 		}
 		tableBInfo := &joinTableInfo{
-			info:      nodeB.Info,
-			tableName: nodeB.TableName,
-			alias:     nodeB.Alias,
+			info:          nodeB.Info,
+			tableName:     nodeB.TableName,
+			alias:         nodeB.Alias,
+			effectiveName: tableBName,
 		}
 
 		pairs, residual := extractAllEquiJoinPairs(join.On, tableAInfo, tableBInfo)
@@ -849,7 +851,7 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 		if edge != nil && len(edge.EquiJoinPairs) > 0 {
 			pair := edge.EquiJoinPairs[0]
 			// Determine which side of the pair corresponds to which table
-			if nextNode.TableName == pair.leftTable {
+			if nextName == pair.leftTable {
 				nextEquiCol = pair.leftCol
 				partnerNode := graph.Nodes[partnerName]
 				col, findErr := partnerNode.Info.FindColumn(pair.rightCol)

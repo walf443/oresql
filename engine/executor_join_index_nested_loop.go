@@ -15,9 +15,10 @@ type equiJoinPair struct {
 
 // joinTableInfo holds table metadata for join optimization.
 type joinTableInfo struct {
-	info      *TableInfo
-	tableName string // lowercase
-	alias     string
+	info          *TableInfo
+	tableName     string // lowercase
+	alias         string
+	effectiveName string // join graph node key (alias if present, otherwise tableName)
 }
 
 // matchesTable returns true if the given qualifier (table name or alias) matches this table.

@@ -2,6 +2,7 @@ package pager
 
 import (
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -71,11 +72,12 @@ func TestBufferPoolLRUEviction(t *testing.T) {
 }
 
 func TestBufferPoolPinnedProtection(t *testing.T) {
-	bp := newTestPool(t, 4)
+	// Use numShards as capacity so each shard holds exactly 1 page.
+	bp := newTestPool(t, numShards)
 	defer bp.Close()
 
-	// Pin all 4 pages
-	ids := make([]PageID, 4)
+	// Pin all pages (one per shard)
+	ids := make([]PageID, numShards)
 	for i := range ids {
 		id, _, err := bp.NewPage()
 		require.NoError(t, err)
@@ -83,21 +85,18 @@ func TestBufferPoolPinnedProtection(t *testing.T) {
 		// Don't unpin — all are pinned
 	}
 
-	// Try to allocate a 5th page → should fail (all pinned)
+	// Try to allocate one more → should fail (all pinned)
 	_, _, err := bp.NewPage()
 	assert.Error(t, err, "should fail when all frames are pinned")
 
-	// Unpin one → now allocation should succeed
-	bp.UnpinPage(ids[0], false)
-	id5, _, err := bp.NewPage()
-	require.NoError(t, err)
-	assert.NotEqual(t, InvalidPageID, id5)
-	bp.UnpinPage(id5, false)
-
-	// Unpin remaining
-	for i := 1; i < len(ids); i++ {
-		bp.UnpinPage(ids[i], false)
+	// Unpin all → now allocation should succeed (eviction possible in any shard)
+	for _, id := range ids {
+		bp.UnpinPage(id, false)
 	}
+	idNew, _, err := bp.NewPage()
+	require.NoError(t, err)
+	assert.NotEqual(t, InvalidPageID, idNew)
+	bp.UnpinPage(idNew, false)
 }
 
 func TestBufferPoolDirtyFlush(t *testing.T) {
@@ -145,4 +144,44 @@ func TestBufferPoolMultiplePin(t *testing.T) {
 
 	// Unpin again → now unpinned
 	bp.UnpinPage(id, false)
+}
+
+func TestBufferPoolConcurrentFetch(t *testing.T) {
+	bp := newTestPool(t, 64)
+	defer bp.Close()
+
+	const numPages = 32
+	ids := make([]PageID, numPages)
+	for i := range ids {
+		id, data, err := bp.NewPage()
+		require.NoError(t, err)
+		data[0] = byte(i + 1)
+		bp.UnpinPage(id, true)
+		ids[i] = id
+	}
+	require.NoError(t, bp.FlushAll())
+
+	// Concurrent FetchPage / UnpinPage from multiple goroutines
+	var wg sync.WaitGroup
+	const numGoroutines = 16
+	const iterations = 100
+	wg.Add(numGoroutines)
+	for g := 0; g < numGoroutines; g++ {
+		go func(gid int) {
+			defer wg.Done()
+			for iter := 0; iter < iterations; iter++ {
+				idx := (gid*iterations + iter) % numPages
+				data, err := bp.FetchPage(ids[idx])
+				if err != nil {
+					t.Errorf("goroutine %d: FetchPage(%d): %v", gid, ids[idx], err)
+					return
+				}
+				if data[0] != byte(idx+1) {
+					t.Errorf("goroutine %d: page %d: got %d, want %d", gid, ids[idx], data[0], idx+1)
+				}
+				bp.UnpinPage(ids[idx], false)
+			}
+		}(g)
+	}
+	wg.Wait()
 }

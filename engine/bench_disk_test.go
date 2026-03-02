@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -16,9 +17,21 @@ func setupBenchTableDisk(b *testing.B, n int, withIndex bool) *Executor {
 		b.Fatal(err)
 	}
 
-	for i := 0; i < n; i++ {
-		sql := fmt.Sprintf("INSERT INTO bench VALUES (%d, %d, 'name_%d', %d)", i, i*10, i, i%100)
-		if err := execSQL(exec, sql); err != nil {
+	batchSize := 1000
+	for start := 0; start < n; start += batchSize {
+		end := start + batchSize
+		if end > n {
+			end = n
+		}
+		var buf strings.Builder
+		buf.WriteString("INSERT INTO bench VALUES ")
+		for i := start; i < end; i++ {
+			if i > start {
+				buf.WriteString(", ")
+			}
+			fmt.Fprintf(&buf, "(%d, %d, 'name_%d', %d)", i, i*10, i, i%100)
+		}
+		if err := execSQL(exec, buf.String()); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -240,9 +253,21 @@ func setupLowSelectivityTableDisk(b *testing.B, n int, withIndex bool) *Executor
 		b.Fatal(err)
 	}
 
-	for i := 0; i < n; i++ {
-		sql := fmt.Sprintf("INSERT INTO bench_low VALUES (%d, %d, %d)", i, i*10, i%5)
-		if err := execSQL(exec, sql); err != nil {
+	batchSize := 1000
+	for start := 0; start < n; start += batchSize {
+		end := start + batchSize
+		if end > n {
+			end = n
+		}
+		var buf strings.Builder
+		buf.WriteString("INSERT INTO bench_low VALUES ")
+		for i := start; i < end; i++ {
+			if i > start {
+				buf.WriteString(", ")
+			}
+			fmt.Fprintf(&buf, "(%d, %d, %d)", i, i*10, i%5)
+		}
+		if err := execSQL(exec, buf.String()); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -380,15 +405,38 @@ func setupJoinBenchTablesDisk(b *testing.B, n int, joinIndex bool, whereIndex bo
 	if numUsers < 1 {
 		numUsers = 1
 	}
-	for i := 0; i < numUsers; i++ {
-		sql := fmt.Sprintf("INSERT INTO users VALUES (%d, 'user_%d')", i, i)
-		if err := execSQL(exec, sql); err != nil {
+	batchSize := 1000
+	for start := 0; start < numUsers; start += batchSize {
+		end := start + batchSize
+		if end > numUsers {
+			end = numUsers
+		}
+		var buf strings.Builder
+		buf.WriteString("INSERT INTO users VALUES ")
+		for i := start; i < end; i++ {
+			if i > start {
+				buf.WriteString(", ")
+			}
+			fmt.Fprintf(&buf, "(%d, 'user_%d')", i, i)
+		}
+		if err := execSQL(exec, buf.String()); err != nil {
 			b.Fatal(err)
 		}
 	}
-	for i := 0; i < n; i++ {
-		sql := fmt.Sprintf("INSERT INTO orders VALUES (%d, %d, 'product_%d', '%s')", i, i%numUsers, i, statuses[i%5])
-		if err := execSQL(exec, sql); err != nil {
+	for start := 0; start < n; start += batchSize {
+		end := start + batchSize
+		if end > n {
+			end = n
+		}
+		var buf strings.Builder
+		buf.WriteString("INSERT INTO orders VALUES ")
+		for i := start; i < end; i++ {
+			if i > start {
+				buf.WriteString(", ")
+			}
+			fmt.Fprintf(&buf, "(%d, %d, 'product_%d', '%s')", i, i%numUsers, i, statuses[i%5])
+		}
+		if err := execSQL(exec, buf.String()); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -424,15 +472,38 @@ func setupJoinBenchTablesCompositeDisk(b *testing.B, n int, indexMode string) *E
 	if numUsers < 1 {
 		numUsers = 1
 	}
-	for i := 0; i < numUsers; i++ {
-		sql := fmt.Sprintf("INSERT INTO users VALUES (%d, 'user_%d')", i, i)
-		if err := execSQL(exec, sql); err != nil {
+	batchSize := 1000
+	for start := 0; start < numUsers; start += batchSize {
+		end := start + batchSize
+		if end > numUsers {
+			end = numUsers
+		}
+		var buf strings.Builder
+		buf.WriteString("INSERT INTO users VALUES ")
+		for i := start; i < end; i++ {
+			if i > start {
+				buf.WriteString(", ")
+			}
+			fmt.Fprintf(&buf, "(%d, 'user_%d')", i, i)
+		}
+		if err := execSQL(exec, buf.String()); err != nil {
 			b.Fatal(err)
 		}
 	}
-	for i := 0; i < n; i++ {
-		sql := fmt.Sprintf("INSERT INTO orders VALUES (%d, %d, 'product_%d', '%s')", i, i%numUsers, i, statuses[i%5])
-		if err := execSQL(exec, sql); err != nil {
+	for start := 0; start < n; start += batchSize {
+		end := start + batchSize
+		if end > n {
+			end = n
+		}
+		var buf strings.Builder
+		buf.WriteString("INSERT INTO orders VALUES ")
+		for i := start; i < end; i++ {
+			if i > start {
+				buf.WriteString(", ")
+			}
+			fmt.Fprintf(&buf, "(%d, %d, 'product_%d', '%s')", i, i%numUsers, i, statuses[i%5])
+		}
+		if err := execSQL(exec, buf.String()); err != nil {
 			b.Fatal(err)
 		}
 	}

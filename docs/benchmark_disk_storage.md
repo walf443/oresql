@@ -164,6 +164,38 @@ memory ストレージのセカンダリインデックスはメモリ上の B-t
 
 ---
 
+### 12. Covering Index（PK ルックアップスキップ）
+
+セカンダリインデックスの composite key にはインデックス対象カラムの値がエンコード済みで格納されている。クエリが参照するカラムが全てインデックスカラム + PK で賄える場合（Covering Index）、PK ルックアップを完全にスキップし、composite key から直接カラム値をデコードして Row を構築する。
+
+#### 12a. 等値検索 (`WHERE val = X`)
+
+| パターン | Disk (ns/op) | Disk (B/op) | Disk (allocs/op) |
+|---------|-------------|------------|------------------|
+| Covering (`SELECT val`) | 1,764 | 1,354 | 34 |
+| Non-Covering (`SELECT *`) | 2,322 | 1,826 | 46 |
+| **改善** | **1.3x 高速化** | **26% 削減** | **26% 削減** |
+
+#### 12b. 範囲検索 + LIMIT (`WHERE val > X LIMIT 10`)
+
+| パターン | Disk (ns/op) | Disk (B/op) | Disk (allocs/op) |
+|---------|-------------|------------|------------------|
+| Covering (`SELECT val`) | 3,190 | 2,832 | 94 |
+| Non-Covering (`SELECT *`) | 5,301 | 4,888 | 131 |
+| **改善** | **1.7x 高速化** | **42% 削減** | **28% 削減** |
+
+#### 12c. ORDER BY DESC + LIMIT (`ORDER BY val DESC LIMIT 10`)
+
+| パターン | Disk (ns/op) | Disk (B/op) | Disk (allocs/op) |
+|---------|-------------|------------|------------------|
+| Covering (`SELECT val`) | 3,267 | 4,872 | 82 |
+| Non-Covering (`SELECT *`) | 6,459 | 7,008 | 119 |
+| **改善** | **2.0x 高速化** | **30% 削減** | **31% 削減** |
+
+**考察:** Covering Index により、セカンダリインデックス経由クエリで PK ルックアップ（Primary B+Tree の `findLeaf` → リーフ → `DecodeRowN`）を完全にスキップし、composite key の `DecodeCompositeKeyValues` で直接 Row を構築する。PK ルックアップのコストが支配的なパスほど効果が大きく、ORDER BY DESC + LIMIT で **2.0x**、範囲 + LIMIT で **1.7x**、等値で **1.3x** の高速化。`CoveringIndexReader` インターフェースを型アサーションで利用し、既存パスとの互換性を維持。カラム依存性分析（`collectNeededColumns` / `isIndexCovering`）で自動的に covering 判定を行い、全ての SELECT/WHERE/ORDER BY で参照されるカラムがインデックスカラム + PK に含まれる場合のみ covering パスを使用する。
+
+---
+
 ## まとめ
 
 | カテゴリ | Disk/Memory 比率 | 評価 |
@@ -185,6 +217,9 @@ memory ストレージのセカンダリインデックスはメモリ上の B-t
 | WHERE + LIMIT インデックスストリーミング (範囲) | 1.8x | 良好（インライン最適化で改善） |
 | JOIN (Hash Join) | 1.2x〜1.7x | 良好 |
 | JOIN (インデックス利用) | 1.3x〜2.0x | 良好 |
+| Covering Index 等値検索 | 1.3x 高速化 (vs Non-Covering) | 良好（PK lookup スキップ） |
+| Covering Index 範囲 + LIMIT | 1.7x 高速化 (vs Non-Covering) | 良好（PK lookup スキップ） |
+| Covering Index ORDER BY + LIMIT | 2.0x 高速化 (vs Non-Covering) | 良好（PK lookup スキップ） |
 
 ### 主要な知見
 
@@ -210,6 +245,8 @@ memory ストレージのセカンダリインデックスはメモリ上の B-t
 
 11. **WHERE + LIMIT のインデックスストリーミングで Disk が Memory 同等に到達**: `OrderedRangeScan` のコールバックベース走査を `executeIndexScanStreaming` で再利用し、LIMIT 件数に達した時点でインデックス走査を早期打ち切り。Primary B+Tree の `findLeaf` インライン化により各 PK ルックアップのアロケーションが大幅に削減された結果、等値検索で Disk/Memory **~1.0x**、ポストフィルタで **1.1x** とほぼ Memory 同等の性能に到達。範囲検索（`WHERE val > 5000 LIMIT 10`、5,000行マッチ）でも Disk **318x** 高速化（1,649,514 → 5,183 ns/op）、B/op **855x** 削減（4,013,682 → 4,696）。
 
+12. **Covering Index で PK ルックアップを完全にスキップ**: セカンダリインデックスの composite key からカラム値を直接デコードする `DecodeCompositeKeyValues` を導入し、クエリが参照する全カラムがインデックスカラム + PK に含まれる場合に PK ルックアップを排除。`CoveringIndexReader` インターフェースの `LookupCovering` / `OrderedCoveringScan` メソッドで実装。カラム依存性分析（`collectNeededColumns` + `isIndexCovering`）により自動的に covering 判定。等値で **1.3x**、範囲 + LIMIT で **1.7x**、ORDER BY + LIMIT で **2.0x** の高速化（Non-Covering 比）。メモリ使用量も 26〜42% 削減。
+
 ## 改善優先度
 
 | 改善項目 | 影響 | 難易度 |
@@ -225,3 +262,4 @@ memory ストレージのセカンダリインデックスはメモリ上の B-t
 | ~~`ScanEach` ストリーミング (DISTINCT + LIMIT 向け)~~ | **改善済み (5.7x → 1.4x)** — `ScanEach` で inline callback + early exit | — |
 | ~~`ScanEach` ストリーミングを WHERE + LIMIT に拡張~~ | **改善済み (Memory 16x, Disk 12x 高速化)** — `executeScanEachStreaming` を汎用化 | — |
 | ~~WHERE + LIMIT のインデックスストリーミング~~ | **改善済み (等値: ~1.0x, 範囲: Disk 318x 高速化)** — `OrderedRangeScan` + `findLeaf` インライン化 | — |
+| ~~Covering Index（PK ルックアップスキップ）~~ | **改善済み (等値: 1.3x, 範囲: 1.7x, ORDER BY: 2.0x)** — `DecodeCompositeKeyValues` + `CoveringIndexReader` | — |

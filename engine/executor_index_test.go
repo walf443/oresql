@@ -389,6 +389,235 @@ func TestExtractRangeConditions(t *testing.T) {
 	}
 }
 
+// --- collectColumnRefs / collectNeededColumns / isIndexCovering tests ---
+
+func TestCollectColumnRefs(t *testing.T) {
+	info := &TableInfo{
+		Name: "t",
+		Columns: []ColumnInfo{
+			{Name: "id", DataType: "INT", Index: 0, PrimaryKey: true},
+			{Name: "val", DataType: "INT", Index: 1},
+			{Name: "name", DataType: "TEXT", Index: 2},
+			{Name: "category", DataType: "INT", Index: 3},
+		},
+		PrimaryKeyCol: 0,
+	}
+
+	tests := []struct {
+		name string
+		expr ast.Expr
+		want map[int]bool
+	}{
+		{
+			"ident expr",
+			&ast.IdentExpr{Name: "val"},
+			map[int]bool{1: true},
+		},
+		{
+			"star expr",
+			&ast.StarExpr{},
+			map[int]bool{0: true, 1: true, 2: true, 3: true},
+		},
+		{
+			"alias expr",
+			&ast.AliasExpr{Expr: &ast.IdentExpr{Name: "name"}, Alias: "n"},
+			map[int]bool{2: true},
+		},
+		{
+			"binary expr",
+			&ast.BinaryExpr{
+				Left:  &ast.IdentExpr{Name: "val"},
+				Op:    "=",
+				Right: &ast.IntLitExpr{Value: 42},
+			},
+			map[int]bool{1: true},
+		},
+		{
+			"logical expr",
+			&ast.LogicalExpr{
+				Left: &ast.BinaryExpr{
+					Left:  &ast.IdentExpr{Name: "val"},
+					Op:    ">",
+					Right: &ast.IntLitExpr{Value: 5},
+				},
+				Op: "AND",
+				Right: &ast.BinaryExpr{
+					Left:  &ast.IdentExpr{Name: "category"},
+					Op:    "=",
+					Right: &ast.IntLitExpr{Value: 1},
+				},
+			},
+			map[int]bool{1: true, 3: true},
+		},
+		{
+			"arithmetic expr",
+			&ast.ArithmeticExpr{
+				Left:  &ast.IdentExpr{Name: "val"},
+				Op:    "+",
+				Right: &ast.IntLitExpr{Value: 1},
+			},
+			map[int]bool{1: true},
+		},
+		{
+			"not expr",
+			&ast.NotExpr{Expr: &ast.IdentExpr{Name: "val"}},
+			map[int]bool{1: true},
+		},
+		{
+			"is null expr",
+			&ast.IsNullExpr{Expr: &ast.IdentExpr{Name: "name"}},
+			map[int]bool{2: true},
+		},
+		{
+			"in expr",
+			&ast.InExpr{
+				Left:   &ast.IdentExpr{Name: "category"},
+				Values: []ast.Expr{&ast.IntLitExpr{Value: 1}, &ast.IntLitExpr{Value: 2}},
+			},
+			map[int]bool{3: true},
+		},
+		{
+			"between expr",
+			&ast.BetweenExpr{
+				Left: &ast.IdentExpr{Name: "val"},
+				Low:  &ast.IntLitExpr{Value: 1},
+				High: &ast.IntLitExpr{Value: 10},
+			},
+			map[int]bool{1: true},
+		},
+		{
+			"like expr",
+			&ast.LikeExpr{
+				Left:    &ast.IdentExpr{Name: "name"},
+				Pattern: &ast.StringLitExpr{Value: "abc%"},
+			},
+			map[int]bool{2: true},
+		},
+		{
+			"case expr",
+			&ast.CaseExpr{
+				Operand: &ast.IdentExpr{Name: "category"},
+				Whens: []ast.CaseWhen{
+					{When: &ast.IntLitExpr{Value: 1}, Then: &ast.IdentExpr{Name: "name"}},
+				},
+				Else: &ast.IdentExpr{Name: "val"},
+			},
+			map[int]bool{3: true, 2: true, 1: true},
+		},
+		{
+			"call expr",
+			&ast.CallExpr{
+				Name: "ABS",
+				Args: []ast.Expr{&ast.IdentExpr{Name: "val"}},
+			},
+			map[int]bool{1: true},
+		},
+		{
+			"cast expr",
+			&ast.CastExpr{
+				Expr:       &ast.IdentExpr{Name: "val"},
+				TargetType: "TEXT",
+			},
+			map[int]bool{1: true},
+		},
+		{
+			"int literal (no columns)",
+			&ast.IntLitExpr{Value: 42},
+			map[int]bool{},
+		},
+		{
+			"string literal (no columns)",
+			&ast.StringLitExpr{Value: "hello"},
+			map[int]bool{},
+		},
+		{
+			"null literal (no columns)",
+			&ast.NullLitExpr{},
+			map[int]bool{},
+		},
+		{
+			"bool literal (no columns)",
+			&ast.BoolLitExpr{Value: true},
+			map[int]bool{},
+		},
+		{
+			"nil expr (no columns)",
+			nil,
+			map[int]bool{},
+		},
+		{
+			"unknown column (ignored)",
+			&ast.IdentExpr{Name: "nonexistent"},
+			map[int]bool{},
+		},
+		{
+			"case insensitive column",
+			&ast.IdentExpr{Name: "VAL"},
+			map[int]bool{1: true},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := make(map[int]bool)
+			collectColumnRefs(tt.expr, info, got)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestCollectNeededColumns(t *testing.T) {
+	info := &TableInfo{
+		Name: "t",
+		Columns: []ColumnInfo{
+			{Name: "id", DataType: "INT", Index: 0, PrimaryKey: true},
+			{Name: "val", DataType: "INT", Index: 1},
+			{Name: "name", DataType: "TEXT", Index: 2},
+		},
+		PrimaryKeyCol: 0,
+	}
+
+	t.Run("select and where", func(t *testing.T) {
+		columns := []ast.Expr{&ast.IdentExpr{Name: "val"}}
+		where := &ast.BinaryExpr{
+			Left:  &ast.IdentExpr{Name: "name"},
+			Op:    "=",
+			Right: &ast.StringLitExpr{Value: "test"},
+		}
+		got := collectNeededColumns(columns, where, nil, info)
+		assert.Equal(t, map[int]bool{1: true, 2: true}, got)
+	})
+
+	t.Run("select with order by", func(t *testing.T) {
+		columns := []ast.Expr{&ast.IdentExpr{Name: "val"}}
+		orderBy := []ast.OrderByClause{{Expr: &ast.IdentExpr{Name: "id"}}}
+		got := collectNeededColumns(columns, nil, orderBy, info)
+		assert.Equal(t, map[int]bool{1: true, 0: true}, got)
+	})
+}
+
+func TestIsIndexCovering(t *testing.T) {
+	t.Run("single column covering", func(t *testing.T) {
+		exec := NewExecutor(NewDatabase("test"))
+		run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT, name TEXT)")
+		run(t, exec, "CREATE INDEX idx_val ON t(val)")
+
+		db, _ := exec.resolveDatabase("")
+		info, _ := db.catalog.GetTable("t")
+		idx := db.storage.LookupSingleColumnIndex("t", 1) // val
+		assert.NotNil(t, idx)
+
+		// val + pk is covering
+		assert.True(t, isIndexCovering(idx, map[int]bool{1: true}, info.PrimaryKeyCol))
+		// val + pk + id is covering (pk = id)
+		assert.True(t, isIndexCovering(idx, map[int]bool{0: true, 1: true}, info.PrimaryKeyCol))
+		// val + name is not covering
+		assert.False(t, isIndexCovering(idx, map[int]bool{1: true, 2: true}, info.PrimaryKeyCol))
+		// all columns is not covering
+		assert.False(t, isIndexCovering(idx, map[int]bool{0: true, 1: true, 2: true}, info.PrimaryKeyCol))
+	})
+}
+
 func TestPrimaryKeyLookup(t *testing.T) {
 	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE items (id INT PRIMARY KEY, name TEXT)")

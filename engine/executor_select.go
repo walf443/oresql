@@ -428,33 +428,60 @@ func (e *Executor) scanFullOrder(
 			return true
 		}, forEachLimit)
 	} else {
-		// Secondary index order scan
-		ior.index.OrderedRangeScan(
-			ior.fromVal, ior.fromInclusive,
-			ior.toVal, ior.toInclusive,
-			ior.reverse,
-			func(rowKey int64) bool {
-				row, found := db.storage.GetRow(info.Name, rowKey)
-				if !found {
-					return true
-				}
-				if stmt.Where != nil {
-					wVal, err := eval.Eval(stmt.Where, row)
-					if err != nil {
+		// Secondary index order scan — try covering first
+		neededCols := collectNeededColumns(stmt.Columns, stmt.Where, stmt.OrderBy, info)
+		cir, isCovering := ior.index.(CoveringIndexReader)
+		if isCovering && isIndexCovering(ior.index, neededCols, info.PrimaryKeyCol) {
+			cir.OrderedCoveringScan(
+				ior.fromVal, ior.fromInclusive,
+				ior.toVal, ior.toInclusive,
+				ior.reverse, len(info.Columns), info.PrimaryKeyCol,
+				func(rowKey int64, row Row) bool {
+					if stmt.Where != nil {
+						wVal, err := eval.Eval(stmt.Where, row)
+						if err != nil {
+							return false
+						}
+						b, ok := wVal.(bool)
+						if !ok || !b {
+							return true
+						}
+					}
+					rows = append(rows, row)
+					if needed > 0 && len(rows) >= needed {
 						return false
 					}
-					b, ok := wVal.(bool)
-					if !ok || !b {
+					return true
+				},
+			)
+		} else {
+			ior.index.OrderedRangeScan(
+				ior.fromVal, ior.fromInclusive,
+				ior.toVal, ior.toInclusive,
+				ior.reverse,
+				func(rowKey int64) bool {
+					row, found := db.storage.GetRow(info.Name, rowKey)
+					if !found {
 						return true
 					}
-				}
-				rows = append(rows, row)
-				if needed > 0 && len(rows) >= needed {
-					return false
-				}
-				return true
-			},
-		)
+					if stmt.Where != nil {
+						wVal, err := eval.Eval(stmt.Where, row)
+						if err != nil {
+							return false
+						}
+						b, ok := wVal.(bool)
+						if !ok || !b {
+							return true
+						}
+					}
+					rows = append(rows, row)
+					if needed > 0 && len(rows) >= needed {
+						return false
+					}
+					return true
+				},
+			)
+		}
 	}
 
 	// For non-PK, nullable columns without LIMIT: move NULLs to end
@@ -554,12 +581,45 @@ func (e *Executor) scanPartialOrder(
 			return true
 		}, 0)
 	} else {
-		ior.index.OrderedRangeScan(
-			ior.fromVal, ior.fromInclusive,
-			ior.toVal, ior.toInclusive,
-			ior.reverse,
-			scanFn,
-		)
+		// Try covering scan for partial order
+		neededCols := collectNeededColumns(stmt.Columns, stmt.Where, stmt.OrderBy, info)
+		cir, isCovering := ior.index.(CoveringIndexReader)
+		if isCovering && isIndexCovering(ior.index, neededCols, info.PrimaryKeyCol) {
+			cir.OrderedCoveringScan(
+				ior.fromVal, ior.fromInclusive,
+				ior.toVal, ior.toInclusive,
+				ior.reverse, len(info.Columns), info.PrimaryKeyCol,
+				func(rowKey int64, row Row) bool {
+					if stmt.Where != nil {
+						wVal, err := eval.Eval(stmt.Where, row)
+						if err != nil {
+							return false
+						}
+						b, ok := wVal.(bool)
+						if !ok || !b {
+							return true
+						}
+					}
+					currentKeyVal := row[orderColIdx]
+					if needed > 0 && len(rows) >= needed && !firstRow {
+						if !valuesEqual(currentKeyVal, prevKeyVal) {
+							return false
+						}
+					}
+					prevKeyVal = currentKeyVal
+					firstRow = false
+					rows = append(rows, row)
+					return true
+				},
+			)
+		} else {
+			ior.index.OrderedRangeScan(
+				ior.fromVal, ior.fromInclusive,
+				ior.toVal, ior.toInclusive,
+				ior.reverse,
+				scanFn,
+			)
+		}
 	}
 
 	return rows, eval, nil
@@ -650,6 +710,13 @@ func (e *Executor) scanSourceSingle(stmt *ast.SelectStmt, earlyLimit int) ([]Row
 	}
 
 	var rows []Row
+
+	// Try covering index lookup (skip PK lookup entirely)
+	neededCols := collectNeededColumns(stmt.Columns, stmt.Where, stmt.OrderBy, info)
+	if coveringRows, ok := e.tryIndexLookupCovering(stmt.Where, info, neededCols); ok {
+		return coveringRows, newTableEvaluator(e, info), nil
+	}
+
 	if keys, indexUsed := e.tryIndexScan(stmt.Where, info); indexUsed {
 		rows, err = db.storage.GetByKeys(info.Name, keys)
 		if err != nil {
@@ -1346,62 +1413,116 @@ func (e *Executor) executeIndexScanStreaming(
 	cols := eval.ColumnList()
 	var scanErr error
 
-	params.index.OrderedRangeScan(
-		params.fromVal, params.fromInclusive,
-		params.toVal, params.toInclusive,
-		false, // not reverse (no ORDER BY in this path)
-		func(rowKey int64) bool {
-			row, found := db.storage.GetRow(info.Name, rowKey)
-			if !found {
-				return true
-			}
-			// Full WHERE evaluation (index condition + additional conditions)
-			if where != nil {
-				val, err := eval.Eval(where, row)
-				if err != nil {
-					scanErr = err
-					return false
-				}
-				b, ok := val.(bool)
-				if !ok {
-					scanErr = fmt.Errorf("WHERE expression must evaluate to boolean, got %T", val)
-					return false
-				}
-				if !b {
-					return true
-				}
-			}
-			// Projection
-			var projected Row
-			if isStar {
-				projected = make(Row, len(cols))
-				for i, col := range cols {
-					projected[i] = row[col.Index]
-				}
-			} else {
-				projected = make(Row, len(colExprs))
-				for i, expr := range colExprs {
-					val, err := eval.Eval(expr, row)
+	// Check if covering index scan is possible
+	neededCols := collectNeededColumns(stmt.Columns, where, nil, info)
+	cir, isCovering := params.index.(CoveringIndexReader)
+	if isCovering && isIndexCovering(params.index, neededCols, info.PrimaryKeyCol) {
+		cir.OrderedCoveringScan(
+			params.fromVal, params.fromInclusive,
+			params.toVal, params.toInclusive,
+			false, len(info.Columns), info.PrimaryKeyCol,
+			func(rowKey int64, row Row) bool {
+				if where != nil {
+					val, err := eval.Eval(where, row)
 					if err != nil {
 						scanErr = err
 						return false
 					}
-					projected[i] = val
+					b, ok := val.(bool)
+					if !ok {
+						scanErr = fmt.Errorf("WHERE expression must evaluate to boolean, got %T", val)
+						return false
+					}
+					if !b {
+						return true
+					}
 				}
-			}
-			// Dedup (DISTINCT only)
-			if distinct {
-				key := string(encodeValues(projected))
-				if seen[key] {
+				var projected Row
+				if isStar {
+					projected = make(Row, len(cols))
+					for i, col := range cols {
+						projected[i] = row[col.Index]
+					}
+				} else {
+					projected = make(Row, len(colExprs))
+					for i, expr := range colExprs {
+						val, err := eval.Eval(expr, row)
+						if err != nil {
+							scanErr = err
+							return false
+						}
+						projected[i] = val
+					}
+				}
+				if distinct {
+					key := string(encodeValues(projected))
+					if seen[key] {
+						return true
+					}
+					seen[key] = true
+				}
+				result = append(result, projected)
+				return len(result) < earlyLimit
+			},
+		)
+	} else {
+		params.index.OrderedRangeScan(
+			params.fromVal, params.fromInclusive,
+			params.toVal, params.toInclusive,
+			false, // not reverse (no ORDER BY in this path)
+			func(rowKey int64) bool {
+				row, found := db.storage.GetRow(info.Name, rowKey)
+				if !found {
 					return true
 				}
-				seen[key] = true
-			}
-			result = append(result, projected)
-			// Early exit once we have enough rows (earlyLimit = limit + offset)
-			return len(result) < earlyLimit
-		},
-	)
+				// Full WHERE evaluation (index condition + additional conditions)
+				if where != nil {
+					val, err := eval.Eval(where, row)
+					if err != nil {
+						scanErr = err
+						return false
+					}
+					b, ok := val.(bool)
+					if !ok {
+						scanErr = fmt.Errorf("WHERE expression must evaluate to boolean, got %T", val)
+						return false
+					}
+					if !b {
+						return true
+					}
+				}
+				// Projection
+				var projected Row
+				if isStar {
+					projected = make(Row, len(cols))
+					for i, col := range cols {
+						projected[i] = row[col.Index]
+					}
+				} else {
+					projected = make(Row, len(colExprs))
+					for i, expr := range colExprs {
+						val, err := eval.Eval(expr, row)
+						if err != nil {
+							scanErr = err
+							return false
+						}
+						projected[i] = val
+					}
+				}
+				// Dedup (DISTINCT only)
+				if distinct {
+					key := string(encodeValues(projected))
+					if seen[key] {
+						return true
+					}
+					seen[key] = true
+				}
+				result = append(result, projected)
+				// Early exit once we have enough rows (earlyLimit = limit + offset)
+				return len(result) < earlyLimit
+			},
+		)
+	}
 	if scanErr != nil {
 		return nil, scanErr
 	}

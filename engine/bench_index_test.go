@@ -869,3 +869,49 @@ func BenchmarkIndexWherePostFilterLimitNoOrder_10000(b *testing.B) {
 		}
 	}
 }
+
+// --- Covering index benchmarks ---
+
+func BenchmarkCoveringIndexLookup_10000(b *testing.B) {
+	exec := setupBenchTable(b, 10000, true)
+	sql := "SELECT val FROM bench WHERE val = 50000"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkNonCoveringIndexLookup_10000(b *testing.B) {
+	exec := setupBenchTable(b, 10000, true)
+	sql := "SELECT * FROM bench WHERE val = 50000"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkCoveringStreamingLimit_10000(b *testing.B) {
+	exec := setupBenchTable(b, 10000, true)
+	sql := "SELECT val FROM bench WHERE val > 5000 LIMIT 10"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkCoveringOrderBy_10000(b *testing.B) {
+	exec := setupBenchTable(b, 10000, true)
+	sql := "SELECT val FROM bench ORDER BY val LIMIT 10"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

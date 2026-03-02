@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"math"
 	"strings"
 	"testing"
 
@@ -248,6 +249,125 @@ func TestDecodeRowError(t *testing.T) {
 
 	t.Run("unknown tag", func(t *testing.T) {
 		_, err := DecodeRow([]byte{0xFF})
+		assert.Error(t, err)
+	})
+}
+
+// --- DecodeValueBytes tests ---
+
+func TestDecodeValueBytesRoundTrip(t *testing.T) {
+	tests := []struct {
+		name  string
+		value Value
+	}{
+		{"nil", nil},
+		{"zero int", int64(0)},
+		{"positive int", int64(42)},
+		{"negative int", int64(-42)},
+		{"max int", int64(math.MaxInt64)},
+		{"min int", int64(math.MinInt64)},
+		{"zero float", float64(0.0)},
+		{"positive float", float64(3.14)},
+		{"negative float", float64(-2.71)},
+		{"max float", math.MaxFloat64},
+		{"smallest float", math.SmallestNonzeroFloat64},
+		{"negative max float", -math.MaxFloat64},
+		{"empty string", ""},
+		{"simple string", "hello"},
+		{"unicode string", "日本語"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			buf := EncodeValueBytes(nil, tt.value)
+			decoded, newPos, err := DecodeValueBytes(buf, 0)
+			require.NoError(t, err)
+			assert.Equal(t, len(buf), newPos, "should consume all bytes")
+			assert.Equal(t, tt.value, decoded)
+		})
+	}
+}
+
+func TestDecodeCompositeKeyValues(t *testing.T) {
+	t.Run("single int column", func(t *testing.T) {
+		var buf []byte
+		buf = EncodeValueBytes(buf, int64(42))
+		// Append rowKey (8 bytes)
+		var keyBuf [8]byte
+		keyBuf[7] = 1 // rowKey = 1
+		buf = append(buf, keyBuf[:]...)
+
+		vals, err := DecodeCompositeKeyValues(buf, 1)
+		require.NoError(t, err)
+		assert.Len(t, vals, 1)
+		assert.Equal(t, int64(42), vals[0])
+	})
+
+	t.Run("multiple columns", func(t *testing.T) {
+		var buf []byte
+		buf = EncodeValueBytes(buf, int64(10))
+		buf = EncodeValueBytes(buf, "hello")
+		// Append rowKey
+		var keyBuf [8]byte
+		keyBuf[7] = 5
+		buf = append(buf, keyBuf[:]...)
+
+		vals, err := DecodeCompositeKeyValues(buf, 2)
+		require.NoError(t, err)
+		assert.Len(t, vals, 2)
+		assert.Equal(t, int64(10), vals[0])
+		assert.Equal(t, "hello", vals[1])
+	})
+
+	t.Run("nil value", func(t *testing.T) {
+		var buf []byte
+		buf = EncodeValueBytes(buf, nil)
+		var keyBuf [8]byte
+		buf = append(buf, keyBuf[:]...)
+
+		vals, err := DecodeCompositeKeyValues(buf, 1)
+		require.NoError(t, err)
+		assert.Len(t, vals, 1)
+		assert.Nil(t, vals[0])
+	})
+
+	t.Run("float and string", func(t *testing.T) {
+		var buf []byte
+		buf = EncodeValueBytes(buf, float64(-1.5))
+		buf = EncodeValueBytes(buf, "test")
+		var keyBuf [8]byte
+		buf = append(buf, keyBuf[:]...)
+
+		vals, err := DecodeCompositeKeyValues(buf, 2)
+		require.NoError(t, err)
+		assert.Len(t, vals, 2)
+		assert.Equal(t, float64(-1.5), vals[0])
+		assert.Equal(t, "test", vals[1])
+	})
+}
+
+func TestDecodeValueBytesErrors(t *testing.T) {
+	t.Run("empty data", func(t *testing.T) {
+		_, _, err := DecodeValueBytes([]byte{}, 0)
+		assert.Error(t, err)
+	})
+
+	t.Run("truncated int", func(t *testing.T) {
+		_, _, err := DecodeValueBytes([]byte{0x01, 0x00}, 0)
+		assert.Error(t, err)
+	})
+
+	t.Run("truncated float", func(t *testing.T) {
+		_, _, err := DecodeValueBytes([]byte{0x02, 0x00, 0x00}, 0)
+		assert.Error(t, err)
+	})
+
+	t.Run("missing null terminator", func(t *testing.T) {
+		_, _, err := DecodeValueBytes([]byte{0x03, 'h', 'i'}, 0)
+		assert.Error(t, err)
+	})
+
+	t.Run("unknown tag", func(t *testing.T) {
+		_, _, err := DecodeValueBytes([]byte{0xFF}, 0)
 		assert.Error(t, err)
 	})
 }

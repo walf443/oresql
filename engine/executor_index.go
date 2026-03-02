@@ -632,3 +632,161 @@ func (e *Executor) tryIndexScan(where ast.Expr, info *TableInfo) ([]int64, bool)
 	}
 	return nil, false
 }
+
+// --- Covering index support ---
+
+// collectNeededColumns collects all column indexes referenced by the query
+// (SELECT columns, WHERE, ORDER BY). Returns a set of column indexes.
+func collectNeededColumns(columns []ast.Expr, where ast.Expr, orderBy []ast.OrderByClause, info *TableInfo) map[int]bool {
+	needed := make(map[int]bool)
+	for _, col := range columns {
+		collectColumnRefs(col, info, needed)
+	}
+	if where != nil {
+		collectColumnRefs(where, info, needed)
+	}
+	for _, ob := range orderBy {
+		collectColumnRefs(ob.Expr, info, needed)
+	}
+	return needed
+}
+
+// collectColumnRefs recursively walks an AST expression and records all column
+// indexes it references into the needed map.
+func collectColumnRefs(expr ast.Expr, info *TableInfo, needed map[int]bool) {
+	if expr == nil {
+		return
+	}
+	switch e := expr.(type) {
+	case *ast.IdentExpr:
+		col, err := info.FindColumn(e.Name)
+		if err == nil {
+			needed[col.Index] = true
+		}
+	case *ast.StarExpr:
+		// SELECT * needs all columns
+		for i := range info.Columns {
+			needed[i] = true
+		}
+	case *ast.AliasExpr:
+		collectColumnRefs(e.Expr, info, needed)
+	case *ast.BinaryExpr:
+		collectColumnRefs(e.Left, info, needed)
+		collectColumnRefs(e.Right, info, needed)
+	case *ast.LogicalExpr:
+		collectColumnRefs(e.Left, info, needed)
+		collectColumnRefs(e.Right, info, needed)
+	case *ast.ArithmeticExpr:
+		collectColumnRefs(e.Left, info, needed)
+		collectColumnRefs(e.Right, info, needed)
+	case *ast.NotExpr:
+		collectColumnRefs(e.Expr, info, needed)
+	case *ast.IsNullExpr:
+		collectColumnRefs(e.Expr, info, needed)
+	case *ast.InExpr:
+		collectColumnRefs(e.Left, info, needed)
+		for _, v := range e.Values {
+			collectColumnRefs(v, info, needed)
+		}
+	case *ast.BetweenExpr:
+		collectColumnRefs(e.Left, info, needed)
+		collectColumnRefs(e.Low, info, needed)
+		collectColumnRefs(e.High, info, needed)
+	case *ast.LikeExpr:
+		collectColumnRefs(e.Left, info, needed)
+		collectColumnRefs(e.Pattern, info, needed)
+	case *ast.CaseExpr:
+		if e.Operand != nil {
+			collectColumnRefs(e.Operand, info, needed)
+		}
+		for _, w := range e.Whens {
+			collectColumnRefs(w.When, info, needed)
+			collectColumnRefs(w.Then, info, needed)
+		}
+		if e.Else != nil {
+			collectColumnRefs(e.Else, info, needed)
+		}
+	case *ast.CallExpr:
+		for _, arg := range e.Args {
+			collectColumnRefs(arg, info, needed)
+		}
+	case *ast.CastExpr:
+		collectColumnRefs(e.Expr, info, needed)
+	case *ast.WindowExpr:
+		for _, arg := range e.Args {
+			collectColumnRefs(arg, info, needed)
+		}
+		for _, p := range e.PartitionBy {
+			collectColumnRefs(p, info, needed)
+		}
+		for _, ob := range e.OrderBy {
+			collectColumnRefs(ob.Expr, info, needed)
+		}
+	// Literals and subqueries don't reference columns in the current table
+	case *ast.IntLitExpr, *ast.FloatLitExpr, *ast.StringLitExpr, *ast.BoolLitExpr, *ast.NullLitExpr:
+		// no columns
+	case *ast.ScalarExpr, *ast.ExistsExpr:
+		// subquery — not handled for covering
+	}
+}
+
+// isIndexCovering returns true if all needed columns are covered by the index columns + PK.
+func isIndexCovering(idx IndexReader, neededCols map[int]bool, pkColIdx int) bool {
+	idxInfo := idx.GetInfo()
+	covered := make(map[int]bool)
+	for _, colIdx := range idxInfo.ColumnIdxs {
+		covered[colIdx] = true
+	}
+	if pkColIdx >= 0 {
+		covered[pkColIdx] = true
+	}
+	for col := range neededCols {
+		if !covered[col] {
+			return false
+		}
+	}
+	return true
+}
+
+// tryIndexLookupCovering attempts to use a covering index for equality conditions.
+// Returns covering rows directly without PK lookup.
+func (e *Executor) tryIndexLookupCovering(where ast.Expr, info *TableInfo, neededCols map[int]bool) ([]Row, bool) {
+	if where == nil {
+		return nil, false
+	}
+	eqConds := extractEqualityConditions(where)
+	if len(eqConds) == 0 {
+		return nil, false
+	}
+
+	indexes := e.db.storage.GetIndexes(info.Name)
+	for _, idx := range indexes {
+		idxInfo := idx.GetInfo()
+		vals := make([]Value, len(idxInfo.ColumnNames))
+		allFound := true
+		for i, colName := range idxInfo.ColumnNames {
+			val, ok := eqConds[strings.ToLower(colName)]
+			if !ok {
+				allFound = false
+				break
+			}
+			vals[i] = val
+		}
+		if !allFound {
+			continue
+		}
+		if !isIndexCovering(idx, neededCols, info.PrimaryKeyCol) {
+			continue
+		}
+		cir, ok := idx.(CoveringIndexReader)
+		if !ok {
+			continue
+		}
+		rows := cir.LookupCovering(vals, len(info.Columns), info.PrimaryKeyCol)
+		if rows == nil {
+			return []Row{}, true
+		}
+		return rows, true
+	}
+	return nil, false
+}

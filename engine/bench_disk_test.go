@@ -649,3 +649,60 @@ func BenchmarkDiskIndexWherePostFilterLimitNoOrder_10000(b *testing.B) {
 		}
 	}
 }
+
+// --- Covering index benchmarks (disk) ---
+
+func BenchmarkDiskCoveringIndexLookup_10000(b *testing.B) {
+	exec := setupBenchTableDisk(b, 10000, true)
+	sql := "SELECT val FROM bench WHERE val = 50000"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkDiskNonCoveringIndexLookup_10000(b *testing.B) {
+	exec := setupBenchTableDisk(b, 10000, true)
+	sql := "SELECT * FROM bench WHERE val = 50000"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkDiskCoveringStreamingLimit_10000(b *testing.B) {
+	exec := setupBenchTableDisk(b, 10000, true)
+	sql := "SELECT val FROM bench WHERE val > 5000 LIMIT 10"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkDiskCoveringOrderBy_10000(b *testing.B) {
+	exec := setupBenchTableDisk(b, 10000, true)
+	sql := "SELECT val FROM bench ORDER BY val DESC LIMIT 10"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkDiskNonCoveringOrderBy_10000(b *testing.B) {
+	exec := setupBenchTableDisk(b, 10000, true)
+	sql := "SELECT * FROM bench ORDER BY val DESC LIMIT 10"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

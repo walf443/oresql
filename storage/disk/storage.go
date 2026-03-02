@@ -20,6 +20,7 @@ var _ storage.Engine = (*DiskStorage)(nil)
 var _ storage.TableLocker = (*DiskStorage)(nil)
 var _ storage.MetadataProvider = (*DiskStorage)(nil)
 var _ storage.IndexReader = (*DiskSecondaryIndex)(nil)
+var _ storage.CoveringIndexReader = (*DiskSecondaryIndex)(nil)
 
 // Header page format (.db file, page 0):
 //
@@ -259,6 +260,90 @@ func (dsi *DiskSecondaryIndex) OrderedRangeScan(
 
 	iterFn := func(compositeKey []byte) bool {
 		return fn(extractRowKey(compositeKey))
+	}
+
+	if reverse {
+		dsi.tree.RangeScanReverse(fromKey, toKey, true, false, iterFn)
+	} else {
+		dsi.tree.RangeScan(fromKey, toKey, true, false, iterFn)
+	}
+}
+
+// buildCoveringRow constructs a full-width Row from index column values and rowKey.
+func buildCoveringRow(vals []storage.Value, rowKey int64, columnIdxs []int, tableNumCols int, pkColIdx int) storage.Row {
+	row := make(storage.Row, tableNumCols)
+	for i, colIdx := range columnIdxs {
+		row[colIdx] = vals[i]
+	}
+	if pkColIdx >= 0 {
+		row[pkColIdx] = rowKey
+	}
+	return row
+}
+
+// LookupCovering performs an equality lookup and returns covering rows
+// without PK lookup. The input vals are the equality values (already decoded).
+func (dsi *DiskSecondaryIndex) LookupCovering(vals []storage.Value, tableNumCols int, pkColIdx int) []storage.Row {
+	prefix := encodeValuesPrefix(vals)
+	var rows []storage.Row
+	dsi.tree.PrefixScan(prefix, func(compositeKey []byte) bool {
+		rowKey := extractRowKey(compositeKey)
+		row := buildCoveringRow(vals, rowKey, dsi.info.ColumnIdxs, tableNumCols, pkColIdx)
+		rows = append(rows, row)
+		return true
+	})
+	return rows
+}
+
+// OrderedCoveringScan performs a range scan and returns covering rows via callback,
+// decoding column values from composite keys without PK lookup.
+func (dsi *DiskSecondaryIndex) OrderedCoveringScan(
+	fromVal *storage.Value, fromInclusive bool,
+	toVal *storage.Value, toInclusive bool,
+	reverse bool, tableNumCols int, pkColIdx int,
+	fn func(rowKey int64, row storage.Row) bool,
+) {
+	if len(dsi.info.ColumnIdxs) != 1 {
+		return
+	}
+
+	var from []byte
+	var to []byte
+	if fromVal != nil {
+		from = encodeValuesPrefix([]storage.Value{*fromVal})
+	}
+	if toVal != nil {
+		to = encodeValuesPrefix([]storage.Value{*toVal})
+	}
+
+	var fromKey []byte
+	var toKey []byte
+
+	if from != nil {
+		if fromInclusive {
+			fromKey = from
+		} else {
+			fromKey = append(append([]byte{}, from...), 0xff)
+		}
+	}
+
+	if to != nil {
+		if toInclusive {
+			toKey = append(append([]byte{}, to...), 0xff)
+		} else {
+			toKey = to
+		}
+	}
+
+	numCols := len(dsi.info.ColumnIdxs)
+	iterFn := func(compositeKey []byte) bool {
+		rowKey := extractRowKey(compositeKey)
+		vals, err := storage.DecodeCompositeKeyValues(compositeKey, numCols)
+		if err != nil {
+			return true // skip malformed entries
+		}
+		row := buildCoveringRow(vals, rowKey, dsi.info.ColumnIdxs, tableNumCols, pkColIdx)
+		return fn(rowKey, row)
 	}
 
 	if reverse {

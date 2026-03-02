@@ -139,6 +139,19 @@ type IndexReader interface {
 	OrderedRangeScan(fromVal *Value, fromInclusive bool, toVal *Value, toInclusive bool, reverse bool, fn func(rowKey int64) bool)
 }
 
+// CoveringIndexReader is an optional interface that IndexReader implementations
+// can support for covering index scans. When all columns needed by a query are
+// contained in the index (+ PK), the executor can skip PK lookups entirely.
+type CoveringIndexReader interface {
+	LookupCovering(vals []Value, tableNumCols int, pkColIdx int) []Row
+	OrderedCoveringScan(
+		fromVal *Value, fromInclusive bool,
+		toVal *Value, toInclusive bool,
+		reverse bool, tableNumCols int, pkColIdx int,
+		fn func(rowKey int64, row Row) bool,
+	)
+}
+
 // MetadataProvider is an optional interface that storage engines can implement
 // to support loading table metadata on startup (for persistent storage).
 type MetadataProvider interface {
@@ -300,6 +313,72 @@ func EncodeValueBytes(buf []byte, val Value) []byte {
 		return append(buf, 0x00) // null terminator
 	}
 	return buf
+}
+
+// DecodeValueBytes decodes a single value from a byte slice at the given position.
+// Returns the decoded value, the new position after reading, and any error.
+// This is the inverse of EncodeValueBytes.
+func DecodeValueBytes(data []byte, pos int) (Value, int, error) {
+	if pos >= len(data) {
+		return nil, pos, fmt.Errorf("unexpected end of data at pos %d", pos)
+	}
+	tag := data[pos]
+	pos++
+	switch tag {
+	case 0x00: // NULL
+		return nil, pos, nil
+	case 0x01: // INT
+		if pos+8 > len(data) {
+			return nil, pos, fmt.Errorf("unexpected end of INT data at pos %d", pos)
+		}
+		u := binary.BigEndian.Uint64(data[pos : pos+8])
+		pos += 8
+		return int64(u ^ 0x8000000000000000), pos, nil
+	case 0x02: // FLOAT
+		if pos+8 > len(data) {
+			return nil, pos, fmt.Errorf("unexpected end of FLOAT data at pos %d", pos)
+		}
+		bits := binary.BigEndian.Uint64(data[pos : pos+8])
+		pos += 8
+		// Reverse the order-preserving encoding
+		if bits&0x8000000000000000 != 0 {
+			// Was positive: flip sign bit back
+			bits ^= 0x8000000000000000
+		} else {
+			// Was negative: flip all bits back
+			bits = ^bits
+		}
+		return math.Float64frombits(bits), pos, nil
+	case 0x03: // TEXT
+		// Find null terminator
+		end := pos
+		for end < len(data) && data[end] != 0x00 {
+			end++
+		}
+		if end >= len(data) {
+			return nil, pos, fmt.Errorf("TEXT value missing null terminator at pos %d", pos)
+		}
+		s := string(data[pos:end])
+		return s, end + 1, nil // skip the null terminator
+	default:
+		return nil, pos, fmt.Errorf("unknown value type tag: 0x%02x at pos %d", tag, pos)
+	}
+}
+
+// DecodeCompositeKeyValues decodes the first numCols values from a composite key.
+// The composite key format is: EncodeValueBytes(col1) || ... || EncodeValueBytes(colN) || BigEndian(rowKey)
+func DecodeCompositeKeyValues(compositeKey []byte, numCols int) ([]Value, error) {
+	vals := make([]Value, numCols)
+	pos := 0
+	for i := 0; i < numCols; i++ {
+		v, newPos, err := DecodeValueBytes(compositeKey, pos)
+		if err != nil {
+			return nil, fmt.Errorf("decoding column %d: %w", i, err)
+		}
+		vals[i] = v
+		pos = newPos
+	}
+	return vals, nil
 }
 
 // EncodeValues encodes multiple values into a single KeyEncoding.

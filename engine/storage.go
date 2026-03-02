@@ -14,6 +14,7 @@ type IndexInfo = storage.IndexInfo
 type KeyEncoding = storage.KeyEncoding
 type StorageEngine = storage.Engine
 type IndexReader = storage.IndexReader
+type CoveringIndexReader = storage.CoveringIndexReader
 type TableLockMode = storage.TableLockMode
 type TableLock = storage.TableLock
 type TableLocker = storage.TableLocker

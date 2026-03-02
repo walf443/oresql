@@ -218,6 +218,39 @@ func leafPageUsedBytes(entries []leafEntry) int {
 	return total
 }
 
+// --- Inline internal page helpers (allocation-free read path) ---
+
+// internalSearchChild performs inline binary search on an internal page buffer
+// and returns the child page ID for the given key.
+func internalSearchChild(data []byte, key int64) pager.PageID {
+	entryCount := int(binary.BigEndian.Uint16(data[internalOffEntryCount : internalOffEntryCount+2]))
+	lo, hi := 0, entryCount
+	for lo < hi {
+		mid := (lo + hi) / 2
+		off := internalHdrSize + childSize + mid*(entryKeySize+childSize)
+		midKey := int64(binary.BigEndian.Uint64(data[off : off+entryKeySize]))
+		if midKey <= key {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+	childOff := internalHdrSize + lo*(entryKeySize+childSize)
+	return pager.PageID(binary.BigEndian.Uint32(data[childOff : childOff+childSize]))
+}
+
+// internalLeftmostChild returns child[0] directly from an internal page buffer.
+func internalLeftmostChild(data []byte) pager.PageID {
+	return pager.PageID(binary.BigEndian.Uint32(data[internalHdrSize : internalHdrSize+childSize]))
+}
+
+// internalRightmostChild returns child[entryCount] directly from an internal page buffer.
+func internalRightmostChild(data []byte) pager.PageID {
+	entryCount := int(binary.BigEndian.Uint16(data[internalOffEntryCount : internalOffEntryCount+2]))
+	off := internalHdrSize + entryCount*(entryKeySize+childSize)
+	return pager.PageID(binary.BigEndian.Uint32(data[off : off+childSize]))
+}
+
 // --- Search ---
 
 // findLeaf returns the leaf page ID containing the given key.
@@ -232,22 +265,9 @@ func (t *DiskBTree) findLeaf(key int64) (pager.PageID, error) {
 			t.pool.UnpinPage(pageID, false)
 			return pageID, nil
 		}
-		ip := decodeInternalPage(data)
+		nextPageID := internalSearchChild(data, key)
 		t.pool.UnpinPage(pageID, false)
-
-		// Binary search: find first key > given key
-		childIdx := int(ip.entryCount) // default: rightmost child
-		lo, hi := 0, int(ip.entryCount)
-		for lo < hi {
-			mid := (lo + hi) / 2
-			if ip.keys[mid] <= key {
-				lo = mid + 1
-			} else {
-				hi = mid
-			}
-		}
-		childIdx = lo
-		pageID = ip.children[childIdx]
+		pageID = nextPageID
 	}
 }
 
@@ -1031,9 +1051,9 @@ func (t *DiskBTree) ForEach(fn func(key int64, row storage.Row) bool) {
 			t.pool.UnpinPage(pageID, false)
 			break
 		}
-		ip := decodeInternalPage(data)
+		nextPageID := internalLeftmostChild(data)
 		t.pool.UnpinPage(pageID, false)
-		pageID = ip.children[0]
+		pageID = nextPageID
 	}
 
 	// Traverse leaf chain with inline page scanning
@@ -1083,9 +1103,9 @@ func (t *DiskBTree) findRightmostLeaf() (pager.PageID, error) {
 			t.pool.UnpinPage(pageID, false)
 			return pageID, nil
 		}
-		ip := decodeInternalPage(data)
+		nextPageID := internalRightmostChild(data)
 		t.pool.UnpinPage(pageID, false)
-		pageID = ip.children[ip.entryCount] // rightmost child
+		pageID = nextPageID
 	}
 }
 
@@ -1155,9 +1175,9 @@ func (t *DiskBTree) ForEachRange(from *int64, fromInclusive bool, to *int64, toI
 				t.pool.UnpinPage(pageID, false)
 				break
 			}
-			ip := decodeInternalPage(data)
+			nextPageID := internalLeftmostChild(data)
 			t.pool.UnpinPage(pageID, false)
-			pageID = ip.children[0]
+			pageID = nextPageID
 		}
 		startPageID = pageID
 	} else {

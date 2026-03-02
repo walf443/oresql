@@ -542,6 +542,78 @@ func (e *Executor) tryIndexOrder(
 	return result
 }
 
+// indexScanParams describes parameters for a streaming index scan via OrderedRangeScan.
+// Used for single-column index equality/range lookups with LIMIT optimization.
+type indexScanParams struct {
+	index         IndexReader
+	fromVal       *Value
+	fromInclusive bool
+	toVal         *Value
+	toInclusive   bool
+}
+
+// tryIndexScanParams attempts to extract streaming index scan parameters from WHERE.
+// Only handles single-column indexes with equality or range conditions.
+// Returns nil, false for PK, IN, composite indexes (those fall through to batch path).
+func (e *Executor) tryIndexScanParams(where ast.Expr, info *TableInfo) (*indexScanParams, bool) {
+	if where == nil {
+		return nil, false
+	}
+
+	// Try equality conditions on single-column indexes
+	eqConds := extractEqualityConditions(where)
+	for colName, val := range eqConds {
+		// Skip PK columns (at most 1 row, no benefit from streaming)
+		if info.PrimaryKeyCol >= 0 {
+			pkColName := strings.ToLower(info.Columns[info.PrimaryKeyCol].Name)
+			if colName == pkColName {
+				continue
+			}
+		}
+		col, err := info.FindColumn(colName)
+		if err != nil {
+			continue
+		}
+		idx := e.db.storage.LookupSingleColumnIndex(info.Name, col.Index)
+		if idx == nil {
+			continue
+		}
+		v := val
+		return &indexScanParams{
+			index:         idx,
+			fromVal:       &v,
+			fromInclusive: true,
+			toVal:         &v,
+			toInclusive:   true,
+		}, true
+	}
+
+	// Try range conditions on single-column indexes
+	rangeConds := extractRangeConditions(where)
+	for _, rc := range rangeConds {
+		if rc.fromVal == nil && rc.toVal == nil {
+			continue
+		}
+		col, err := info.FindColumn(rc.colName)
+		if err != nil {
+			continue
+		}
+		idx := e.db.storage.LookupSingleColumnIndex(info.Name, col.Index)
+		if idx == nil {
+			continue
+		}
+		return &indexScanParams{
+			index:         idx,
+			fromVal:       rc.fromVal,
+			fromInclusive: rc.fromInclusive,
+			toVal:         rc.toVal,
+			toInclusive:   rc.toInclusive,
+		}, true
+	}
+
+	return nil, false
+}
+
 // tryIndexScan attempts to use an index for the WHERE clause.
 // Tries PK direct lookup, then equality lookup, then IN lookup, then range scan.
 // Returns BTree keys and whether an index was used.

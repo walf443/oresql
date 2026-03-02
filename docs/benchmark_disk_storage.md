@@ -142,6 +142,28 @@ memory ストレージのセカンダリインデックスはメモリ上の B-t
 
 ---
 
+### 11. WHERE + LIMIT インデックスストリーミング（OrderedRangeScan）
+
+| パターン | Memory (ns/op) | Disk (ns/op) | Disk/Memory | Memory (B/op) | Disk (B/op) |
+|---------|---------------|-------------|-------------|--------------|------------|
+| 等値 `WHERE category = 3 LIMIT 10` (改善前: バッチ) | 5,964 | 42,680 | **7.2x** | 6,623 | 39,804 |
+| 等値 `WHERE category = 3 LIMIT 10` (ストリーミング改善後) | 6,017 | 13,314 | **2.2x** | 2,896 | 35,273 |
+| 範囲 `WHERE val > 5000 LIMIT 10` (改善前: バッチ) | 1,222,670 | 1,649,514 | **1.3x** | 946,785 | 4,013,682 |
+| 範囲 `WHERE val > 5000 LIMIT 10` (ストリーミング改善後) | 2,977 | 13,322 | **4.5x** | 2,376 | 35,416 |
+| ポストフィルタ `WHERE category = 3 AND val > 5000 LIMIT 10` (改善前: バッチ) | 6,723 | 45,324 | **6.7x** | 6,949 | 40,166 |
+| ポストフィルタ `WHERE category = 3 AND val > 5000 LIMIT 10` (ストリーミング改善後) | 7,487 | 21,441 | **2.9x** | 3,256 | 52,274 |
+
+**クエリ:** 10,000行、セカンダリインデックスあり（`CREATE INDEX` on `category`, `val`）
+
+**考察:** `WHERE indexed_col = X LIMIT K` や `WHERE indexed_col > X LIMIT K` のようなクエリで、従来は `Lookup()` / `RangeScan()` が全マッチキーを収集 → `GetByKeys()` が全行フェッチ → `filterWhereLimit` で LIMIT 適用というバッチパスだったものを、`OrderedRangeScan` のコールバックベース走査で K 件に達した時点で早期打ち切りするストリーミングパスに変更。
+
+- **範囲検索が最も効果的**: `WHERE val > 5000` は 5,000 行がマッチするが、LIMIT 10 により 10 行だけフェッチすれば十分。Memory は 1,222,670 → 2,977 ns/op（**410x 高速化**）、Disk は 1,649,514 → 13,322 ns/op（**124x 高速化**）。メモリ使用量も Memory で 946,785 → 2,376 B/op（**399x 削減**）、Disk で 4,013,682 → 35,416 B/op（**113x 削減**）
+- **等値検索**: category は 100 種類で各 100 行マッチのため改善幅は控えめだが、Disk では 42,680 → 13,314 ns/op（**3.2x 高速化**）。バッチパスの `GetByKeys` 100 行フェッチがストリーミング 10 行フェッチに削減されたことで、ディスク I/O の回避効果が表れている
+- **ポストフィルタ**: インデックス条件（`category = 3`）で候補を絞り込み、追加条件（`val > 500`）はコールバック内で全 WHERE を再評価。Disk で 45,324 → 21,441 ns/op（**2.1x 高速化**）
+- **安全性**: PK（最大1行）、IN（複数 Lookup）、複合インデックスは既存バッチパスにフォールスルー。コールバック内で全 WHERE を評価するため、インデックスが部分的にしか WHERE をカバーしない場合も正しく動作
+
+---
+
 ## まとめ
 
 | カテゴリ | Disk/Memory 比率 | 評価 |
@@ -159,6 +181,8 @@ memory ストレージのセカンダリインデックスはメモリ上の B-t
 | LIMIT (ORDER BY なし) | 2.2x | 良好 |
 | DISTINCT + LIMIT (ScanEach ストリーミング) | 1.7x | 良好（ScanEach 最適化で改善） |
 | WHERE + LIMIT (ScanEach ストリーミング) | 2.7x | 良好（ScanEach 最適化で改善） |
+| WHERE + LIMIT インデックスストリーミング (等値) | 2.2x | 良好（OrderedRangeScan で改善） |
+| WHERE + LIMIT インデックスストリーミング (範囲) | 4.5x | 良好（OrderedRangeScan で改善） |
 | JOIN (Hash Join) | 1.2x〜1.7x | 良好 |
 | JOIN (インデックス利用) | 1.3x〜2.0x | 良好 |
 
@@ -182,6 +206,8 @@ memory ストレージのセカンダリインデックスはメモリ上の B-t
 
 9. **`ScanEach` ストリーミングを WHERE + LIMIT にも拡張**: `executeScanEachStreaming` に `distinct bool` パラメータを追加し、ガード条件を `(stmt.Distinct || stmt.Where != nil)` に拡張。non-DISTINCT の WHERE + LIMIT でも `Scan()` 全行実体化を回避し、`ScanEach` コールバック内で WHERE → projection → early exit を 1 パスで処理。Memory で **16x**、Disk で **12.5x** の高速化、メモリ使用量も Memory で **535x**、Disk で **21.8x** 削減。
 
+10. **WHERE + LIMIT のインデックスストリーミングで範囲検索が劇的に高速化**: `OrderedRangeScan` のコールバックベース走査を `executeIndexScanStreaming` で再利用し、LIMIT 件数に達した時点でインデックス走査を早期打ち切り。従来のバッチパス（全マッチキー収集 → 全行フェッチ → LIMIT 適用）に比べ、範囲検索（`WHERE val > 5000 LIMIT 10`、5,000行マッチ）で Memory **410x**・Disk **124x** の高速化。等値検索（100行マッチ）でも Disk **3.2x** 高速化。マッチ行数が多いほどバッチパスとの差が広がる。PK・IN・複合インデックスは既存バッチパスにフォールスルーし、コールバック内で全 WHERE を再評価するためポストフィルタも正しく動作する。
+
 ## 改善優先度
 
 | 改善項目 | 影響 | 難易度 |
@@ -195,3 +221,4 @@ memory ストレージのセカンダリインデックスはメモリ上の B-t
 | ~~`DecodeRowN` プリアロケーション最適化~~ | **改善済み** — 全パスで allocs/op -2, B/op -48 | — |
 | ~~`ScanEach` ストリーミング (DISTINCT + LIMIT 向け)~~ | **改善済み (5.7x → 1.7x)** — `ScanEach` で inline callback + early exit | — |
 | ~~`ScanEach` ストリーミングを WHERE + LIMIT に拡張~~ | **改善済み (Memory 16x, Disk 12.5x 高速化)** — `executeScanEachStreaming` を汎用化 | — |
+| ~~WHERE + LIMIT のインデックスストリーミング~~ | **改善済み (範囲: Memory 410x, Disk 124x 高速化)** — `OrderedRangeScan` + early exit | — |

@@ -1047,3 +1047,108 @@ func TestOrderByWithGroupByFallback(t *testing.T) {
 	assert.Equal(t, int64(1), result.Rows[1][0], "row 1: expected grp=1")
 	assert.Equal(t, int64(2), result.Rows[2][0], "row 2: expected grp=2")
 }
+
+// --- Index scan streaming (WHERE + LIMIT without ORDER BY) ---
+
+func TestIndexScanStreamingEquality(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT, category INT)")
+	run(t, exec, "CREATE INDEX idx_cat ON t(category)")
+	for i := 1; i <= 100; i++ {
+		run(t, exec, fmt.Sprintf("INSERT INTO t VALUES (%d, %d, %d)", i, i*10, i%5))
+	}
+
+	// category = 3 has 20 rows (3,8,13,...,98), LIMIT 10 should return first 10
+	result := run(t, exec, "SELECT id, val, category FROM t WHERE category = 3 LIMIT 10")
+	require.Len(t, result.Rows, 10, "expected 10 rows")
+	for _, row := range result.Rows {
+		assert.Equal(t, int64(3), row[2], "all rows should have category=3")
+	}
+}
+
+func TestIndexScanStreamingRange(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT)")
+	run(t, exec, "CREATE INDEX idx_val ON t(val)")
+	for i := 1; i <= 100; i++ {
+		run(t, exec, fmt.Sprintf("INSERT INTO t VALUES (%d, %d)", i, i))
+	}
+
+	// val > 50 LIMIT 3 should return 3 rows with val > 50
+	result := run(t, exec, "SELECT id, val FROM t WHERE val > 50 LIMIT 3")
+	require.Len(t, result.Rows, 3, "expected 3 rows")
+	for _, row := range result.Rows {
+		v := row[1].(int64)
+		assert.Greater(t, v, int64(50), "all rows should have val > 50")
+	}
+}
+
+func TestIndexScanStreamingPostFilter(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT, category INT)")
+	run(t, exec, "CREATE INDEX idx_cat ON t(category)")
+	for i := 1; i <= 1000; i++ {
+		run(t, exec, fmt.Sprintf("INSERT INTO t VALUES (%d, %d, %d)", i, i, i%5))
+	}
+
+	// category = 3 AND val > 500 LIMIT 5: index on category, post-filter on val
+	result := run(t, exec, "SELECT id, val, category FROM t WHERE category = 3 AND val > 500 LIMIT 5")
+	require.Len(t, result.Rows, 5, "expected 5 rows")
+	for _, row := range result.Rows {
+		assert.Equal(t, int64(3), row[2], "all rows should have category=3")
+		v := row[1].(int64)
+		assert.Greater(t, v, int64(500), "all rows should have val > 500")
+	}
+}
+
+func TestIndexScanStreamingOffsetLimit(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, category INT)")
+	run(t, exec, "CREATE INDEX idx_cat ON t(category)")
+	for i := 1; i <= 50; i++ {
+		run(t, exec, fmt.Sprintf("INSERT INTO t VALUES (%d, %d)", i, i%3))
+	}
+
+	// category = 1 rows: 1,4,7,10,13,16,19,22,25,28,31,34,37,40,43,46,49
+	// OFFSET 5 LIMIT 3 should skip first 5 and return next 3
+	result := run(t, exec, "SELECT id FROM t WHERE category = 1 LIMIT 3 OFFSET 5")
+	require.Len(t, result.Rows, 3, "expected 3 rows")
+}
+
+func TestIndexScanStreamingDistinct(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT, category INT)")
+	run(t, exec, "CREATE INDEX idx_cat ON t(category)")
+	for i := 1; i <= 100; i++ {
+		run(t, exec, fmt.Sprintf("INSERT INTO t VALUES (%d, %d, %d)", i, i%10, i%5))
+	}
+
+	// DISTINCT val WHERE category = 0 LIMIT 5
+	// category = 0 rows have val values: 0,5,0,5,... → distinct = {0, 5} (only 2 unique)
+	result := run(t, exec, "SELECT DISTINCT val FROM t WHERE category = 0 LIMIT 5")
+	require.LessOrEqual(t, len(result.Rows), 5, "at most 5 rows")
+	// Verify uniqueness
+	seen := make(map[int64]bool)
+	for _, row := range result.Rows {
+		v := row[0].(int64)
+		assert.False(t, seen[v], "duplicate val %d", v)
+		seen[v] = true
+	}
+}
+
+func TestIndexScanStreamingINFallthrough(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT, category INT)")
+	run(t, exec, "CREATE INDEX idx_cat ON t(category)")
+	for i := 1; i <= 50; i++ {
+		run(t, exec, fmt.Sprintf("INSERT INTO t VALUES (%d, %d, %d)", i, i*10, i%5))
+	}
+
+	// IN condition should fall through to batch path but still produce correct results
+	result := run(t, exec, "SELECT id, category FROM t WHERE category IN (1, 3) LIMIT 5")
+	require.Len(t, result.Rows, 5, "expected 5 rows")
+	for _, row := range result.Rows {
+		cat := row[1].(int64)
+		assert.True(t, cat == 1 || cat == 3, "category should be 1 or 3, got %d", cat)
+	}
+}

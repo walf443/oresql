@@ -834,3 +834,38 @@ func BenchmarkOrderByPKNoLimit_10000(b *testing.B) {
 		}
 	}
 }
+
+// Benchmarks for index scan streaming (WHERE + LIMIT without ORDER BY)
+
+func BenchmarkIndexWhereLimitNoOrder_10000(b *testing.B) {
+	exec := setupBenchTable(b, 10000, true)
+	sql := "SELECT * FROM bench WHERE category = 3 LIMIT 10"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkIndexWhereRangeLimitNoOrder_10000(b *testing.B) {
+	exec := setupBenchTable(b, 10000, true)
+	sql := "SELECT * FROM bench WHERE val > 5000 LIMIT 10"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkIndexWherePostFilterLimitNoOrder_10000(b *testing.B) {
+	exec := setupBenchTable(b, 10000, true)
+	sql := "SELECT * FROM bench WHERE category = 3 AND val > 5000 LIMIT 10"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

@@ -614,3 +614,38 @@ func BenchmarkDiskDistinctLimitNoOrder_10000(b *testing.B) {
 		}
 	}
 }
+
+// Benchmarks for index scan streaming (WHERE + LIMIT without ORDER BY)
+
+func BenchmarkDiskIndexWhereLimitNoOrder_10000(b *testing.B) {
+	exec := setupBenchTableDisk(b, 10000, true)
+	sql := "SELECT * FROM bench WHERE category = 3 LIMIT 10"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkDiskIndexWhereRangeLimitNoOrder_10000(b *testing.B) {
+	exec := setupBenchTableDisk(b, 10000, true)
+	sql := "SELECT * FROM bench WHERE val > 5000 LIMIT 10"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkDiskIndexWherePostFilterLimitNoOrder_10000(b *testing.B) {
+	exec := setupBenchTableDisk(b, 10000, true)
+	sql := "SELECT * FROM bench WHERE category = 3 AND val > 5000 LIMIT 10"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

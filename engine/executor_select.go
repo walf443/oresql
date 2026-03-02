@@ -184,16 +184,24 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 		}
 	}
 
-	// Streaming ScanEach: scan rows inline under lock with early exit.
+	// Streaming scan: scan rows with early exit for LIMIT.
 	// Handles both DISTINCT + LIMIT and WHERE + LIMIT without ORDER BY/GROUP BY/aggregate.
 	// Safe only when there are no subqueries in WHERE/SELECT, no JOINs, no CTE,
-	// no table alias, no subquery source, and no index scan.
+	// no table alias, no subquery source.
+	// Flow: index streaming (equality/range) → full scan streaming → batch fallthrough.
 	if canEarlyLimit && (stmt.Distinct || stmt.Where != nil) &&
 		stmt.FromSubquery == nil && len(stmt.Joins) == 0 && stmt.TableAlias == "" &&
 		!containsSubquery(stmt.Where) && !columnsContainSubquery(stmt.Columns) {
 		if _, _, cteOk := e.lookupCTE(stmt.TableName); !cteOk {
 			db, info, err := e.resolveTable(stmt.DatabaseName, stmt.TableName)
 			if err == nil {
+				// 1. Index streaming (single-column equality/range)
+				if stmt.Where != nil {
+					if params, ok := e.tryIndexScanParams(stmt.Where, info); ok {
+						return e.executeIndexScanStreaming(stmt, db, info, params, earlyLimit, stmt.Distinct)
+					}
+				}
+				// 2. Full scan streaming (no index available)
 				if _, indexUsed := e.tryIndexScan(stmt.Where, info); !indexUsed {
 					return e.executeScanEachStreaming(stmt, db, info, earlyLimit, stmt.Distinct)
 				}
@@ -1298,6 +1306,102 @@ func (e *Executor) executeScanEachStreaming(
 	}); err != nil {
 		return nil, err
 	}
+	if scanErr != nil {
+		return nil, scanErr
+	}
+
+	result = applyOffset(result, stmt.Offset)
+	result = applyLimit(result, stmt.Limit)
+	return &Result{Columns: colNames, ColumnTypes: colTypes, Rows: result}, nil
+}
+
+// executeIndexScanStreaming uses OrderedRangeScan to stream rows from an index
+// with early exit for LIMIT queries. Similar to executeScanEachStreaming but
+// scans via a secondary index instead of doing a full table scan.
+func (e *Executor) executeIndexScanStreaming(
+	stmt *ast.SelectStmt, db *Database, info *TableInfo,
+	params *indexScanParams, earlyLimit int, distinct bool,
+) (*Result, error) {
+	eval := newTableEvaluator(e, info)
+	colTypes := resolveColumnTypes(stmt.Columns, eval)
+	colNames, colExprs, isStar, err := resolveSelectColumns(stmt.Columns, eval)
+	if err != nil {
+		return nil, err
+	}
+
+	// Optimise WHERE TRUE / WHERE FALSE
+	where := stmt.Where
+	if b, ok := where.(*ast.BoolLitExpr); ok {
+		if !b.Value {
+			return &Result{Columns: colNames, ColumnTypes: colTypes, Rows: nil}, nil
+		}
+		where = nil
+	}
+
+	var seen map[string]bool
+	if distinct {
+		seen = make(map[string]bool)
+	}
+	result := make([]Row, 0, earlyLimit)
+	cols := eval.ColumnList()
+	var scanErr error
+
+	params.index.OrderedRangeScan(
+		params.fromVal, params.fromInclusive,
+		params.toVal, params.toInclusive,
+		false, // not reverse (no ORDER BY in this path)
+		func(rowKey int64) bool {
+			row, found := db.storage.GetRow(info.Name, rowKey)
+			if !found {
+				return true
+			}
+			// Full WHERE evaluation (index condition + additional conditions)
+			if where != nil {
+				val, err := eval.Eval(where, row)
+				if err != nil {
+					scanErr = err
+					return false
+				}
+				b, ok := val.(bool)
+				if !ok {
+					scanErr = fmt.Errorf("WHERE expression must evaluate to boolean, got %T", val)
+					return false
+				}
+				if !b {
+					return true
+				}
+			}
+			// Projection
+			var projected Row
+			if isStar {
+				projected = make(Row, len(cols))
+				for i, col := range cols {
+					projected[i] = row[col.Index]
+				}
+			} else {
+				projected = make(Row, len(colExprs))
+				for i, expr := range colExprs {
+					val, err := eval.Eval(expr, row)
+					if err != nil {
+						scanErr = err
+						return false
+					}
+					projected[i] = val
+				}
+			}
+			// Dedup (DISTINCT only)
+			if distinct {
+				key := string(encodeValues(projected))
+				if seen[key] {
+					return true
+				}
+				seen[key] = true
+			}
+			result = append(result, projected)
+			// Early exit once we have enough rows (earlyLimit = limit + offset)
+			return len(result) < earlyLimit
+		},
+	)
 	if scanErr != nil {
 		return nil, scanErr
 	}

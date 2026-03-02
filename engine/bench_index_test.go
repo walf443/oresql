@@ -699,6 +699,17 @@ func BenchmarkDistinctNoLimit_10000(b *testing.B) {
 	}
 }
 
+func BenchmarkWhereLimitNoOrder_10000(b *testing.B) {
+	exec := setupBenchTable(b, 10000, false)
+	sql := "SELECT * FROM bench WHERE category = 3 LIMIT 10"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkDistinctLimitNoOrder_10000(b *testing.B) {
 	exec := setupBenchTable(b, 10000, false)
 	sql := "SELECT DISTINCT category FROM bench LIMIT 10"

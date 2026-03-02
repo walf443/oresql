@@ -593,6 +593,17 @@ func BenchmarkDiskDistinctNoLimit_10000(b *testing.B) {
 	}
 }
 
+func BenchmarkDiskWhereLimitNoOrder_10000(b *testing.B) {
+	exec := setupBenchTableDisk(b, 10000, false)
+	sql := "SELECT * FROM bench WHERE category = 3 LIMIT 10"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkDiskDistinctLimitNoOrder_10000(b *testing.B) {
 	exec := setupBenchTableDisk(b, 10000, false)
 	sql := "SELECT DISTINCT category FROM bench LIMIT 10"

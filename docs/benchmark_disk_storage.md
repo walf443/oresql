@@ -129,6 +129,19 @@ memory ストレージのセカンダリインデックスはメモリ上の B-t
 
 ---
 
+### 10. WHERE + LIMIT (ScanEach ストリーミング拡張)
+
+| パターン | Memory (ns/op) | Disk (ns/op) | Disk/Memory | Memory (B/op) | Disk (B/op) |
+|---------|---------------|-------------|-------------|--------------|------------|
+| WHERE + LIMIT 10 (改善前: Scan + filterWhereLimit) | 665,614 | 1,400,458 | **2.1x** | 1,005,472 | 2,130,391 |
+| WHERE + LIMIT 10 (ScanEach 改善後) | 41,476 | 111,653 | **2.7x** | 1,880 | 97,913 |
+
+**クエリ:** `SELECT * FROM bench WHERE category = 3 LIMIT 10`（10,000行、インデックスなし、100行ヒット中 10行取得）
+
+**考察:** DISTINCT + LIMIT 向けに実装した `ScanEach` ストリーミングを non-DISTINCT の WHERE + LIMIT にも拡張。`executeScanEachStreaming` メソッドに `distinct bool` パラメータを追加し、ガード条件を `stmt.Distinct` → `(stmt.Distinct || stmt.Where != nil)` に拡張した。旧パスでは `Scan()` で全 10,000 行を `[]Row` に実体化してから `filterWhereLimit` で WHERE フィルタ + early exit していたが、新パスでは `ScanEach` コールバック内で WHERE → projection → early exit を 1 パスで処理する。Memory は 665,614 → 41,476 ns/op（**16x 高速化**）、Disk は 1,400,458 → 111,653 ns/op（**12.5x 高速化**）。メモリ使用量も Memory は 1,005,472 → 1,880 B/op（**535x 削減**）、Disk は 2,130,391 → 97,913 B/op（**21.8x 削減**）と大幅に改善した。
+
+---
+
 ## まとめ
 
 | カテゴリ | Disk/Memory 比率 | 評価 |
@@ -145,6 +158,7 @@ memory ストレージのセカンダリインデックスはメモリ上の B-t
 | ORDER BY PK DESC + LIMIT | 2.2x | 良好 |
 | LIMIT (ORDER BY なし) | 2.2x | 良好 |
 | DISTINCT + LIMIT (ScanEach ストリーミング) | 1.7x | 良好（ScanEach 最適化で改善） |
+| WHERE + LIMIT (ScanEach ストリーミング) | 2.7x | 良好（ScanEach 最適化で改善） |
 | JOIN (Hash Join) | 1.2x〜1.7x | 良好 |
 | JOIN (インデックス利用) | 1.3x〜2.0x | 良好 |
 
@@ -166,6 +180,8 @@ memory ストレージのセカンダリインデックスはメモリ上の B-t
 
 8. **`ScanEach` ストリーミングで DISTINCT + LIMIT が 5.7x → 1.7x に改善**: `ScanEach` メソッドをストレージインターフェースに追加し、テーブルロック保持中にコールバックをインラインで実行する方式に変更。`ForEachRow` の二段階収集（ロック下で全行をスライスに収集 → ロック解放後にコールバック）と異なり、コールバック内で WHERE → projection → dedup → early exit を 1 パスで処理する。disk ではユニーク値が揃った時点でページデコードを打ち切るため、デコードするページ数が大幅に削減された。安全性のため、サブクエリ・JOIN・CTE・テーブルエイリアス・インデックススキャン使用時は従来パスにフォールスルーする。
 
+9. **`ScanEach` ストリーミングを WHERE + LIMIT にも拡張**: `executeScanEachStreaming` に `distinct bool` パラメータを追加し、ガード条件を `(stmt.Distinct || stmt.Where != nil)` に拡張。non-DISTINCT の WHERE + LIMIT でも `Scan()` 全行実体化を回避し、`ScanEach` コールバック内で WHERE → projection → early exit を 1 パスで処理。Memory で **16x**、Disk で **12.5x** の高速化、メモリ使用量も Memory で **535x**、Disk で **21.8x** 削減。
+
 ## 改善優先度
 
 | 改善項目 | 影響 | 難易度 |
@@ -178,3 +194,4 @@ memory ストレージのセカンダリインデックスはメモリ上の B-t
 | ~~DiskSecondaryBTree のインラインページスキャン最適化~~ | **改善済み (6.4x → 2.4x)** — 読み取り系メソッドでページバッファ直接走査 | — |
 | ~~`DecodeRowN` プリアロケーション最適化~~ | **改善済み** — 全パスで allocs/op -2, B/op -48 | — |
 | ~~`ScanEach` ストリーミング (DISTINCT + LIMIT 向け)~~ | **改善済み (5.7x → 1.7x)** — `ScanEach` で inline callback + early exit | — |
+| ~~`ScanEach` ストリーミングを WHERE + LIMIT に拡張~~ | **改善済み (Memory 16x, Disk 12.5x 高速化)** — `executeScanEachStreaming` を汎用化 | — |

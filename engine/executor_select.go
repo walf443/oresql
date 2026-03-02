@@ -184,17 +184,18 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 		}
 	}
 
-	// Streaming DISTINCT + LIMIT: scan rows inline under lock with early exit.
+	// Streaming ScanEach: scan rows inline under lock with early exit.
+	// Handles both DISTINCT + LIMIT and WHERE + LIMIT without ORDER BY/GROUP BY/aggregate.
 	// Safe only when there are no subqueries in WHERE/SELECT, no JOINs, no CTE,
 	// no table alias, no subquery source, and no index scan.
-	if canEarlyLimit && stmt.Distinct &&
+	if canEarlyLimit && (stmt.Distinct || stmt.Where != nil) &&
 		stmt.FromSubquery == nil && len(stmt.Joins) == 0 && stmt.TableAlias == "" &&
 		!containsSubquery(stmt.Where) && !columnsContainSubquery(stmt.Columns) {
 		if _, _, cteOk := e.lookupCTE(stmt.TableName); !cteOk {
 			db, info, err := e.resolveTable(stmt.DatabaseName, stmt.TableName)
 			if err == nil {
 				if _, indexUsed := e.tryIndexScan(stmt.Where, info); !indexUsed {
-					return e.executeDistinctLimitStreaming(stmt, db, info, earlyLimit)
+					return e.executeScanEachStreaming(stmt, db, info, earlyLimit, stmt.Distinct)
 				}
 			}
 		}
@@ -1221,8 +1222,8 @@ func columnsContainSubquery(columns []ast.Expr) bool {
 // table lock, applying WHERE → projection → dedup → early exit in one pass.
 // This avoids materializing all rows and allows the disk backend to stop
 // decoding pages once enough unique rows have been collected.
-func (e *Executor) executeDistinctLimitStreaming(
-	stmt *ast.SelectStmt, db *Database, info *TableInfo, earlyLimit int,
+func (e *Executor) executeScanEachStreaming(
+	stmt *ast.SelectStmt, db *Database, info *TableInfo, earlyLimit int, distinct bool,
 ) (*Result, error) {
 	eval := newTableEvaluator(e, info)
 	colTypes := resolveColumnTypes(stmt.Columns, eval)
@@ -1240,12 +1241,15 @@ func (e *Executor) executeDistinctLimitStreaming(
 		where = nil
 	}
 
-	seen := make(map[string]bool)
+	var seen map[string]bool
+	if distinct {
+		seen = make(map[string]bool)
+	}
 	result := make([]Row, 0, earlyLimit)
 	cols := eval.ColumnList()
 	var scanErr error
 
-	db.storage.ScanEach(info.Name, func(row Row) bool {
+	if err := db.storage.ScanEach(info.Name, func(row Row) bool {
 		// WHERE filter
 		if where != nil {
 			val, err := eval.Eval(where, row)
@@ -1280,16 +1284,20 @@ func (e *Executor) executeDistinctLimitStreaming(
 				projected[i] = val
 			}
 		}
-		// Dedup
-		key := string(encodeValues(projected))
-		if seen[key] {
-			return true
+		// Dedup (DISTINCT only)
+		if distinct {
+			key := string(encodeValues(projected))
+			if seen[key] {
+				return true
+			}
+			seen[key] = true
 		}
-		seen[key] = true
 		result = append(result, projected)
-		// Early exit once we have enough unique rows (earlyLimit = limit + offset)
+		// Early exit once we have enough rows (earlyLimit = limit + offset)
 		return len(result) < earlyLimit
-	})
+	}); err != nil {
+		return nil, err
+	}
 	if scanErr != nil {
 		return nil, scanErr
 	}

@@ -1,8 +1,6 @@
 package engine
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -211,25 +209,6 @@ func TestDatabasePersistence(t *testing.T) {
 	result := run(t, exec2, "SELECT * FROM items")
 	require.Len(t, result.Rows, 1)
 	assert.Equal(t, int64(1), result.Rows[0][0])
-}
-
-func TestLegacyMigration(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Create a .dat file in root (simulating legacy layout)
-	legacyFile := filepath.Join(tmpDir, "users.dat")
-	os.WriteFile(legacyFile, []byte("dummy"), 0644)
-
-	mgr := NewDatabaseManager(tmpDir)
-	mgr.LoadExistingDatabases()
-
-	// The .dat file should be moved to default/
-	_, err := os.Stat(legacyFile)
-	assert.True(t, os.IsNotExist(err), "legacy file should have been moved")
-
-	migratedFile := filepath.Join(tmpDir, "default", "users.dat")
-	_, err = os.Stat(migratedFile)
-	assert.NoError(t, err, "file should exist in default/ directory")
 }
 
 func TestCrossDatabaseSelect(t *testing.T) {

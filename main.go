@@ -16,7 +16,7 @@ import (
 func main() {
 	dataDir := flag.String("data-dir", "", "directory for persistent storage (omit for in-memory)")
 	walPath := flag.String("wal", "", "path to write-ahead log file")
-	storageType := flag.String("storage", "file", "storage type: file (default) or disk")
+	storageType := flag.String("storage", "disk", "storage type: disk (default) or memory")
 	flag.Parse()
 
 	// Backward compatibility: first positional arg is WAL path

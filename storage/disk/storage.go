@@ -11,7 +11,6 @@ import (
 	"sync"
 
 	"github.com/walf443/oresql/storage"
-	"github.com/walf443/oresql/storage/file"
 	"github.com/walf443/oresql/storage/pager"
 )
 
@@ -448,7 +447,7 @@ func writeHeader(tbl *diskTable) error {
 	binary.BigEndian.PutUint32(data[hdrFreeHeadOff:hdrFreeHeadOff+4], tbl.pager.FreeHead())
 
 	// Schema (EncodeMeta)
-	schema := file.EncodeMeta(tbl.info, tbl.indexInfo)
+	schema := storage.EncodeMeta(tbl.info, tbl.indexInfo)
 
 	// Append secondary index BTree metadata
 	var secMeta []byte
@@ -460,7 +459,7 @@ func writeHeader(tbl *diskTable) error {
 		lowerName := strings.ToLower(idxInfo.Name)
 		dsi, ok := tbl.indexes[lowerName]
 
-		file.PutString(&secMeta, idxInfo.Name)
+		storage.PutString(&secMeta, idxInfo.Name)
 
 		var rootBuf [4]byte
 		var countBuf [4]byte
@@ -516,7 +515,7 @@ func readHeader(data []byte) (version byte, rootPageID pager.PageID, rowCount ui
 	// Decode base schema to find where it ends
 	schemaCopy := make([]byte, len(fullSchema))
 	copy(schemaCopy, fullSchema)
-	info, indexes, decErr := file.DecodeMeta(schemaCopy)
+	info, indexes, decErr := storage.DecodeMeta(schemaCopy)
 	if decErr != nil {
 		// Return raw schema for caller to handle
 		schema = schemaCopy
@@ -524,7 +523,7 @@ func readHeader(data []byte) (version byte, rootPageID pager.PageID, rowCount ui
 	}
 
 	// Re-encode to find boundary
-	baseSchema := file.EncodeMeta(info, indexes)
+	baseSchema := storage.EncodeMeta(info, indexes)
 	schema = schemaCopy[:len(baseSchema)]
 
 	if version == dbVersionV11 && len(schemaCopy) > len(baseSchema) {
@@ -534,7 +533,7 @@ func readHeader(data []byte) (version byte, rootPageID pager.PageID, rowCount ui
 			numSec := int(binary.BigEndian.Uint16(secData[pos : pos+2]))
 			pos += 2
 			for i := 0; i < numSec; i++ {
-				name, newPos, nameErr := file.GetString(secData, pos)
+				name, newPos, nameErr := storage.GetString(secData, pos)
 				if nameErr != nil {
 					break
 				}
@@ -1468,7 +1467,7 @@ func (ds *DiskStorage) loadTable(tableName string) error {
 	// Decode schema
 	schemaCopy := make([]byte, len(schemaBytes))
 	copy(schemaCopy, schemaBytes)
-	info, indexes, err := file.DecodeMeta(schemaCopy)
+	info, indexes, err := storage.DecodeMeta(schemaCopy)
 	if err != nil {
 		pool.Close()
 		return fmt.Errorf("decode schema: %w", err)

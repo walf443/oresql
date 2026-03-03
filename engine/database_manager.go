@@ -14,7 +14,7 @@ type DatabaseManager struct {
 	mu          sync.RWMutex
 	databases   map[string]*Database // key: lowercase name
 	dataDir     string               // root data directory (empty for in-memory)
-	storageType string               // "memory", "file" (default), or "disk"
+	storageType string               // "memory" or "disk" (default)
 }
 
 // NewDatabaseManager creates a new DatabaseManager with a "default" database.
@@ -125,9 +125,6 @@ func (mgr *DatabaseManager) LoadExistingDatabases() error {
 		return nil
 	}
 
-	// Migrate legacy layout first
-	mgr.migrateLegacyLayout()
-
 	entries, err := os.ReadDir(mgr.dataDir)
 	if err != nil {
 		return fmt.Errorf("failed to read data directory: %w", err)
@@ -153,36 +150,4 @@ func (mgr *DatabaseManager) LoadExistingDatabases() error {
 	}
 
 	return nil
-}
-
-// migrateLegacyLayout moves *.dat files from the root data directory into default/.
-func (mgr *DatabaseManager) migrateLegacyLayout() {
-	if mgr.dataDir == "" {
-		return
-	}
-
-	entries, err := os.ReadDir(mgr.dataDir)
-	if err != nil {
-		return
-	}
-
-	var datFiles []string
-	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".dat") {
-			datFiles = append(datFiles, entry.Name())
-		}
-	}
-
-	if len(datFiles) == 0 {
-		return
-	}
-
-	defaultDir := filepath.Join(mgr.dataDir, "default")
-	os.MkdirAll(defaultDir, 0755)
-
-	for _, name := range datFiles {
-		src := filepath.Join(mgr.dataDir, name)
-		dst := filepath.Join(defaultDir, name)
-		os.Rename(src, dst)
-	}
 }

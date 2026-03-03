@@ -5,7 +5,6 @@ import (
 
 	"github.com/walf443/oresql/storage"
 	"github.com/walf443/oresql/storage/disk"
-	"github.com/walf443/oresql/storage/file"
 	"github.com/walf443/oresql/storage/memory"
 )
 
@@ -14,7 +13,7 @@ import (
 type Database struct {
 	Name        string
 	DataDir     string // empty string means in-memory only
-	StorageType string // "memory", "file" (default), or "disk"
+	StorageType string // "memory" or "disk" (default)
 	catalog     *Catalog
 	storage     StorageEngine
 }
@@ -36,7 +35,7 @@ func WithDatabaseStorage(s StorageEngine) DatabaseOption {
 	}
 }
 
-// WithStorageType sets the storage type ("memory", "file", or "disk").
+// WithStorageType sets the storage type ("memory" or "disk").
 func WithStorageType(storageType string) DatabaseOption {
 	return func(db *Database) {
 		db.StorageType = storageType
@@ -45,7 +44,7 @@ func WithStorageType(storageType string) DatabaseOption {
 
 // NewDatabase creates a new Database with the given name and options.
 // By default, it uses an in-memory storage engine.
-// If WithDataDir is specified, a FileStorage is created and all existing
+// If WithDataDir is specified, a DiskStorage is created and all existing
 // tables are loaded from disk into both the storage engine and the catalog.
 func NewDatabase(name string, opts ...DatabaseOption) *Database {
 	db := &Database{
@@ -59,7 +58,10 @@ func NewDatabase(name string, opts ...DatabaseOption) *Database {
 	// If DataDir is set and no custom storage was provided, create storage based on type
 	if db.DataDir != "" && db.storage == nil {
 		switch db.StorageType {
-		case "disk":
+		case "memory":
+			db.storage = memory.NewMemoryStorage()
+		default:
+			// Default: use DiskStorage
 			ds, err := disk.NewDiskStorage(db.DataDir)
 			if err != nil {
 				panic(fmt.Sprintf("failed to create disk storage: %v", err))
@@ -71,21 +73,6 @@ func NewDatabase(name string, opts ...DatabaseOption) *Database {
 			}
 
 			db.restoreCatalog(ds)
-		default:
-			// Default: use FileStorage
-			fs, err := file.NewFileStorage(db.DataDir)
-			if err != nil {
-				panic(fmt.Sprintf("failed to create file storage: %v", err))
-			}
-			db.storage = fs
-
-			// Load all tables from disk
-			if err := fs.LoadAll(); err != nil {
-				panic(fmt.Sprintf("failed to load data from disk: %v", err))
-			}
-
-			// Restore catalog from the MetadataProvider
-			db.restoreCatalog(fs)
 		}
 	}
 

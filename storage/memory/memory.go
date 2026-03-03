@@ -1080,7 +1080,7 @@ func (s *MemoryStorage) SetNextRowID(tableName string, nextRowID int64) {
 // GetTableMeta returns the table info, index infos, and nextRowID for a table.
 // Note: This method only acquires s.mu.RLock for table lookup but does NOT acquire
 // tbl.mu. The caller must ensure thread-safety — either by holding tbl.mu via
-// WithTableLocks (DDL path) or via the FileStorage mutex (DML path).
+// WithTableLocks (DDL path) or via an external mutex (DML path).
 func (s *MemoryStorage) GetTableMeta(tableName string) (*storage.TableInfo, []*storage.IndexInfo, int64) {
 	lower := strings.ToLower(tableName)
 	s.mu.RLock()

@@ -498,3 +498,325 @@ func EncodeValues(vals []Value) KeyEncoding {
 	}
 	return KeyEncoding(buf)
 }
+
+// PutString appends a length-prefixed string to the buffer.
+func PutString(buf *[]byte, s string) {
+	var lenBuf [2]byte
+	binary.BigEndian.PutUint16(lenBuf[:], uint16(len(s)))
+	*buf = append(*buf, lenBuf[:]...)
+	*buf = append(*buf, s...)
+}
+
+// GetString reads a length-prefixed string from data at the given position.
+func GetString(data []byte, pos int) (string, int, error) {
+	if pos+2 > len(data) {
+		return "", pos, fmt.Errorf("unexpected end of data reading string length at pos %d", pos)
+	}
+	length := int(binary.BigEndian.Uint16(data[pos : pos+2]))
+	pos += 2
+	if pos+length > len(data) {
+		return "", pos, fmt.Errorf("unexpected end of data reading string at pos %d, length %d", pos, length)
+	}
+	s := string(data[pos : pos+length])
+	pos += length
+	return s, pos, nil
+}
+
+// EncodeOneValue encodes a single Value into bytes using EncodeRow format.
+func EncodeOneValue(val Value) []byte {
+	return EncodeRow(Row{val})
+}
+
+// DecodeOneValue decodes a single value from EncodeRow format at the given position.
+func DecodeOneValue(data []byte, pos int) (Value, int, error) {
+	if pos >= len(data) {
+		return nil, pos, fmt.Errorf("unexpected end of data at pos %d", pos)
+	}
+	tag := data[pos]
+	pos++
+	switch tag {
+	case 0x00: // NULL
+		return nil, pos, nil
+	case 0x01: // INT
+		if pos+8 > len(data) {
+			return nil, pos, fmt.Errorf("unexpected end of INT data")
+		}
+		v := int64(binary.BigEndian.Uint64(data[pos : pos+8]))
+		pos += 8
+		return v, pos, nil
+	case 0x02: // FLOAT
+		if pos+8 > len(data) {
+			return nil, pos, fmt.Errorf("unexpected end of FLOAT data")
+		}
+		bits := binary.BigEndian.Uint64(data[pos : pos+8])
+		pos += 8
+		return math.Float64frombits(bits), pos, nil
+	case 0x03: // TEXT
+		if pos+4 > len(data) {
+			return nil, pos, fmt.Errorf("unexpected end of TEXT length")
+		}
+		length := int(binary.BigEndian.Uint32(data[pos : pos+4]))
+		pos += 4
+		if pos+length > len(data) {
+			return nil, pos, fmt.Errorf("unexpected end of TEXT data")
+		}
+		return string(data[pos : pos+length]), pos + length, nil
+	default:
+		return nil, pos, fmt.Errorf("unknown value type tag: 0x%02x", tag)
+	}
+}
+
+// EncodeMeta encodes TableInfo and IndexInfo list into binary format.
+func EncodeMeta(info *TableInfo, indexes []*IndexInfo) []byte {
+	var buf []byte
+
+	// Table name
+	PutString(&buf, info.Name)
+
+	// Number of columns
+	var numColsBuf [2]byte
+	binary.BigEndian.PutUint16(numColsBuf[:], uint16(len(info.Columns)))
+	buf = append(buf, numColsBuf[:]...)
+
+	// Per column
+	for _, col := range info.Columns {
+		PutString(&buf, col.Name)
+		PutString(&buf, col.DataType)
+
+		var idxBuf [2]byte
+		binary.BigEndian.PutUint16(idxBuf[:], uint16(col.Index))
+		buf = append(buf, idxBuf[:]...)
+
+		var flags byte
+		if col.NotNull {
+			flags |= 0x01
+		}
+		if col.PrimaryKey {
+			flags |= 0x02
+		}
+		if col.HasDefault {
+			flags |= 0x04
+		}
+		buf = append(buf, flags)
+
+		if col.HasDefault {
+			buf = append(buf, EncodeOneValue(col.Default)...)
+		}
+	}
+
+	// PrimaryKeyCol (int16, can be -1)
+	var pkColBuf [2]byte
+	binary.BigEndian.PutUint16(pkColBuf[:], uint16(int16(info.PrimaryKeyCol)))
+	buf = append(buf, pkColBuf[:]...)
+
+	// PrimaryKeyCols
+	var numPKColsBuf [2]byte
+	binary.BigEndian.PutUint16(numPKColsBuf[:], uint16(len(info.PrimaryKeyCols)))
+	buf = append(buf, numPKColsBuf[:]...)
+	for _, pkCol := range info.PrimaryKeyCols {
+		var pkBuf [2]byte
+		binary.BigEndian.PutUint16(pkBuf[:], uint16(pkCol))
+		buf = append(buf, pkBuf[:]...)
+	}
+
+	// Indexes
+	numIndexes := 0
+	if indexes != nil {
+		numIndexes = len(indexes)
+	}
+	var numIdxBuf [2]byte
+	binary.BigEndian.PutUint16(numIdxBuf[:], uint16(numIndexes))
+	buf = append(buf, numIdxBuf[:]...)
+
+	for _, idx := range indexes {
+		PutString(&buf, idx.Name)
+		PutString(&buf, idx.TableName)
+
+		// Column names
+		var numColNamesBuf [2]byte
+		binary.BigEndian.PutUint16(numColNamesBuf[:], uint16(len(idx.ColumnNames)))
+		buf = append(buf, numColNamesBuf[:]...)
+		for _, cn := range idx.ColumnNames {
+			PutString(&buf, cn)
+		}
+
+		// Column indexes
+		var numColIdxsBuf [2]byte
+		binary.BigEndian.PutUint16(numColIdxsBuf[:], uint16(len(idx.ColumnIdxs)))
+		buf = append(buf, numColIdxsBuf[:]...)
+		for _, ci := range idx.ColumnIdxs {
+			var ciBuf [2]byte
+			binary.BigEndian.PutUint16(ciBuf[:], uint16(ci))
+			buf = append(buf, ciBuf[:]...)
+		}
+
+		// Type
+		PutString(&buf, idx.Type)
+
+		// Unique
+		if idx.Unique {
+			buf = append(buf, 0x01)
+		} else {
+			buf = append(buf, 0x00)
+		}
+	}
+
+	return buf
+}
+
+// DecodeMeta decodes binary metadata into TableInfo and IndexInfo list.
+func DecodeMeta(data []byte) (*TableInfo, []*IndexInfo, error) {
+	pos := 0
+	info := &TableInfo{}
+
+	// Table name
+	var err error
+	info.Name, pos, err = GetString(data, pos)
+	if err != nil {
+		return nil, nil, fmt.Errorf("reading table name: %w", err)
+	}
+
+	// Number of columns
+	if pos+2 > len(data) {
+		return nil, nil, fmt.Errorf("unexpected end reading num columns")
+	}
+	numCols := binary.BigEndian.Uint16(data[pos : pos+2])
+	pos += 2
+
+	info.Columns = make([]ColumnInfo, numCols)
+	for i := 0; i < int(numCols); i++ {
+		col := &info.Columns[i]
+
+		col.Name, pos, err = GetString(data, pos)
+		if err != nil {
+			return nil, nil, fmt.Errorf("reading column name: %w", err)
+		}
+
+		col.DataType, pos, err = GetString(data, pos)
+		if err != nil {
+			return nil, nil, fmt.Errorf("reading column datatype: %w", err)
+		}
+
+		if pos+2 > len(data) {
+			return nil, nil, fmt.Errorf("unexpected end reading column index")
+		}
+		colIdx := binary.BigEndian.Uint16(data[pos : pos+2])
+		pos += 2
+		col.Index = int(colIdx)
+
+		if pos >= len(data) {
+			return nil, nil, fmt.Errorf("unexpected end reading column flags")
+		}
+		flags := data[pos]
+		pos++
+
+		col.NotNull = flags&0x01 != 0
+		col.PrimaryKey = flags&0x02 != 0
+		col.HasDefault = flags&0x04 != 0
+
+		if col.HasDefault {
+			col.Default, pos, err = DecodeOneValue(data, pos)
+			if err != nil {
+				return nil, nil, fmt.Errorf("reading column default: %w", err)
+			}
+		}
+	}
+
+	// PrimaryKeyCol
+	if pos+2 > len(data) {
+		return nil, nil, fmt.Errorf("unexpected end reading primaryKeyCol")
+	}
+	pkCol := binary.BigEndian.Uint16(data[pos : pos+2])
+	pos += 2
+	info.PrimaryKeyCol = int(int16(pkCol))
+
+	// PrimaryKeyCols
+	if pos+2 > len(data) {
+		return nil, nil, fmt.Errorf("unexpected end reading numPKCols")
+	}
+	numPKCols := binary.BigEndian.Uint16(data[pos : pos+2])
+	pos += 2
+
+	if numPKCols > 0 {
+		info.PrimaryKeyCols = make([]int, numPKCols)
+		for i := 0; i < int(numPKCols); i++ {
+			if pos+2 > len(data) {
+				return nil, nil, fmt.Errorf("unexpected end reading pk col index")
+			}
+			v := binary.BigEndian.Uint16(data[pos : pos+2])
+			pos += 2
+			info.PrimaryKeyCols[i] = int(v)
+		}
+	}
+
+	// Indexes
+	if pos+2 > len(data) {
+		return nil, nil, fmt.Errorf("unexpected end reading num indexes")
+	}
+	numIndexes := binary.BigEndian.Uint16(data[pos : pos+2])
+	pos += 2
+
+	var indexes []*IndexInfo
+	for i := 0; i < int(numIndexes); i++ {
+		idx := &IndexInfo{}
+
+		idx.Name, pos, err = GetString(data, pos)
+		if err != nil {
+			return nil, nil, fmt.Errorf("reading index name: %w", err)
+		}
+
+		idx.TableName, pos, err = GetString(data, pos)
+		if err != nil {
+			return nil, nil, fmt.Errorf("reading index table name: %w", err)
+		}
+
+		// Column names
+		if pos+2 > len(data) {
+			return nil, nil, fmt.Errorf("unexpected end reading num col names")
+		}
+		numColNames := binary.BigEndian.Uint16(data[pos : pos+2])
+		pos += 2
+
+		idx.ColumnNames = make([]string, numColNames)
+		for j := 0; j < int(numColNames); j++ {
+			idx.ColumnNames[j], pos, err = GetString(data, pos)
+			if err != nil {
+				return nil, nil, fmt.Errorf("reading index col name: %w", err)
+			}
+		}
+
+		// Column indexes
+		if pos+2 > len(data) {
+			return nil, nil, fmt.Errorf("unexpected end reading num col idxs")
+		}
+		numColIdxs := binary.BigEndian.Uint16(data[pos : pos+2])
+		pos += 2
+
+		idx.ColumnIdxs = make([]int, numColIdxs)
+		for j := 0; j < int(numColIdxs); j++ {
+			if pos+2 > len(data) {
+				return nil, nil, fmt.Errorf("unexpected end reading col idx")
+			}
+			v := binary.BigEndian.Uint16(data[pos : pos+2])
+			pos += 2
+			idx.ColumnIdxs[j] = int(v)
+		}
+
+		// Type
+		idx.Type, pos, err = GetString(data, pos)
+		if err != nil {
+			return nil, nil, fmt.Errorf("reading index type: %w", err)
+		}
+
+		// Unique
+		if pos >= len(data) {
+			return nil, nil, fmt.Errorf("unexpected end reading index unique flag")
+		}
+		idx.Unique = data[pos] != 0
+		pos++
+
+		indexes = append(indexes, idx)
+	}
+
+	return info, indexes, nil
+}

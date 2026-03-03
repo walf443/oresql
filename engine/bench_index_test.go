@@ -938,6 +938,30 @@ func BenchmarkNonCoveringOrderBy_10000(b *testing.B) {
 	}
 }
 
+// --- PK ORDER BY + WHERE filter (memory) ---
+
+func BenchmarkPKOrderByWhereFilter_10000(b *testing.B) {
+	exec := setupBenchTable(b, 10000, false)
+	sql := "SELECT * FROM bench WHERE id > 9990 ORDER BY id"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkPKOrderByWhereFilterDesc_10000(b *testing.B) {
+	exec := setupBenchTable(b, 10000, false)
+	sql := "SELECT * FROM bench WHERE id > 9990 ORDER BY id DESC"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 // --- PK Covering Index benchmarks (memory) ---
 
 func BenchmarkPKCoveringOrderByLimit_10000(b *testing.B) {

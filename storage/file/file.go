@@ -1355,6 +1355,10 @@ func (fs *FileStorage) ScanEach(tableName string, fn func(row storage.Row) bool)
 	return fs.mem.ScanEach(tableName, fn)
 }
 
+func (fs *FileStorage) ScanEachWithKey(tableName string, reverse bool, fn func(key int64, row storage.Row) bool, limit int) error {
+	return fs.mem.ScanEachWithKey(tableName, reverse, fn, limit)
+}
+
 func (fs *FileStorage) GetRow(tableName string, key int64) (storage.Row, bool) {
 	return fs.mem.GetRow(tableName, key)
 }

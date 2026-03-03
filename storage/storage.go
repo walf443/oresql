@@ -129,6 +129,12 @@ type Engine interface {
 	// fn returning false stops the iteration early. Unlike ForEachRow, the callback
 	// runs while the lock is held, so fn must not re-read the same table.
 	ScanEach(tableName string, fn func(row Row) bool) error
+
+	// ScanEachWithKey iterates rows inline under the table lock, calling fn for
+	// each row with its key. Supports reverse iteration and limit. The Row passed
+	// to fn may be reused across calls (disk storage), so callers must copy it if
+	// they need to retain it beyond the callback. fn must not re-read the same table.
+	ScanEachWithKey(tableName string, reverse bool, fn func(key int64, row Row) bool, limit int) error
 }
 
 // IndexReader is the interface for reading index data.
@@ -238,6 +244,54 @@ func DecodeRowN(data []byte, numCols int) (Row, error) {
 		}
 	}
 	return row, nil
+}
+
+// DecodeRowInto decodes a byte slice into an existing Row slice, reusing the
+// backing array to avoid allocation. If cap(dst) < numCols, a new slice is
+// allocated (first call only). The returned Row shares the backing array of dst,
+// so callers must copy it before the next call if they need to retain the data.
+func DecodeRowInto(data []byte, dst Row, numCols int) (Row, error) {
+	dst = dst[:0]
+	if cap(dst) < numCols {
+		dst = make(Row, 0, numCols)
+	}
+	pos := 0
+	for pos < len(data) {
+		tag := data[pos]
+		pos++
+		switch tag {
+		case 0x00: // NULL
+			dst = append(dst, nil)
+		case 0x01: // INT
+			if pos+8 > len(data) {
+				return nil, fmt.Errorf("unexpected end of INT data")
+			}
+			v := int64(binary.BigEndian.Uint64(data[pos : pos+8]))
+			pos += 8
+			dst = append(dst, v)
+		case 0x02: // FLOAT
+			if pos+8 > len(data) {
+				return nil, fmt.Errorf("unexpected end of FLOAT data")
+			}
+			bits := binary.BigEndian.Uint64(data[pos : pos+8])
+			pos += 8
+			dst = append(dst, math.Float64frombits(bits))
+		case 0x03: // TEXT
+			if pos+4 > len(data) {
+				return nil, fmt.Errorf("unexpected end of TEXT length")
+			}
+			length := int(binary.BigEndian.Uint32(data[pos : pos+4]))
+			pos += 4
+			if pos+length > len(data) {
+				return nil, fmt.Errorf("unexpected end of TEXT data")
+			}
+			dst = append(dst, string(data[pos:pos+length]))
+			pos += length
+		default:
+			return nil, fmt.Errorf("unknown value type tag: 0x%02x", tag)
+		}
+	}
+	return dst, nil
 }
 
 // DecodeRow decodes a byte slice into a row (slice of Values).

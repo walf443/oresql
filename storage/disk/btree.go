@@ -1091,6 +1091,123 @@ func (t *DiskBTree) ForEach(fn func(key int64, row storage.Row) bool) {
 	}
 }
 
+// ForEachReuse iterates over all entries in key order, reusing a single Row
+// buffer across iterations via DecodeRowInto. The Row passed to fn is only
+// valid for the duration of the callback; callers must copy it to retain.
+func (t *DiskBTree) ForEachReuse(fn func(key int64, row storage.Row) bool) {
+	// Find leftmost leaf
+	pageID := t.rootPageID
+	for {
+		data, err := t.pool.FetchPage(pageID)
+		if err != nil {
+			return
+		}
+		if isLeafPage(data) {
+			t.pool.UnpinPage(pageID, false)
+			break
+		}
+		nextPageID := internalLeftmostChild(data)
+		t.pool.UnpinPage(pageID, false)
+		pageID = nextPageID
+	}
+
+	var reuseBuf storage.Row
+
+	// Traverse leaf chain with inline page scanning
+	for pageID != pager.InvalidPageID {
+		data, err := t.pool.FetchPage(pageID)
+		if err != nil {
+			return
+		}
+		entryCount := int(binary.BigEndian.Uint16(data[leafOffEntryCount : leafOffEntryCount+2]))
+		nextLeaf := pager.PageID(binary.BigEndian.Uint32(data[leafOffNextLeaf : leafOffNextLeaf+4]))
+
+		pos := leafHdrSize
+		stopped := false
+		for i := 0; i < entryCount; i++ {
+			entryKey := int64(binary.BigEndian.Uint64(data[pos : pos+entryKeySize]))
+			pos += entryKeySize
+			valLen := int(binary.BigEndian.Uint16(data[pos : pos+entryValLenSize]))
+			pos += entryValLenSize
+			reuseBuf, err = storage.DecodeRowInto(data[pos:pos+valLen], reuseBuf, t.numCols)
+			if err != nil {
+				t.pool.UnpinPage(pageID, false)
+				return
+			}
+			if !fn(entryKey, reuseBuf) {
+				stopped = true
+				break
+			}
+			pos += valLen
+		}
+		t.pool.UnpinPage(pageID, false)
+		if stopped {
+			return
+		}
+		pageID = nextLeaf
+	}
+}
+
+// ForEachReverseReuse iterates over all entries in reverse key order, reusing
+// a single Row buffer and offsets slice across pages. The Row passed to fn is
+// only valid for the duration of the callback.
+func (t *DiskBTree) ForEachReverseReuse(fn func(key int64, row storage.Row) bool) {
+	pageID, err := t.findRightmostLeaf()
+	if err != nil {
+		return
+	}
+
+	var reuseBuf storage.Row
+	var offsets []int
+
+	for pageID != pager.InvalidPageID {
+		data, err := t.pool.FetchPage(pageID)
+		if err != nil {
+			return
+		}
+		entryCount := int(binary.BigEndian.Uint16(data[leafOffEntryCount : leafOffEntryCount+2]))
+		prevLeaf := pager.PageID(binary.BigEndian.Uint32(data[leafOffPrevLeaf : leafOffPrevLeaf+4]))
+
+		// Reuse offsets slice across pages
+		if cap(offsets) < entryCount {
+			offsets = make([]int, entryCount)
+		} else {
+			offsets = offsets[:entryCount]
+		}
+
+		pos := leafHdrSize
+		for i := 0; i < entryCount; i++ {
+			offsets[i] = pos
+			pos += entryKeySize
+			valLen := int(binary.BigEndian.Uint16(data[pos : pos+entryValLenSize]))
+			pos += entryValLenSize + valLen
+		}
+
+		// Scan entries in reverse order
+		stopped := false
+		for j := entryCount - 1; j >= 0; j-- {
+			off := offsets[j]
+			entryKey := int64(binary.BigEndian.Uint64(data[off : off+entryKeySize]))
+			valLen := int(binary.BigEndian.Uint16(data[off+entryKeySize : off+entryKeySize+entryValLenSize]))
+			valOff := off + entryKeySize + entryValLenSize
+			reuseBuf, err = storage.DecodeRowInto(data[valOff:valOff+valLen], reuseBuf, t.numCols)
+			if err != nil {
+				t.pool.UnpinPage(pageID, false)
+				return
+			}
+			if !fn(entryKey, reuseBuf) {
+				stopped = true
+				break
+			}
+		}
+		t.pool.UnpinPage(pageID, false)
+		if stopped {
+			return
+		}
+		pageID = prevLeaf
+	}
+}
+
 // ForEachKeyOnly iterates over all entries in key order, passing only the key
 // to the callback. Value bytes are skipped without decoding (no DecodeRowN),
 // making this ideal for PK-covering queries that only need the primary key.

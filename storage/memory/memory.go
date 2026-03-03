@@ -914,6 +914,35 @@ func (s *MemoryStorage) ScanEach(tableName string, fn func(row storage.Row) bool
 	return nil
 }
 
+// ScanEachWithKey iterates rows inline under the table read-lock with key,
+// supporting reverse iteration and limit. Unlike ForEachRow, the callback
+// runs while the lock is held, so fn must not re-read the same table.
+func (s *MemoryStorage) ScanEachWithKey(tableName string, reverse bool, fn func(key int64, row storage.Row) bool, limit int) error {
+	tbl, ok := s.getTable(tableName)
+	if !ok {
+		return fmt.Errorf("table %q does not exist in storage", tableName)
+	}
+	tbl.mu.RLock()
+	defer tbl.mu.RUnlock()
+	collected := 0
+	iterFn := func(key int64, value any) bool {
+		if !fn(key, value.(storage.Row)) {
+			return false
+		}
+		collected++
+		if limit > 0 && collected >= limit {
+			return false
+		}
+		return true
+	}
+	if reverse {
+		tbl.tree.ForEachReverse(iterFn)
+	} else {
+		tbl.tree.ForEach(iterFn)
+	}
+	return nil
+}
+
 // GetRow retrieves a single row by its BTree key.
 func (s *MemoryStorage) GetRow(tableName string, key int64) (storage.Row, bool) {
 	tbl, ok := s.getTable(tableName)

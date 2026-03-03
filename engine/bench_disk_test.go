@@ -709,6 +709,30 @@ func BenchmarkDiskNonCoveringOrderBy_10000(b *testing.B) {
 
 // --- PK Covering Index benchmarks (disk) ---
 
+// --- PK ORDER BY + WHERE filter (disk) ---
+
+func BenchmarkDiskPKOrderByWhereFilter_10000(b *testing.B) {
+	exec := setupBenchTableDisk(b, 10000, false)
+	sql := "SELECT * FROM bench WHERE id > 9990 ORDER BY id"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkDiskPKOrderByWhereFilterDesc_10000(b *testing.B) {
+	exec := setupBenchTableDisk(b, 10000, false)
+	sql := "SELECT * FROM bench WHERE id > 9990 ORDER BY id DESC"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkDiskPKCoveringOrderByLimit_10000(b *testing.B) {
 	exec := setupBenchTableDisk(b, 10000, false)
 	sql := "SELECT id FROM bench ORDER BY id LIMIT 10"

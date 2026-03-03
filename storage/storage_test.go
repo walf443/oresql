@@ -345,6 +345,72 @@ func TestDecodeCompositeKeyValues(t *testing.T) {
 	})
 }
 
+// --- DecodeRowInto tests ---
+
+func TestDecodeRowInto(t *testing.T) {
+	t.Run("basic reuse", func(t *testing.T) {
+		row1 := Row{int64(1), "hello", nil}
+		row2 := Row{int64(2), "world", float64(3.14)}
+
+		enc1 := EncodeRow(row1)
+		enc2 := EncodeRow(row2)
+
+		// First decode allocates buffer
+		var buf Row
+		var err error
+		buf, err = DecodeRowInto(enc1, buf, 3)
+		require.NoError(t, err)
+		require.Len(t, buf, 3)
+		assert.Equal(t, int64(1), buf[0])
+		assert.Equal(t, "hello", buf[1])
+		assert.Nil(t, buf[2])
+
+		// Second decode reuses buffer (same backing array)
+		buf, err = DecodeRowInto(enc2, buf, 3)
+		require.NoError(t, err)
+		require.Len(t, buf, 3)
+		assert.Equal(t, int64(2), buf[0])
+		assert.Equal(t, "world", buf[1])
+		assert.Equal(t, float64(3.14), buf[2])
+	})
+
+	t.Run("nil dst allocates", func(t *testing.T) {
+		row := Row{int64(42), "test"}
+		enc := EncodeRow(row)
+
+		result, err := DecodeRowInto(enc, nil, 2)
+		require.NoError(t, err)
+		require.Len(t, result, 2)
+		assert.Equal(t, int64(42), result[0])
+		assert.Equal(t, "test", result[1])
+	})
+
+	t.Run("capacity upgrade", func(t *testing.T) {
+		row := Row{int64(1), int64(2), int64(3)}
+		enc := EncodeRow(row)
+
+		// Start with small buffer
+		buf := make(Row, 0, 1)
+		buf, err := DecodeRowInto(enc, buf, 3)
+		require.NoError(t, err)
+		require.Len(t, buf, 3)
+		assert.True(t, cap(buf) >= 3)
+	})
+
+	t.Run("empty data", func(t *testing.T) {
+		var buf Row
+		buf, err := DecodeRowInto([]byte{}, buf, 0)
+		require.NoError(t, err)
+		assert.Len(t, buf, 0)
+	})
+
+	t.Run("error propagation", func(t *testing.T) {
+		var buf Row
+		_, err := DecodeRowInto([]byte{0xFF}, buf, 1)
+		assert.Error(t, err)
+	})
+}
+
 func TestDecodeValueBytesErrors(t *testing.T) {
 	t.Run("empty data", func(t *testing.T) {
 		_, _, err := DecodeValueBytes([]byte{}, 0)

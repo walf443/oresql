@@ -436,7 +436,28 @@ func (e *Executor) scanFullOrder(
 				}
 				return true
 			}, forEachLimit)
+		} else if stmt.Where != nil && !containsSubquery(stmt.Where) && !columnsContainSubquery(stmt.Columns) {
+			// WHERE + no subquery: use ScanEachWithKey for Row reuse (alloc on match only)
+			db.storage.ScanEachWithKey(info.Name, ior.reverse, func(key int64, row Row) bool {
+				val, err := eval.Eval(stmt.Where, row)
+				if err != nil {
+					return false
+				}
+				b, ok := val.(bool)
+				if !ok || !b {
+					return true // filtered out: Row reused, no alloc
+				}
+				// Match: copy row to retain beyond callback
+				kept := make(Row, len(row))
+				copy(kept, row)
+				rows = append(rows, kept)
+				if needed > 0 && len(rows) >= needed {
+					return false
+				}
+				return true
+			}, forEachLimit)
 		} else {
+			// WHERE なし or subquery あり: use ForEachRow (collect-then-iterate)
 			db.storage.ForEachRow(info.Name, ior.reverse, func(key int64, row Row) bool {
 				if stmt.Where != nil {
 					val, err := eval.Eval(stmt.Where, row)

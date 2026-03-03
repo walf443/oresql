@@ -221,6 +221,7 @@ memory ストレージのセカンダリインデックスはメモリ上の B-t
 | Covering Index 範囲 + LIMIT | 1.7x 高速化 (vs Non-Covering) | 良好（PK lookup スキップ） |
 | Covering Index ORDER BY + LIMIT | 2.0x 高速化 (vs Non-Covering) | 良好（PK lookup スキップ） |
 | PK Covering ORDER BY + LIMIT | 1.2x 高速化 (vs Full Row)、Disk/Memory 1.1x | 良好（行デコードスキップ） |
+| PK ORDER BY + WHERE (ScanEachWithKey) | 2.9x | 良好（DecodeRowInto + ScanEachWithKey で Disk B/op 8.1x 削減） |
 
 ### 主要な知見
 
@@ -250,6 +251,8 @@ memory ストレージのセカンダリインデックスはメモリ上の B-t
 
 13. **PK Covering Index で行デコードを完全にスキップ**: PK カラムのみを参照するクエリ（`SELECT id` や `COUNT(*)`）で、Primary B+Tree のリーフエントリからキー（int64）を直接読み取り、バリュー領域の `DecodeRowN` を完全にスキップ。`ForEachKeyOnly` / `ForEachKeyOnlyReverse` メソッドでリーフページのバリュー領域を `pos += valLen` で飛ばす。Disk で ORDER BY PK + LIMIT が **1.2x 高速化**（1,873 vs 2,273 ns/op）、B/op **28% 削減**（2,496 vs 3,480）。Disk/Memory 比率も Full Row の 1.5x から PK Covering の **1.1x** に改善され、ほぼ Memory 同等に到達。`collectColumnRefs` の `COUNT(*)` 特殊処理（`CallExpr` 内の `StarExpr` をスキップ）により、`COUNT(*)` も自動的に PK Covering の対象となる。
 
+14. **`DecodeRowInto` + `ScanEachWithKey` で PK ORDER BY + WHERE の B/op 8.1x 削減**: `DecodeRowInto` で Row スライスのバッキング配列を再利用し、フィルタで除外される行の `make(Row, 0, numCols)` を排除。`ScanEachWithKey` でインラインコールバック実行し、`ForEachRow` の全行 `[]Row` 収集を回避。WHERE selectivity 0.1%（10,000行中10行マッチ）で Disk B/op が 4,589,329 → 566,256（**8.1x 削減**）、allocs/op が 60,013 → 50,015（**9,998 allocs 削減**）。Memory も B/op が 3,467,513 → 84,392（**41x 削減**）。DiskBTree の `ForEachReuse` / `ForEachReverseReuse` は `DecodeRowInto` を使い、既存 `ScanEach` のコールバック規約と整合する形で Row 再利用を実現。
+
 ### 13. PK Covering Index（行デコードスキップ）
 
 PK カラムのみを参照するクエリ（`SELECT id FROM t ORDER BY id LIMIT 10` や `SELECT COUNT(*) FROM t`）では、Primary B+Tree のリーフエントリからキー（int64）を直接読み取り、バリュー領域の `DecodeRowN` を完全にスキップする。セカンダリ Covering Index（`DecodeCompositeKeyValues`）と異なり、PK Covering は**デコードコストがゼロ**（キーが直接使える）なので、Disk ストレージでも効果が得られる。
@@ -277,6 +280,38 @@ PK カラムのみを参照するクエリ（`SELECT id FROM t ORDER BY id LIMIT
 
 ---
 
+### 14. PK ORDER BY + WHERE フィルタ（ScanEachWithKey + DecodeRowInto）
+
+PK ORDER BY + WHERE 条件付きクエリで、`ScanEachWithKey` によるインライン実行と `DecodeRowInto` による Row スライス再利用を組み合わせ、フィルタで除外される行のメモリ割り当てを削減する。従来の `ForEachRow` パスでは全行を `[]Row` スライスに収集した後で WHERE フィルタを適用していたが、新パスではコールバック内で WHERE 評価 → マッチ時のみ Row コピーという 1 パス処理を行う。
+
+**クエリ:** `SELECT * FROM bench WHERE id > 9990 ORDER BY id`（10,000行中 10行マッチ = 0.1% selectivity）
+
+#### 14a. ORDER BY PK + WHERE vs 全行取得
+
+| パターン | Memory (ns/op) | Disk (ns/op) | Disk/Memory | Memory (B/op) | Disk (B/op) |
+|---------|---------------|-------------|-------------|--------------|------------|
+| ORDER BY PK 全行 (ベースライン) | 898,000 | 1,793,000 | **2.0x** | 3,467,513 | 4,589,329 |
+| ORDER BY PK + WHERE (0.1% hit) | 332,000 | 952,000 | **2.9x** | 84,392 | 566,256 |
+| ORDER BY PK DESC + WHERE (0.1% hit) | 337,000 | 961,000 | **2.9x** | 84,392 | 566,704 |
+
+#### 14b. メモリ使用量比較
+
+| | Memory (B/op) | Memory (allocs) | Disk (B/op) | Disk (allocs) |
+|--|--------------|----------------|------------|--------------|
+| 全行 (ベースライン) | 3,467,513 | 10,044 | 4,589,329 | 60,013 |
+| WHERE 0.1% hit | 84,392 | 10,045 | 566,256 | 50,015 |
+| **削減** | **41x** | — | **8.1x** | **9,998 allocs 削減** |
+
+**考察:**
+
+- **Disk B/op 8.1x 削減**: `DecodeRowInto` が Row スライスのバッキング配列を再利用するため、フィルタで除外される 9,990 行分の `make(Row, 0, numCols)` が排除される。allocs/op も 60,013 → 50,015（**9,998 allocs 削減**）で、ほぼ Row スライス分の削減に一致
+- **Disk 1.9x 高速化**: 全行取得 (1,793,000 ns/op) と比較して WHERE 0.1% hit は 952,000 ns/op。全行のページデコード自体は依然必要（リーフチェーン走査は変わらない）だが、Row スライスの alloc/GC 圧力が大幅に軽減
+- **Memory B/op 41x 削減**: Memory ストレージでもインライン実行により `[]Row` 全行収集が不要に。Memory は元々デコード不要なため allocs/op はほぼ変化なし (10,044 → 10,045)
+- **Disk/Memory 2.9x**: Disk が全行のページデコードを依然実行するのに対し、Memory ではデコード不要でインライン WHERE 評価のみのため、全行取得 (2.0x) より比率は劣る。ただし Disk の 952,000 ns/op は全行 1,793,000 ns/op の **1.9x 高速化**であり、WHERE 早期打ち切りの恩恵を受ける
+- **ASC/DESC ほぼ同等**: `ForEachReverseReuse` も `prevLeaf` バックポインタで逆方向走査しつつ `DecodeRowInto` を適用。DESC (961,000 ns/op) と ASC (952,000 ns/op) はほぼ同等
+
+---
+
 ## 改善優先度
 
 | 改善項目 | 影響 | 難易度 |
@@ -294,3 +329,4 @@ PK カラムのみを参照するクエリ（`SELECT id FROM t ORDER BY id LIMIT
 | ~~WHERE + LIMIT のインデックスストリーミング~~ | **改善済み (等値: ~1.0x, 範囲: Disk 318x 高速化)** — `OrderedRangeScan` + `findLeaf` インライン化 | — |
 | ~~Covering Index（PK ルックアップスキップ）~~ | **改善済み (等値: 1.3x, 範囲: 1.7x, ORDER BY: 2.0x)** — `DecodeCompositeKeyValues` + `CoveringIndexReader` | — |
 | ~~PK Covering Index（行デコードスキップ）~~ | **改善済み (Disk: 1.2x 高速化, Disk/Memory: 1.1x)** — `ForEachKeyOnly` + `COUNT(*)` 特殊処理 | — |
+| ~~`DecodeRowInto` + `ScanEachWithKey` (PK ORDER BY + WHERE)~~ | **改善済み (Disk B/op 8.1x 削減, allocs -9,998)** — Row スライス再利用 + インラインコールバック | — |

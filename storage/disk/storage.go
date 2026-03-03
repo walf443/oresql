@@ -1258,6 +1258,7 @@ func (ds *DiskStorage) ForEachRowKeyOnly(tableName string, reverse bool, fn func
 
 // ScanEach iterates rows inline under the table read-lock, calling fn for each row.
 // fn returning false stops the iteration (enabling early exit with minimal page decoding).
+// Uses ForEachReuse to avoid per-row Row allocation.
 func (ds *DiskStorage) ScanEach(tableName string, fn func(row storage.Row) bool) error {
 	tbl, ok := ds.getTable(tableName)
 	if !ok {
@@ -1265,9 +1266,37 @@ func (ds *DiskStorage) ScanEach(tableName string, fn func(row storage.Row) bool)
 	}
 	tbl.mu.RLock()
 	defer tbl.mu.RUnlock()
-	tbl.btree.ForEach(func(key int64, row storage.Row) bool {
+	tbl.btree.ForEachReuse(func(key int64, row storage.Row) bool {
 		return fn(row)
 	})
+	return nil
+}
+
+// ScanEachWithKey iterates rows inline under the table read-lock with key,
+// supporting reverse iteration and limit. Row may be reused across calls.
+func (ds *DiskStorage) ScanEachWithKey(tableName string, reverse bool, fn func(key int64, row storage.Row) bool, limit int) error {
+	tbl, ok := ds.getTable(tableName)
+	if !ok {
+		return fmt.Errorf("table %q does not exist", tableName)
+	}
+	tbl.mu.RLock()
+	defer tbl.mu.RUnlock()
+	collected := 0
+	iterFn := func(key int64, row storage.Row) bool {
+		if !fn(key, row) {
+			return false
+		}
+		collected++
+		if limit > 0 && collected >= limit {
+			return false
+		}
+		return true
+	}
+	if reverse {
+		tbl.btree.ForEachReverseReuse(iterFn)
+	} else {
+		tbl.btree.ForEachReuse(iterFn)
+	}
 	return nil
 }
 

@@ -339,6 +339,9 @@ func (t *DiskBTree) GetByKeysSorted(sortedKeys []int64) []storage.KeyRow {
 		return nil
 	}
 	result := make([]storage.KeyRow, 0, len(sortedKeys))
+	numCols := t.numCols
+	slab := make([]storage.Value, len(sortedKeys)*numCols)
+	slabIdx := 0
 	keyIdx := 0
 	pageID := leafID
 
@@ -391,13 +394,14 @@ func (t *DiskBTree) GetByKeysSorted(sortedKeys []int64) []storage.KeyRow {
 				break
 			}
 			if sortedKeys[keyIdx] == entryKey {
-				// DecodeRowN while page is pinned — safe because DecodeRowN copies all values
-				row, err := storage.DecodeRowN(data[pos:pos+valLen], t.numCols)
-				if err != nil {
+				// Decode into slab slice — three-element slice limits cap to prevent cross-row interference
+				row := slab[slabIdx : slabIdx+numCols : slabIdx+numCols]
+				if _, err := storage.DecodeRowDirect(data[pos:pos+valLen], row); err != nil {
 					t.pool.UnpinPage(pageID, false)
 					return result
 				}
 				result = append(result, storage.KeyRow{Key: entryKey, Row: row})
+				slabIdx += numCols
 				keyIdx++
 			}
 			pos += valLen
@@ -406,6 +410,91 @@ func (t *DiskBTree) GetByKeysSorted(sortedKeys []int64) []storage.KeyRow {
 		pageID = nextLeaf
 	}
 	return result
+}
+
+// ForEachByKeysSorted iterates over rows matching pre-sorted keys using the same
+// leaf-chain traversal as GetByKeysSorted. It reuses a single Row buffer via
+// DecodeRowInto to minimize allocations. The Row passed to fn is only valid for
+// the duration of the callback; callers must copy it if they need to retain it.
+// fn returning false stops the iteration early.
+func (t *DiskBTree) ForEachByKeysSorted(sortedKeys []int64, fn func(key int64, row storage.Row) bool) {
+	if len(sortedKeys) == 0 {
+		return
+	}
+	leafID, err := t.findLeaf(sortedKeys[0])
+	if err != nil {
+		return
+	}
+	keyIdx := 0
+	pageID := leafID
+	var reuseBuf storage.Row
+
+	const maxConsecutiveSkips = 4
+	consecutiveSkips := 0
+
+	for pageID != pager.InvalidPageID && keyIdx < len(sortedKeys) {
+		data, err := t.pool.FetchPage(pageID)
+		if err != nil {
+			return
+		}
+
+		// Read header only to check highKey
+		_, hdrNextLeaf, highKey := decodeLeafHeader(data)
+
+		if sortedKeys[keyIdx] >= highKey {
+			t.pool.UnpinPage(pageID, false)
+			consecutiveSkips++
+
+			if consecutiveSkips > maxConsecutiveSkips {
+				jumpTarget, err := t.findLeaf(sortedKeys[keyIdx])
+				if err != nil {
+					return
+				}
+				pageID = jumpTarget
+				consecutiveSkips = 0
+			} else {
+				pageID = hdrNextLeaf
+			}
+			continue
+		}
+
+		entryCount, nextLeaf, _ := decodeLeafHeader(data)
+		consecutiveSkips = 0
+
+		pos := leafHdrSize
+		stopped := false
+		for i := 0; i < int(entryCount) && keyIdx < len(sortedKeys); i++ {
+			entryKey := int64(binary.BigEndian.Uint64(data[pos : pos+entryKeySize]))
+			pos += entryKeySize
+			valLen := int(binary.BigEndian.Uint16(data[pos : pos+entryValLenSize]))
+			pos += entryValLenSize
+
+			for keyIdx < len(sortedKeys) && sortedKeys[keyIdx] < entryKey {
+				keyIdx++
+			}
+			if keyIdx >= len(sortedKeys) {
+				break
+			}
+			if sortedKeys[keyIdx] == entryKey {
+				reuseBuf, err = storage.DecodeRowInto(data[pos:pos+valLen], reuseBuf, t.numCols)
+				if err != nil {
+					t.pool.UnpinPage(pageID, false)
+					return
+				}
+				if !fn(entryKey, reuseBuf) {
+					stopped = true
+					break
+				}
+				keyIdx++
+			}
+			pos += valLen
+		}
+		t.pool.UnpinPage(pageID, false)
+		if stopped {
+			return
+		}
+		pageID = nextLeaf
+	}
 }
 
 // --- Insert ---

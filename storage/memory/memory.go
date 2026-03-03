@@ -943,6 +943,26 @@ func (s *MemoryStorage) ScanEachWithKey(tableName string, reverse bool, fn func(
 	return nil
 }
 
+// ForEachByKeys iterates rows matching the given keys inline under the table
+// read-lock. fn returning false stops the iteration.
+func (s *MemoryStorage) ForEachByKeys(tableName string, keys []int64, fn func(key int64, row storage.Row) bool) error {
+	tbl, ok := s.getTable(tableName)
+	if !ok {
+		return fmt.Errorf("table %q does not exist in storage", tableName)
+	}
+	tbl.mu.RLock()
+	defer tbl.mu.RUnlock()
+	for _, key := range keys {
+		val, found := tbl.tree.Get(key)
+		if found {
+			if !fn(key, val.(storage.Row)) {
+				break
+			}
+		}
+	}
+	return nil
+}
+
 // GetRow retrieves a single row by its BTree key.
 func (s *MemoryStorage) GetRow(tableName string, key int64) (storage.Row, bool) {
 	tbl, ok := s.getTable(tableName)

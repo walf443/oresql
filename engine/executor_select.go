@@ -201,10 +201,12 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 						return e.executeIndexScanStreaming(stmt, db, info, params, earlyLimit, stmt.Distinct)
 					}
 				}
-				// 2. Full scan streaming (no index available)
-				if _, indexUsed := e.tryIndexScan(stmt.Where, info); !indexUsed {
-					return e.executeScanEachStreaming(stmt, db, info, earlyLimit, stmt.Distinct)
+				// 2. Batch index keys — stream through ForEachByKeys
+				if keys, indexUsed := e.tryIndexScan(stmt.Where, info); indexUsed {
+					return e.executeForEachByKeysStreaming(stmt, db, info, keys, earlyLimit, stmt.Distinct)
 				}
+				// 3. Full scan streaming (no index available)
+				return e.executeScanEachStreaming(stmt, db, info, earlyLimit, stmt.Distinct)
 			}
 		}
 	}
@@ -1430,6 +1432,95 @@ func (e *Executor) executeScanEachStreaming(
 				return true
 			}
 			seen[key] = true
+		}
+		result = append(result, projected)
+		// Early exit once we have enough rows (earlyLimit = limit + offset)
+		return len(result) < earlyLimit
+	}); err != nil {
+		return nil, err
+	}
+	if scanErr != nil {
+		return nil, scanErr
+	}
+
+	result = applyOffset(result, stmt.Offset)
+	result = applyLimit(result, stmt.Limit)
+	return &Result{Columns: colNames, ColumnTypes: colTypes, Rows: result}, nil
+}
+
+// executeForEachByKeysStreaming uses ForEachByKeys to stream rows matching
+// index-derived keys with early exit for LIMIT queries. The Row from the
+// callback may be reused (disk storage), so matching rows are copied.
+func (e *Executor) executeForEachByKeysStreaming(
+	stmt *ast.SelectStmt, db *Database, info *TableInfo,
+	keys []int64, earlyLimit int, distinct bool,
+) (*Result, error) {
+	eval := newTableEvaluator(e, info)
+	colTypes := resolveColumnTypes(stmt.Columns, eval)
+	colNames, colExprs, isStar, err := resolveSelectColumns(stmt.Columns, eval)
+	if err != nil {
+		return nil, err
+	}
+
+	// Optimise WHERE TRUE / WHERE FALSE
+	where := stmt.Where
+	if b, ok := where.(*ast.BoolLitExpr); ok {
+		if !b.Value {
+			return &Result{Columns: colNames, ColumnTypes: colTypes, Rows: nil}, nil
+		}
+		where = nil
+	}
+
+	var seen map[string]bool
+	if distinct {
+		seen = make(map[string]bool)
+	}
+	result := make([]Row, 0, earlyLimit)
+	cols := eval.ColumnList()
+	var scanErr error
+
+	if err := db.storage.ForEachByKeys(info.Name, keys, func(key int64, row Row) bool {
+		// WHERE filter
+		if where != nil {
+			val, err := eval.Eval(where, row)
+			if err != nil {
+				scanErr = err
+				return false
+			}
+			b, ok := val.(bool)
+			if !ok {
+				scanErr = fmt.Errorf("WHERE expression must evaluate to boolean, got %T", val)
+				return false
+			}
+			if !b {
+				return true
+			}
+		}
+		// Projection (copies values out of the potentially reused Row)
+		var projected Row
+		if isStar {
+			projected = make(Row, len(cols))
+			for i, col := range cols {
+				projected[i] = row[col.Index]
+			}
+		} else {
+			projected = make(Row, len(colExprs))
+			for i, expr := range colExprs {
+				val, err := eval.Eval(expr, row)
+				if err != nil {
+					scanErr = err
+					return false
+				}
+				projected[i] = val
+			}
+		}
+		// Dedup (DISTINCT only)
+		if distinct {
+			dedupKey := string(encodeValues(projected))
+			if seen[dedupKey] {
+				return true
+			}
+			seen[dedupKey] = true
 		}
 		result = append(result, projected)
 		// Early exit once we have enough rows (earlyLimit = limit + offset)

@@ -985,3 +985,27 @@ func BenchmarkFullRowOrderByLimit_10000(b *testing.B) {
 		}
 	}
 }
+
+// --- Batch index post-filter benchmarks (memory) ---
+
+func BenchmarkBatchIndexPostFilter_10000(b *testing.B) {
+	exec := setupBenchTable(b, 10000, true)
+	sql := "SELECT * FROM bench WHERE category = 3 AND val > 50000"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkBatchIndexPostFilterLimit_10000(b *testing.B) {
+	exec := setupBenchTable(b, 10000, true)
+	sql := "SELECT * FROM bench WHERE category = 3 AND val > 50000 LIMIT 5"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

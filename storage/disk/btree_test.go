@@ -567,6 +567,109 @@ func TestGetByKeysSorted(t *testing.T) {
 	})
 }
 
+func TestGetByKeysSortedSlabIsolation(t *testing.T) {
+	bt := newTestBTree(t)
+	for i := int64(1); i <= 100; i++ {
+		bt.Insert(i, storage.Row{i, fmt.Sprintf("val-%d", i)})
+	}
+
+	result := bt.GetByKeysSorted([]int64{10, 20, 30})
+	require.Len(t, result, 3)
+
+	// Mutate row 0 — should NOT affect rows 1 or 2
+	result[0].Row[0] = int64(999)
+	result[0].Row[1] = "mutated"
+
+	assert.Equal(t, int64(20), result[1].Row[0])
+	assert.Equal(t, "val-20", result[1].Row[1])
+	assert.Equal(t, int64(30), result[2].Row[0])
+	assert.Equal(t, "val-30", result[2].Row[1])
+}
+
+func TestForEachByKeysSorted(t *testing.T) {
+	t.Run("all keys exist", func(t *testing.T) {
+		bt := newTestBTree(t)
+		for i := int64(1); i <= 10; i++ {
+			bt.Insert(i, storage.Row{i, fmt.Sprintf("val-%d", i)})
+		}
+
+		var collected []storage.KeyRow
+		bt.ForEachByKeysSorted([]int64{2, 5, 8}, func(key int64, row storage.Row) bool {
+			// Must copy since row may be reused
+			cp := make(storage.Row, len(row))
+			copy(cp, row)
+			collected = append(collected, storage.KeyRow{Key: key, Row: cp})
+			return true
+		})
+		require.Len(t, collected, 3)
+		assert.Equal(t, int64(2), collected[0].Key)
+		assert.Equal(t, "val-2", collected[0].Row[1])
+		assert.Equal(t, int64(5), collected[1].Key)
+		assert.Equal(t, "val-5", collected[1].Row[1])
+		assert.Equal(t, int64(8), collected[2].Key)
+		assert.Equal(t, "val-8", collected[2].Row[1])
+	})
+
+	t.Run("some keys missing", func(t *testing.T) {
+		bt := newTestBTree(t)
+		for i := int64(1); i <= 10; i++ {
+			bt.Insert(i*2, storage.Row{i * 2, fmt.Sprintf("val-%d", i*2)})
+		}
+
+		var keys []int64
+		bt.ForEachByKeysSorted([]int64{3, 4, 7, 10, 15, 20}, func(key int64, row storage.Row) bool {
+			keys = append(keys, key)
+			return true
+		})
+		require.Len(t, keys, 3)
+		assert.Equal(t, []int64{4, 10, 20}, keys)
+	})
+
+	t.Run("empty keys", func(t *testing.T) {
+		bt := newTestBTree(t)
+		bt.Insert(1, storage.Row{int64(1)})
+
+		called := false
+		bt.ForEachByKeysSorted([]int64{}, func(key int64, row storage.Row) bool {
+			called = true
+			return true
+		})
+		assert.False(t, called)
+	})
+
+	t.Run("early stop", func(t *testing.T) {
+		bt := newTestBTree(t)
+		for i := int64(1); i <= 100; i++ {
+			bt.Insert(i, storage.Row{i, fmt.Sprintf("val-%d", i)})
+		}
+
+		queryKeys := []int64{10, 20, 30, 40, 50}
+		var collected []int64
+		bt.ForEachByKeysSorted(queryKeys, func(key int64, row storage.Row) bool {
+			collected = append(collected, key)
+			return len(collected) < 3 // stop after 3
+		})
+		require.Len(t, collected, 3)
+		assert.Equal(t, []int64{10, 20, 30}, collected)
+	})
+
+	t.Run("large dataset with gap jump", func(t *testing.T) {
+		bt := newTestBTree(t)
+		n := 10000
+		for i := int64(0); i < int64(n); i++ {
+			bt.Insert(i, storage.Row{i, fmt.Sprintf("val-%d", i)})
+		}
+
+		queryKeys := []int64{10, 11, 12, 4990, 4991, 4992}
+		var collected []int64
+		bt.ForEachByKeysSorted(queryKeys, func(key int64, row storage.Row) bool {
+			collected = append(collected, key)
+			return true
+		})
+		assert.Equal(t, queryKeys, collected)
+	})
+}
+
 func TestPrevLeafIntegrity(t *testing.T) {
 	bt := newTestBTree(t)
 

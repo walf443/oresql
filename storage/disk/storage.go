@@ -1300,6 +1300,22 @@ func (ds *DiskStorage) ScanEachWithKey(tableName string, reverse bool, fn func(k
 	return nil
 }
 
+// ForEachByKeys iterates rows matching the given keys inline under the table
+// read-lock. Keys are sorted internally. Row is reused across calls.
+func (ds *DiskStorage) ForEachByKeys(tableName string, keys []int64, fn func(key int64, row storage.Row) bool) error {
+	tbl, ok := ds.getTable(tableName)
+	if !ok {
+		return fmt.Errorf("table %q does not exist", tableName)
+	}
+	tbl.mu.RLock()
+	defer tbl.mu.RUnlock()
+	sorted := make([]int64, len(keys))
+	copy(sorted, keys)
+	slices.Sort(sorted)
+	tbl.btree.ForEachByKeysSorted(sorted, fn)
+	return nil
+}
+
 func (ds *DiskStorage) GetRow(tableName string, key int64) (storage.Row, bool) {
 	tbl, ok := ds.getTable(tableName)
 	if !ok {

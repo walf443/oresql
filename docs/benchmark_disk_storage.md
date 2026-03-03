@@ -222,6 +222,8 @@ memory ストレージのセカンダリインデックスはメモリ上の B-t
 | Covering Index ORDER BY + LIMIT | 2.0x 高速化 (vs Non-Covering) | 良好（PK lookup スキップ） |
 | PK Covering ORDER BY + LIMIT | 1.2x 高速化 (vs Full Row)、Disk/Memory 1.1x | 良好（行デコードスキップ） |
 | PK ORDER BY + WHERE (ScanEachWithKey) | 2.9x | 良好（DecodeRowInto + ScanEachWithKey で Disk B/op 8.1x 削減） |
+| バッチインデックス + ポストフィルタ (LIMIT なし) | 3.2x | 許容範囲（Bulk Slab で Row alloc N+1 → 2） |
+| バッチインデックス + ポストフィルタ + LIMIT (ForEachByKeys) | 2.1x | 良好（ForEachByKeys ストリーミングで LIMIT 早期打ち切り） |
 
 ### 主要な知見
 
@@ -252,6 +254,8 @@ memory ストレージのセカンダリインデックスはメモリ上の B-t
 13. **PK Covering Index で行デコードを完全にスキップ**: PK カラムのみを参照するクエリ（`SELECT id` や `COUNT(*)`）で、Primary B+Tree のリーフエントリからキー（int64）を直接読み取り、バリュー領域の `DecodeRowN` を完全にスキップ。`ForEachKeyOnly` / `ForEachKeyOnlyReverse` メソッドでリーフページのバリュー領域を `pos += valLen` で飛ばす。Disk で ORDER BY PK + LIMIT が **1.2x 高速化**（1,873 vs 2,273 ns/op）、B/op **28% 削減**（2,496 vs 3,480）。Disk/Memory 比率も Full Row の 1.5x から PK Covering の **1.1x** に改善され、ほぼ Memory 同等に到達。`collectColumnRefs` の `COUNT(*)` 特殊処理（`CallExpr` 内の `StarExpr` をスキップ）により、`COUNT(*)` も自動的に PK Covering の対象となる。
 
 14. **`DecodeRowInto` + `ScanEachWithKey` で PK ORDER BY + WHERE の B/op 8.1x 削減**: `DecodeRowInto` で Row スライスのバッキング配列を再利用し、フィルタで除外される行の `make(Row, 0, numCols)` を排除。`ScanEachWithKey` でインラインコールバック実行し、`ForEachRow` の全行 `[]Row` 収集を回避。WHERE selectivity 0.1%（10,000行中10行マッチ）で Disk B/op が 4,589,329 → 566,256（**8.1x 削減**）、allocs/op が 60,013 → 50,015（**9,998 allocs 削減**）。Memory も B/op が 3,467,513 → 84,392（**41x 削減**）。DiskBTree の `ForEachReuse` / `ForEachReverseReuse` は `DecodeRowInto` を使い、既存 `ScanEach` のコールバック規約と整合する形で Row 再利用を実現。
+
+15. **`GetByKeysSorted` Bulk Slab + `ForEachByKeys` ストリーミングで バッチインデックスパスを最適化**: 2 つの最適化を組み合わせ。(A) `GetByKeysSorted` で `make([]Value, len(sortedKeys)*numCols)` の flat 配列を事前確保し、三要素スライス式 `slab[i:i+n:i+n]` で各 Row を切り出す。`DecodeRowDirect` でインデックス書き込みを使い、N 個の Row alloc → 1 slab alloc に削減。(B) `ForEachByKeysSorted` + `ForEachByKeys` インターフェースで、`DecodeRowInto` による Row 再利用のストリーミングパスを提供。ストリーミング高速パスで `tryIndexScan` が keys を返す場合に `executeForEachByKeysStreaming` を使い、バッチパスへのフォールスルーを排除。LIMIT 付きクエリで Disk 52,025 → 28,361 ns/op（**1.8x 高速化**）、B/op 42,670 → 16,567（**2.6x 削減**）。
 
 ### 13. PK Covering Index（行デコードスキップ）
 
@@ -312,6 +316,40 @@ PK ORDER BY + WHERE 条件付きクエリで、`ScanEachWithKey` によるイン
 
 ---
 
+### 15. GetByKeysSorted Bulk Slab 割り当て + ForEachByKeys ストリーミング
+
+`GetByKeysSorted` の Row alloc を Bulk Slab 化し、`ForEachByKeys` コールバックで Row 再利用によるストリーミングパスを追加。
+
+#### A. Bulk Slab 割り当て（GetByKeysSorted 内部最適化）
+
+`GetByKeysSorted` で事前に `make([]Value, len(sortedKeys) * numCols)` の flat 配列を確保し、マッチごとに三要素スライス式 `slab[i:i+n:i+n]` で Row を切り出す。N 個の Row alloc → 1 alloc に削減。`DecodeRowDirect` でインデックス書き込み（`dst[idx] = value`）を使い `append` を排除。
+
+#### B. ForEachByKeys コールバック（ストリーミング + Row 再利用）
+
+`ForEachByKeysSorted` で `DecodeRowInto` により 1 つの Row バッファを使い回し、コールバック内で WHERE 評価。フィルタで除外される行は alloc ゼロ。ストリーミング高速パスで `tryIndexScan` が keys を返す場合に `executeForEachByKeysStreaming` でストリーミング実行し、バッチパスへのフォールスルーを排除。
+
+#### 15a. バッチインデックス + ポストフィルタ（LIMIT なし）
+
+| パターン | Memory (ns/op) | Disk (ns/op) | Disk/Memory | Memory (B/op) | Disk (B/op) |
+|---------|---------------|-------------|-------------|--------------|------------|
+| `WHERE category = 3 AND val > 50000` | 16,199 | 52,025 | **3.2x** | 13,759 | 42,670 |
+
+**クエリ:** 10,000行、インデックスあり（category + composite）。category = 3 で ~100行絞り込み → val > 50000 でさらに ~50行。
+
+#### 15b. バッチインデックス + ポストフィルタ + LIMIT（ForEachByKeys ストリーミング）
+
+| パターン | Memory (ns/op) | Disk (ns/op) | Disk/Memory | Memory (B/op) | Disk (B/op) |
+|---------|---------------|-------------|-------------|--------------|------------|
+| `WHERE category = 3 AND val > 50000 LIMIT 5` | 13,319 | 28,361 | **2.1x** | 3,336 | 16,567 |
+
+**考察:**
+
+- LIMIT 5 追加で Disk は 52,025 → 28,361 ns/op（**1.8x 高速化**）、B/op は 42,670 → 16,567（**2.6x 削減**）。`ForEachByKeys` ストリーミングにより LIMIT 件数に達した時点で Row デコードを早期打ち切り
+- Memory も 16,199 → 13,319 ns/op（**1.2x 高速化**）、B/op は 13,759 → 3,336（**4.1x 削減**）。Memory では Row 再利用は不要だが、LIMIT による早期打ち切りの効果を享受
+- Disk の Bulk Slab により `GetByKeysSorted`（LIMIT なしパス）の Row alloc が N+1 → 2 に削減。300行 IN や複合インデックス 50行のケースで GC 圧力を軽減
+
+---
+
 ## 改善優先度
 
 | 改善項目 | 影響 | 難易度 |
@@ -330,3 +368,4 @@ PK ORDER BY + WHERE 条件付きクエリで、`ScanEachWithKey` によるイン
 | ~~Covering Index（PK ルックアップスキップ）~~ | **改善済み (等値: 1.3x, 範囲: 1.7x, ORDER BY: 2.0x)** — `DecodeCompositeKeyValues` + `CoveringIndexReader` | — |
 | ~~PK Covering Index（行デコードスキップ）~~ | **改善済み (Disk: 1.2x 高速化, Disk/Memory: 1.1x)** — `ForEachKeyOnly` + `COUNT(*)` 特殊処理 | — |
 | ~~`DecodeRowInto` + `ScanEachWithKey` (PK ORDER BY + WHERE)~~ | **改善済み (Disk B/op 8.1x 削減, allocs -9,998)** — Row スライス再利用 + インラインコールバック | — |
+| ~~`GetByKeysSorted` Bulk Slab + `ForEachByKeys` ストリーミング~~ | **改善済み (Slab: Row alloc N+1→2, ForEachByKeys+LIMIT: Disk 1.8x 高速化)** — `DecodeRowDirect` + 三要素スライス式 + コールバック Row 再利用 | — |

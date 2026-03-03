@@ -135,6 +135,12 @@ type Engine interface {
 	// to fn may be reused across calls (disk storage), so callers must copy it if
 	// they need to retain it beyond the callback. fn must not re-read the same table.
 	ScanEachWithKey(tableName string, reverse bool, fn func(key int64, row Row) bool, limit int) error
+
+	// ForEachByKeys iterates rows matching the given keys inline under the table
+	// lock. Keys are sorted internally. The Row passed to fn may be reused across
+	// calls (disk storage), so callers must copy it if they need to retain it
+	// beyond the callback. fn returning false stops the iteration.
+	ForEachByKeys(tableName string, keys []int64, fn func(key int64, row Row) bool) error
 }
 
 // IndexReader is the interface for reading index data.
@@ -292,6 +298,54 @@ func DecodeRowInto(data []byte, dst Row, numCols int) (Row, error) {
 		}
 	}
 	return dst, nil
+}
+
+// DecodeRowDirect decodes a byte slice into a pre-allocated Row using index
+// writes (dst[idx] = value) instead of append. The caller must ensure
+// len(dst) >= number of encoded columns. Returns the number of columns decoded.
+func DecodeRowDirect(data []byte, dst Row) (int, error) {
+	idx := 0
+	pos := 0
+	for pos < len(data) {
+		tag := data[pos]
+		pos++
+		switch tag {
+		case 0x00: // NULL
+			dst[idx] = nil
+			idx++
+		case 0x01: // INT
+			if pos+8 > len(data) {
+				return idx, fmt.Errorf("unexpected end of INT data")
+			}
+			v := int64(binary.BigEndian.Uint64(data[pos : pos+8]))
+			pos += 8
+			dst[idx] = v
+			idx++
+		case 0x02: // FLOAT
+			if pos+8 > len(data) {
+				return idx, fmt.Errorf("unexpected end of FLOAT data")
+			}
+			bits := binary.BigEndian.Uint64(data[pos : pos+8])
+			pos += 8
+			dst[idx] = math.Float64frombits(bits)
+			idx++
+		case 0x03: // TEXT
+			if pos+4 > len(data) {
+				return idx, fmt.Errorf("unexpected end of TEXT length")
+			}
+			length := int(binary.BigEndian.Uint32(data[pos : pos+4]))
+			pos += 4
+			if pos+length > len(data) {
+				return idx, fmt.Errorf("unexpected end of TEXT data")
+			}
+			dst[idx] = string(data[pos : pos+length])
+			pos += length
+			idx++
+		default:
+			return idx, fmt.Errorf("unknown value type tag: 0x%02x", tag)
+		}
+	}
+	return idx, nil
 }
 
 // DecodeRow decodes a byte slice into a row (slice of Values).

@@ -733,6 +733,30 @@ func BenchmarkDiskPKOrderByWhereFilterDesc_10000(b *testing.B) {
 	}
 }
 
+// --- Batch index post-filter benchmarks (disk) ---
+
+func BenchmarkDiskBatchIndexPostFilter_10000(b *testing.B) {
+	exec := setupBenchTableDisk(b, 10000, true)
+	sql := "SELECT * FROM bench WHERE category = 3 AND val > 50000"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkDiskBatchIndexPostFilterLimit_10000(b *testing.B) {
+	exec := setupBenchTableDisk(b, 10000, true)
+	sql := "SELECT * FROM bench WHERE category = 3 AND val > 50000 LIMIT 5"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkDiskPKCoveringOrderByLimit_10000(b *testing.B) {
 	exec := setupBenchTableDisk(b, 10000, false)
 	sql := "SELECT id FROM bench ORDER BY id LIMIT 10"

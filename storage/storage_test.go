@@ -411,6 +411,73 @@ func TestDecodeRowInto(t *testing.T) {
 	})
 }
 
+func TestDecodeRowDirect(t *testing.T) {
+	t.Run("matches DecodeRowN", func(t *testing.T) {
+		rows := []Row{
+			{int64(1), "hello", nil},
+			{int64(42), float64(3.14), "world"},
+			{nil, nil, nil},
+			{int64(-1), int64(0), int64(math.MaxInt64)},
+			{float64(-0.0), float64(math.Inf(1)), ""},
+		}
+		for _, row := range rows {
+			enc := EncodeRow(row)
+			expected, err := DecodeRowN(enc, len(row))
+			require.NoError(t, err)
+
+			dst := make(Row, len(row))
+			n, err := DecodeRowDirect(enc, dst)
+			require.NoError(t, err)
+			assert.Equal(t, len(row), n)
+			assert.Equal(t, expected, Row(dst))
+		}
+	})
+
+	t.Run("NULL INT TEXT FLOAT mixed", func(t *testing.T) {
+		row := Row{nil, int64(100), "abc", float64(2.5)}
+		enc := EncodeRow(row)
+		dst := make(Row, 4)
+		n, err := DecodeRowDirect(enc, dst)
+		require.NoError(t, err)
+		assert.Equal(t, 4, n)
+		assert.Nil(t, dst[0])
+		assert.Equal(t, int64(100), dst[1])
+		assert.Equal(t, "abc", dst[2])
+		assert.Equal(t, float64(2.5), dst[3])
+	})
+
+	t.Run("empty data", func(t *testing.T) {
+		dst := make(Row, 0)
+		n, err := DecodeRowDirect([]byte{}, dst)
+		require.NoError(t, err)
+		assert.Equal(t, 0, n)
+	})
+
+	t.Run("error on unknown tag", func(t *testing.T) {
+		dst := make(Row, 1)
+		_, err := DecodeRowDirect([]byte{0xFF}, dst)
+		assert.Error(t, err)
+	})
+
+	t.Run("error on truncated INT", func(t *testing.T) {
+		dst := make(Row, 1)
+		_, err := DecodeRowDirect([]byte{0x01, 0x00}, dst)
+		assert.Error(t, err)
+	})
+
+	t.Run("error on truncated TEXT length", func(t *testing.T) {
+		dst := make(Row, 1)
+		_, err := DecodeRowDirect([]byte{0x03, 0x00}, dst)
+		assert.Error(t, err)
+	})
+
+	t.Run("error on truncated FLOAT", func(t *testing.T) {
+		dst := make(Row, 1)
+		_, err := DecodeRowDirect([]byte{0x02, 0x00, 0x00}, dst)
+		assert.Error(t, err)
+	})
+}
+
 func TestDecodeValueBytesErrors(t *testing.T) {
 	t.Run("empty data", func(t *testing.T) {
 		_, _, err := DecodeValueBytes([]byte{}, 0)

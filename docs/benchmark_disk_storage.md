@@ -196,6 +196,38 @@ memory ストレージのセカンダリインデックスはメモリ上の B-t
 
 ---
 
+### 16. decodeLeafPage Slab 割り当て + 書き込みパス最適化
+
+書き込みパス（Insert / Delete / Put）で使用される `decodeLeafPage` を最適化。従来はリーフページのデコード時に N+1 回のアロケーション（1 entries スライス + N 個の val スライス）を行っていたものを、2 回（entries + slab）に削減。加えて、読み取り専用の呼び出し元 4 箇所を直接バイナリパースにインライン化し、`encodeLeafPage` の全ページゼロクリアを末尾のみに変更。
+
+#### A. decodeLeafPageSlab（Slab Allocation）
+
+`decodeLeafPageSlab` で `make([]byte, 0, maxLeafPayload)` の連続 slab を確保し、各エントリの val を `append` + 三要素スライス式 `[a:b:b]` で切り出す。100 エントリのリーフで 101 allocs → 2 allocs に削減。
+
+#### B. 読み取り専用呼び出し元のインライン化
+
+`deleteRecursive` / `fillChild` / `findMinKey` の 4 箇所で `entryCount` や最初のキーだけ必要な呼び出し元を、`decodeLeafPage` なしで直接バイナリパースに置換し、alloc ゼロ化。
+
+#### C. encodeLeafPage 末尾ゼロ化
+
+`for i := range data { data[i] = 0 }` の全 4096 bytes ゼロ化を、ヘッダ+エントリ書き込み後の末尾のみに変更。
+
+#### 16a. BTree 書き込みベンチマーク
+
+| パターン | ns/op | B/op | allocs/op |
+|---------|-------|------|-----------|
+| Insert (sequential) | 4,110 | 16,806 | 16 |
+| Delete (sequential) | 6,800 | 15,235 | 34 |
+| Put (upsert, 1000 keys) | 1,980 | 7,066 | 10 |
+
+**考察:**
+
+- **Insert**: `decodeLeafPageSlab` により Put + `insertRecursive` のリーフデコードが 2 allocs。スプリット発生時のみ追加 alloc（新リーフ + 右エントリスライス）。16 allocs/op には `EncodeRow` + `findLeaf` のページフェッチも含まれる
+- **Delete**: `deleteRecursive` + `fillChild` + `borrowFrom*` / `mergeChildren` が書き込みパスの主要コスト。34 allocs/op は再バランス時の複数ページデコード・エンコードを反映。読み取り専用チェック（entryCount）のインライン化により不要な leafPage 構造体の alloc を排除
+- **Put (upsert)**: 既存キーの更新は `findLeaf` + リーフデコード + エンコードの単純パス。10 allocs/op で最も軽量
+
+---
+
 ## まとめ
 
 | カテゴリ | Disk/Memory 比率 | 評価 |
@@ -224,6 +256,7 @@ memory ストレージのセカンダリインデックスはメモリ上の B-t
 | PK ORDER BY + WHERE (ScanEachWithKey) | 2.9x | 良好（DecodeRowInto + ScanEachWithKey で Disk B/op 8.1x 削減） |
 | バッチインデックス + ポストフィルタ (LIMIT なし) | 3.2x | 許容範囲（Bulk Slab で Row alloc N+1 → 2） |
 | バッチインデックス + ポストフィルタ + LIMIT (ForEachByKeys) | 2.1x | 良好（ForEachByKeys ストリーミングで LIMIT 早期打ち切り） |
+| BTree 書き込み (Insert/Delete/Put) | — | 良好（decodeLeafPageSlab で leaf alloc N+1 → 2、読み取り専用インライン化、encodeLeafPage 末尾ゼロ化） |
 
 ### 主要な知見
 
@@ -256,6 +289,8 @@ memory ストレージのセカンダリインデックスはメモリ上の B-t
 14. **`DecodeRowInto` + `ScanEachWithKey` で PK ORDER BY + WHERE の B/op 8.1x 削減**: `DecodeRowInto` で Row スライスのバッキング配列を再利用し、フィルタで除外される行の `make(Row, 0, numCols)` を排除。`ScanEachWithKey` でインラインコールバック実行し、`ForEachRow` の全行 `[]Row` 収集を回避。WHERE selectivity 0.1%（10,000行中10行マッチ）で Disk B/op が 4,589,329 → 566,256（**8.1x 削減**）、allocs/op が 60,013 → 50,015（**9,998 allocs 削減**）。Memory も B/op が 3,467,513 → 84,392（**41x 削減**）。DiskBTree の `ForEachReuse` / `ForEachReverseReuse` は `DecodeRowInto` を使い、既存 `ScanEach` のコールバック規約と整合する形で Row 再利用を実現。
 
 15. **`GetByKeysSorted` Bulk Slab + `ForEachByKeys` ストリーミングで バッチインデックスパスを最適化**: 2 つの最適化を組み合わせ。(A) `GetByKeysSorted` で `make([]Value, len(sortedKeys)*numCols)` の flat 配列を事前確保し、三要素スライス式 `slab[i:i+n:i+n]` で各 Row を切り出す。`DecodeRowDirect` でインデックス書き込みを使い、N 個の Row alloc → 1 slab alloc に削減。(B) `ForEachByKeysSorted` + `ForEachByKeys` インターフェースで、`DecodeRowInto` による Row 再利用のストリーミングパスを提供。ストリーミング高速パスで `tryIndexScan` が keys を返す場合に `executeForEachByKeysStreaming` を使い、バッチパスへのフォールスルーを排除。LIMIT 付きクエリで Disk 52,025 → 28,361 ns/op（**1.8x 高速化**）、B/op 42,670 → 16,567（**2.6x 削減**）。
+
+16. **`decodeLeafPage` Slab 割り当て + 書き込みパス最適化**: 書き込みパス（Insert / Delete / Put）で使用される `decodeLeafPage` を `decodeLeafPageSlab` に置換し、リーフページデコードの N+1 アロケーション（1 entries + N val）を 2 アロケーション（entries + slab）に削減。`make([]byte, 0, maxLeafPayload)` の連続 slab に全エントリの val を `append` し、三要素スライス式 `[a:b:b]` で各エントリの cap を制限。加えて、読み取り専用の呼び出し元 4 箇所（`deleteRecursive` / `fillChild` / `findMinKey` の entryCount チェックや最初のキー読み取り）を直接バイナリパースにインライン化し alloc ゼロ化。`encodeLeafPage` の全 4096 bytes ゼロクリアも末尾のみに変更し、書き込み済み領域の無駄なゼロ化を排除。BTree ベンチマークで Insert 16 allocs/op、Delete 34 allocs/op、Put 10 allocs/op。
 
 ### 13. PK Covering Index（行デコードスキップ）
 
@@ -369,3 +404,4 @@ PK ORDER BY + WHERE 条件付きクエリで、`ScanEachWithKey` によるイン
 | ~~PK Covering Index（行デコードスキップ）~~ | **改善済み (Disk: 1.2x 高速化, Disk/Memory: 1.1x)** — `ForEachKeyOnly` + `COUNT(*)` 特殊処理 | — |
 | ~~`DecodeRowInto` + `ScanEachWithKey` (PK ORDER BY + WHERE)~~ | **改善済み (Disk B/op 8.1x 削減, allocs -9,998)** — Row スライス再利用 + インラインコールバック | — |
 | ~~`GetByKeysSorted` Bulk Slab + `ForEachByKeys` ストリーミング~~ | **改善済み (Slab: Row alloc N+1→2, ForEachByKeys+LIMIT: Disk 1.8x 高速化)** — `DecodeRowDirect` + 三要素スライス式 + コールバック Row 再利用 | — |
+| ~~`decodeLeafPage` Slab 割り当て + 書き込みパス最適化~~ | **改善済み (leaf alloc N+1→2, 読み取り専用4箇所インライン化, encodeLeafPage 末尾ゼロ化)** — `decodeLeafPageSlab` + 直接バイナリパース | — |

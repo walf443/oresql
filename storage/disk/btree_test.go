@@ -1,6 +1,7 @@
 package disk
 
 import (
+	"encoding/binary"
 	"fmt"
 	"math/rand"
 	"path/filepath"
@@ -704,14 +705,15 @@ func TestPrevLeafIntegrity(t *testing.T) {
 	for pageID != pager.InvalidPageID {
 		data, err := bt.pool.FetchPage(pageID)
 		require.NoError(t, err)
-		lp := decodeLeafPage(data)
+		prev := pager.PageID(binary.BigEndian.Uint32(data[leafOffPrevLeaf : leafOffPrevLeaf+4]))
+		next := pager.PageID(binary.BigEndian.Uint32(data[leafOffNextLeaf : leafOffNextLeaf+4]))
 		leaves = append(leaves, leafInfo{
 			pageID:   pageID,
-			prevLeaf: lp.prevLeaf,
-			nextLeaf: lp.nextLeaf,
+			prevLeaf: prev,
+			nextLeaf: next,
 		})
 		bt.pool.UnpinPage(pageID, false)
-		pageID = lp.nextLeaf
+		pageID = next
 	}
 
 	require.Greater(t, len(leaves), 1, "need multiple leaves for meaningful test")
@@ -741,9 +743,9 @@ func TestPrevLeafIntegrity(t *testing.T) {
 		backwardIDs = append(backwardIDs, pageID)
 		data, err := bt.pool.FetchPage(pageID)
 		require.NoError(t, err)
-		lp := decodeLeafPage(data)
+		prev := pager.PageID(binary.BigEndian.Uint32(data[leafOffPrevLeaf : leafOffPrevLeaf+4]))
 		bt.pool.UnpinPage(pageID, false)
-		pageID = lp.prevLeaf
+		pageID = prev
 	}
 
 	require.Len(t, backwardIDs, len(leaves))
@@ -790,14 +792,15 @@ func TestPrevLeafAfterDelete(t *testing.T) {
 	for pageID != pager.InvalidPageID {
 		data, err := bt.pool.FetchPage(pageID)
 		require.NoError(t, err)
-		lp := decodeLeafPage(data)
+		prev := pager.PageID(binary.BigEndian.Uint32(data[leafOffPrevLeaf : leafOffPrevLeaf+4]))
+		next := pager.PageID(binary.BigEndian.Uint32(data[leafOffNextLeaf : leafOffNextLeaf+4]))
 		leaves = append(leaves, leafInfo{
 			pageID:   pageID,
-			prevLeaf: lp.prevLeaf,
-			nextLeaf: lp.nextLeaf,
+			prevLeaf: prev,
+			nextLeaf: next,
 		})
 		bt.pool.UnpinPage(pageID, false)
-		pageID = lp.nextLeaf
+		pageID = next
 	}
 
 	if len(leaves) > 1 {
@@ -822,6 +825,99 @@ func TestPrevLeafAfterDelete(t *testing.T) {
 	require.Equal(t, bt.Len(), len(keys))
 	for i := 1; i < len(keys); i++ {
 		assert.Greater(t, keys[i-1], keys[i], "keys not in descending order after delete")
+	}
+}
+
+func TestDecodeLeafPageSlabIsolation(t *testing.T) {
+	// Build a leaf page with multiple entries
+	page := make([]byte, pager.PageSize)
+	lp := leafPage{
+		entryCount: 3,
+		nextLeaf:   pager.InvalidPageID,
+		prevLeaf:   pager.InvalidPageID,
+		highKey:    30,
+	}
+	lp.entries = []leafEntry{
+		{key: 10, valLen: 4, val: []byte{0xAA, 0xBB, 0xCC, 0xDD}},
+		{key: 20, valLen: 4, val: []byte{0x11, 0x22, 0x33, 0x44}},
+		{key: 30, valLen: 4, val: []byte{0x55, 0x66, 0x77, 0x88}},
+	}
+	encodeLeafPage(lp, page)
+
+	// Decode with slab
+	decoded := decodeLeafPageSlab(page)
+	require.Equal(t, uint16(3), decoded.entryCount)
+
+	// Mutate entry 0's val — should NOT affect entry 1 or 2
+	decoded.entries[0].val[0] = 0xFF
+	decoded.entries[0].val[1] = 0xFF
+
+	assert.Equal(t, []byte{0x11, 0x22, 0x33, 0x44}, decoded.entries[1].val)
+	assert.Equal(t, []byte{0x55, 0x66, 0x77, 0x88}, decoded.entries[2].val)
+}
+
+func BenchmarkBTreeInsert(b *testing.B) {
+	b.ReportAllocs()
+	dir := b.TempDir()
+	path := filepath.Join(dir, "bench.db")
+	p, err := pager.Create(path)
+	require.NoError(b, err)
+	pool := pager.NewBufferPool(p, 1024)
+	bt, err := NewDiskBTree(pool, 2)
+	require.NoError(b, err)
+	defer pool.Close()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		k := int64(i)
+		bt.Insert(k, storage.Row{k, fmt.Sprintf("val-%d", i)})
+	}
+}
+
+func BenchmarkBTreeDelete(b *testing.B) {
+	b.ReportAllocs()
+	dir := b.TempDir()
+	path := filepath.Join(dir, "bench.db")
+	p, err := pager.Create(path)
+	require.NoError(b, err)
+	pool := pager.NewBufferPool(p, 1024)
+	bt, err := NewDiskBTree(pool, 2)
+	require.NoError(b, err)
+	defer pool.Close()
+
+	// Pre-populate
+	n := b.N
+	for i := 0; i < n; i++ {
+		k := int64(i)
+		bt.Insert(k, storage.Row{k, fmt.Sprintf("val-%d", i)})
+	}
+
+	b.ResetTimer()
+	for i := 0; i < n; i++ {
+		bt.Delete(int64(i))
+	}
+}
+
+func BenchmarkBTreePut(b *testing.B) {
+	b.ReportAllocs()
+	dir := b.TempDir()
+	path := filepath.Join(dir, "bench.db")
+	p, err := pager.Create(path)
+	require.NoError(b, err)
+	pool := pager.NewBufferPool(p, 1024)
+	bt, err := NewDiskBTree(pool, 2)
+	require.NoError(b, err)
+	defer pool.Close()
+
+	// Pre-populate with 1000 keys
+	for i := int64(0); i < 1000; i++ {
+		bt.Insert(i, storage.Row{i, fmt.Sprintf("val-%d", i)})
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		k := int64(i % 1000)
+		bt.Put(k, storage.Row{k, fmt.Sprintf("updated-%d", i)})
 	}
 }
 

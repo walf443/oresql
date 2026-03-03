@@ -117,22 +117,29 @@ const maxInternalKeys = (pager.PageSize - internalHdrSize - childSize) / (entryK
 
 // --- Page encoding/decoding ---
 
-func decodeLeafPage(data []byte) leafPage {
+// decodeLeafPageSlab is like decodeLeafPage but uses a single slab allocation
+// for all entry values, reducing N+1 allocations to 2 (entries + slab).
+func decodeLeafPageSlab(data []byte) leafPage {
 	lp := leafPage{
 		entryCount: binary.BigEndian.Uint16(data[leafOffEntryCount : leafOffEntryCount+2]),
 		nextLeaf:   binary.BigEndian.Uint32(data[leafOffNextLeaf : leafOffNextLeaf+4]),
 		prevLeaf:   binary.BigEndian.Uint32(data[leafOffPrevLeaf : leafOffPrevLeaf+4]),
 		highKey:    int64(binary.BigEndian.Uint64(data[leafOffHighKey : leafOffHighKey+8])),
 	}
-	pos := leafHdrSize
+	if lp.entryCount == 0 {
+		return lp
+	}
 	lp.entries = make([]leafEntry, lp.entryCount)
+	slab := make([]byte, 0, maxLeafPayload)
+	pos := leafHdrSize
 	for i := 0; i < int(lp.entryCount); i++ {
 		key := int64(binary.BigEndian.Uint64(data[pos : pos+entryKeySize]))
 		pos += entryKeySize
 		valLen := binary.BigEndian.Uint16(data[pos : pos+entryValLenSize])
 		pos += entryValLenSize
-		val := make([]byte, valLen)
-		copy(val, data[pos:pos+int(valLen)])
+		slabStart := len(slab)
+		slab = append(slab, data[pos:pos+int(valLen)]...)
+		val := slab[slabStart : slabStart+int(valLen) : slabStart+int(valLen)]
 		pos += int(valLen)
 		lp.entries[i] = leafEntry{key: key, valLen: valLen, val: val}
 	}
@@ -149,9 +156,6 @@ func decodeLeafHeader(data []byte) (entryCount uint16, nextLeaf pager.PageID, hi
 }
 
 func encodeLeafPage(lp leafPage, data []byte) {
-	for i := range data {
-		data[i] = 0
-	}
 	data[0] = flagLeaf
 	binary.BigEndian.PutUint16(data[leafOffEntryCount:leafOffEntryCount+2], lp.entryCount)
 	binary.BigEndian.PutUint32(data[leafOffNextLeaf:leafOffNextLeaf+4], lp.nextLeaf)
@@ -165,6 +169,10 @@ func encodeLeafPage(lp leafPage, data []byte) {
 		pos += entryValLenSize
 		copy(data[pos:], e.val)
 		pos += int(e.valLen)
+	}
+	// Zero only the trailing bytes after entries
+	for i := pos; i < len(data); i++ {
+		data[i] = 0
 	}
 }
 
@@ -527,7 +535,7 @@ func (t *DiskBTree) Put(key int64, row storage.Row) {
 	if err != nil {
 		panic(fmt.Sprintf("disk btree put fetch: %v", err))
 	}
-	lp := decodeLeafPage(data)
+	lp := decodeLeafPageSlab(data)
 
 	// Check for existing key (upsert)
 	idx := searchLeaf(lp.entries, key)
@@ -590,7 +598,7 @@ func (t *DiskBTree) insertRecursive(pageID pager.PageID, entry leafEntry) (int64
 	}
 
 	if isLeafPage(data) {
-		lp := decodeLeafPage(data)
+		lp := decodeLeafPageSlab(data)
 		idx := searchLeaf(lp.entries, entry.key)
 
 		// Insert
@@ -760,7 +768,7 @@ func (t *DiskBTree) deleteRecursive(pageID pager.PageID, key int64) bool {
 	}
 
 	if isLeafPage(data) {
-		lp := decodeLeafPage(data)
+		lp := decodeLeafPageSlab(data)
 		idx := searchLeaf(lp.entries, key)
 		if idx >= int(lp.entryCount) || lp.entries[idx].key != key {
 			t.pool.UnpinPage(pageID, false)
@@ -797,11 +805,11 @@ func (t *DiskBTree) deleteRecursive(pageID pager.PageID, key int64) bool {
 	}
 	needsFill := false
 	if isLeafPage(childData) {
-		clp := decodeLeafPage(childData)
 		// A leaf is "underfull" if it has very few entries.
 		// Use a simple threshold: at most 1 entry (need to borrow/merge)
 		// For simplicity, we handle rebalancing at minimum 1 entry.
-		if clp.entryCount <= 1 && t.length > 2 {
+		clpEntryCount := binary.BigEndian.Uint16(childData[leafOffEntryCount : leafOffEntryCount+2])
+		if clpEntryCount <= 1 && t.length > 2 {
 			needsFill = true
 		}
 	} else {
@@ -821,7 +829,7 @@ func (t *DiskBTree) deleteRecursive(pageID pager.PageID, key int64) bool {
 		}
 		if isLeafPage(data2) {
 			// Root became leaf after merge
-			lp := decodeLeafPage(data2)
+			lp := decodeLeafPageSlab(data2)
 			idx := searchLeaf(lp.entries, key)
 			if idx >= int(lp.entryCount) || lp.entries[idx].key != key {
 				t.pool.UnpinPage(pageID, false)
@@ -897,12 +905,13 @@ func (t *DiskBTree) findMinKey(pageID pager.PageID) int64 {
 		return 0
 	}
 	if isLeafPage(data) {
-		lp := decodeLeafPage(data)
-		t.pool.UnpinPage(pageID, false)
-		if lp.entryCount > 0 {
-			return lp.entries[0].key
+		entryCount := binary.BigEndian.Uint16(data[leafOffEntryCount : leafOffEntryCount+2])
+		var minKey int64
+		if entryCount > 0 {
+			minKey = int64(binary.BigEndian.Uint64(data[leafHdrSize : leafHdrSize+entryKeySize]))
 		}
-		return 0
+		t.pool.UnpinPage(pageID, false)
+		return minKey
 	}
 	ip := decodeInternalPage(data)
 	t.pool.UnpinPage(pageID, false)
@@ -915,9 +924,9 @@ func (t *DiskBTree) fillChild(parentID pager.PageID, ip *internalPage, childIdx 
 		leftData, err := t.pool.FetchPage(ip.children[childIdx-1])
 		if err == nil {
 			if isLeafPage(leftData) {
-				leftLP := decodeLeafPage(leftData)
+				leftEntryCount := binary.BigEndian.Uint16(leftData[leafOffEntryCount : leafOffEntryCount+2])
 				t.pool.UnpinPage(ip.children[childIdx-1], false)
-				if leftLP.entryCount > 1 {
+				if leftEntryCount > 1 {
 					t.borrowFromLeftLeaf(parentID, ip, childIdx)
 					return
 				}
@@ -937,9 +946,9 @@ func (t *DiskBTree) fillChild(parentID pager.PageID, ip *internalPage, childIdx 
 		rightData, err := t.pool.FetchPage(ip.children[childIdx+1])
 		if err == nil {
 			if isLeafPage(rightData) {
-				rightLP := decodeLeafPage(rightData)
+				rightEntryCount := binary.BigEndian.Uint16(rightData[leafOffEntryCount : leafOffEntryCount+2])
 				t.pool.UnpinPage(ip.children[childIdx+1], false)
-				if rightLP.entryCount > 1 {
+				if rightEntryCount > 1 {
 					t.borrowFromRightLeaf(parentID, ip, childIdx)
 					return
 				}
@@ -964,10 +973,10 @@ func (t *DiskBTree) fillChild(parentID pager.PageID, ip *internalPage, childIdx 
 
 func (t *DiskBTree) borrowFromLeftLeaf(parentID pager.PageID, ip *internalPage, childIdx int) {
 	leftData, _ := t.pool.FetchPage(ip.children[childIdx-1])
-	leftLP := decodeLeafPage(leftData)
+	leftLP := decodeLeafPageSlab(leftData)
 
 	childData, _ := t.pool.FetchPage(ip.children[childIdx])
-	childLP := decodeLeafPage(childData)
+	childLP := decodeLeafPageSlab(childData)
 
 	// Move last entry from left to front of child
 	moved := leftLP.entries[leftLP.entryCount-1]
@@ -992,10 +1001,10 @@ func (t *DiskBTree) borrowFromLeftLeaf(parentID pager.PageID, ip *internalPage, 
 
 func (t *DiskBTree) borrowFromRightLeaf(parentID pager.PageID, ip *internalPage, childIdx int) {
 	childData, _ := t.pool.FetchPage(ip.children[childIdx])
-	childLP := decodeLeafPage(childData)
+	childLP := decodeLeafPageSlab(childData)
 
 	rightData, _ := t.pool.FetchPage(ip.children[childIdx+1])
-	rightLP := decodeLeafPage(rightData)
+	rightLP := decodeLeafPageSlab(rightData)
 
 	// Move first entry from right to end of child
 	moved := rightLP.entries[0]
@@ -1079,8 +1088,8 @@ func (t *DiskBTree) mergeChildren(parentID pager.PageID, ip *internalPage, leftI
 	rightData, _ := t.pool.FetchPage(ip.children[leftIdx+1])
 
 	if isLeafPage(leftData) {
-		leftLP := decodeLeafPage(leftData)
-		rightLP := decodeLeafPage(rightData)
+		leftLP := decodeLeafPageSlab(leftData)
+		rightLP := decodeLeafPageSlab(rightData)
 
 		leftLP.entries = append(leftLP.entries, rightLP.entries...)
 		leftLP.entryCount = uint16(len(leftLP.entries))

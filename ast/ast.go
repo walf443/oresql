@@ -163,10 +163,11 @@ type StarExpr struct{}
 func (e *StarExpr) NodeType() string { return "Star" }
 func (e *StarExpr) exprNode()        {}
 
-// CallExpr represents a function call like COUNT(*), SUM(col), etc.
+// CallExpr represents a function call like COUNT(*), SUM(col), COUNT(DISTINCT col), etc.
 type CallExpr struct {
-	Name string // function name (e.g. "COUNT")
-	Args []Expr // arguments
+	Name     string // function name (e.g. "COUNT")
+	Args     []Expr // arguments
+	Distinct bool   // true for COUNT(DISTINCT col)
 }
 
 func (e *CallExpr) NodeType() string { return "Call" }

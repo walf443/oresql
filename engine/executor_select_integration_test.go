@@ -1160,3 +1160,52 @@ func TestCastError(t *testing.T) {
 
 	runExpectError(t, exec, "SELECT CAST(s AS INT) FROM t")
 }
+
+func TestSelectCountDistinct(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT, color TEXT)")
+	run(t, exec, "INSERT INTO t VALUES (1, 'red')")
+	run(t, exec, "INSERT INTO t VALUES (2, 'blue')")
+	run(t, exec, "INSERT INTO t VALUES (3, 'red')")
+	run(t, exec, "INSERT INTO t VALUES (4, 'blue')")
+	run(t, exec, "INSERT INTO t VALUES (5, 'green')")
+
+	result := run(t, exec, "SELECT COUNT(DISTINCT color) FROM t")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, int64(3), result.Rows[0][0])
+}
+
+func TestSelectCountDistinctWithNull(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT, color TEXT)")
+	run(t, exec, "INSERT INTO t VALUES (1, 'red')")
+	run(t, exec, "INSERT INTO t VALUES (2, NULL)")
+	run(t, exec, "INSERT INTO t VALUES (3, 'red')")
+	run(t, exec, "INSERT INTO t VALUES (4, NULL)")
+	run(t, exec, "INSERT INTO t VALUES (5, 'blue')")
+
+	// NULL should be excluded from COUNT(DISTINCT col)
+	result := run(t, exec, "SELECT COUNT(DISTINCT color) FROM t")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, int64(2), result.Rows[0][0])
+}
+
+func TestSelectCountDistinctGroupBy(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE orders (region TEXT, product TEXT)")
+	run(t, exec, "INSERT INTO orders VALUES ('east', 'apple')")
+	run(t, exec, "INSERT INTO orders VALUES ('east', 'apple')")
+	run(t, exec, "INSERT INTO orders VALUES ('east', 'banana')")
+	run(t, exec, "INSERT INTO orders VALUES ('west', 'apple')")
+	run(t, exec, "INSERT INTO orders VALUES ('west', 'apple')")
+	run(t, exec, "INSERT INTO orders VALUES ('west', 'apple')")
+
+	result := run(t, exec, "SELECT region, COUNT(DISTINCT product) FROM orders GROUP BY region ORDER BY region")
+	require.Len(t, result.Rows, 2)
+	// east: apple, banana => 2
+	assert.Equal(t, "east", result.Rows[0][0])
+	assert.Equal(t, int64(2), result.Rows[0][1])
+	// west: apple => 1
+	assert.Equal(t, "west", result.Rows[1][0])
+	assert.Equal(t, int64(1), result.Rows[1][1])
+}

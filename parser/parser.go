@@ -1297,6 +1297,12 @@ func (p *Parser) parseCallExpr() (ast.Expr, error) {
 		return nil, err
 	}
 
+	var distinct bool
+	if p.curToken.Type == token.DISTINCT {
+		distinct = true
+		p.nextToken() // consume DISTINCT
+	}
+
 	var args []ast.Expr
 	if p.curToken.Type == token.ASTERISK {
 		args = append(args, &ast.StarExpr{})
@@ -1313,7 +1319,7 @@ func (p *Parser) parseCallExpr() (ast.Expr, error) {
 		return nil, err
 	}
 
-	return &ast.CallExpr{Name: strings.ToUpper(name), Args: args}, nil
+	return &ast.CallExpr{Name: strings.ToUpper(name), Args: args, Distinct: distinct}, nil
 }
 
 // parseCaseExpr parses a CASE expression:

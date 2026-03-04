@@ -165,7 +165,7 @@ oresql 独自の拡張や実装上の項目は末尾にまとめる。
 - [x] MIN (E091)
 - [x] MAX (E091)
 - [ ] LISTAGG / STRING_AGG / GROUP_CONCAT (T625, SQL:2016+) — 文字列集約
-- [ ] COUNT(DISTINCT col) — DISTINCT 付き集約
+- [x] COUNT(DISTINCT col) — DISTINCT 付き集約
 - [ ] FILTER (WHERE ...) 句 — 集約のフィルタリング (T612, SQL:2003+)
 
 ### ウィンドウ関数 (T611, SQL:2003+)

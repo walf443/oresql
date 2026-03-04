@@ -1108,6 +1108,29 @@ func evalAggregate(call *ast.CallExpr, rows []Row, info *TableInfo) (Value, stri
 	switch call.Name {
 	case "COUNT":
 		colName := formatCallExpr(call)
+		// COUNT(DISTINCT col) counts unique non-NULL values
+		if call.Distinct {
+			if len(call.Args) != 1 {
+				return nil, "", fmt.Errorf("COUNT(DISTINCT ...) expects 1 argument, got %d", len(call.Args))
+			}
+			ident, ok := call.Args[0].(*ast.IdentExpr)
+			if !ok {
+				return nil, "", fmt.Errorf("COUNT(DISTINCT ...) expects column name, got %T", call.Args[0])
+			}
+			col, err := info.FindColumn(ident.Name)
+			if err != nil {
+				return nil, "", err
+			}
+			seen := map[interface{}]bool{}
+			for _, row := range rows {
+				v := row[col.Index]
+				if v == nil {
+					continue
+				}
+				seen[v] = true
+			}
+			return int64(len(seen)), colName, nil
+		}
 		// COUNT(*) counts all rows; COUNT(literal) counts all rows; COUNT(column) excludes NULLs
 		if len(call.Args) == 1 {
 			if _, ok := call.Args[0].(*ast.StarExpr); !ok {
@@ -1297,6 +1320,9 @@ func formatCallExpr(call *ast.CallExpr) string {
 		default:
 			args[i] = "?"
 		}
+	}
+	if call.Distinct {
+		return call.Name + "(DISTINCT " + strings.Join(args, ", ") + ")"
 	}
 	return call.Name + "(" + strings.Join(args, ", ") + ")"
 }

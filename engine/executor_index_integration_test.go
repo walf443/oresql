@@ -774,3 +774,141 @@ func TestSelectWithIndexAndCondition(t *testing.T) {
 	require.Len(t, result.Rows, 1, "expected 1 row")
 	assert.Equal(t, int64(1), result.Rows[0][0])
 }
+
+// --- Index merge union (OR) tests ---
+
+func TestSelectWithOrIndexMerge(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, a INT, b INT)")
+	run(t, exec, "CREATE INDEX idx_a ON t(a)")
+	run(t, exec, "CREATE INDEX idx_b ON t(b)")
+	run(t, exec, "INSERT INTO t VALUES (1, 10, 100)")
+	run(t, exec, "INSERT INTO t VALUES (2, 20, 200)")
+	run(t, exec, "INSERT INTO t VALUES (3, 30, 300)")
+	run(t, exec, "INSERT INTO t VALUES (4, 40, 100)")
+
+	result := run(t, exec, "SELECT * FROM t WHERE a = 10 OR b = 200")
+	require.Len(t, result.Rows, 2, "expected 2 rows")
+	ids := map[int64]bool{}
+	for _, row := range result.Rows {
+		ids[row[0].(int64)] = true
+	}
+	assert.True(t, ids[1] && ids[2], "expected ids 1 and 2, got %v", ids)
+}
+
+func TestSelectWithOrIndexMergeOverlap(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, a INT, b INT)")
+	run(t, exec, "CREATE INDEX idx_a ON t(a)")
+	run(t, exec, "CREATE INDEX idx_b ON t(b)")
+	run(t, exec, "INSERT INTO t VALUES (1, 10, 100)")
+	run(t, exec, "INSERT INTO t VALUES (2, 20, 200)")
+	run(t, exec, "INSERT INTO t VALUES (3, 30, 100)")
+
+	// id=1 matches both a=10 AND b=100, should appear only once
+	result := run(t, exec, "SELECT * FROM t WHERE a = 10 OR b = 100")
+	require.Len(t, result.Rows, 2, "expected 2 rows (deduped)")
+	ids := map[int64]bool{}
+	for _, row := range result.Rows {
+		ids[row[0].(int64)] = true
+	}
+	assert.True(t, ids[1] && ids[3], "expected ids 1 and 3, got %v", ids)
+}
+
+func TestSelectWithOrIndexMergeFallback(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, a INT, b INT)")
+	run(t, exec, "CREATE INDEX idx_a ON t(a)")
+	// No index on b
+	run(t, exec, "INSERT INTO t VALUES (1, 10, 100)")
+	run(t, exec, "INSERT INTO t VALUES (2, 20, 200)")
+	run(t, exec, "INSERT INTO t VALUES (3, 30, 100)")
+
+	// b has no index → should fallback to full scan, but result is still correct
+	result := run(t, exec, "SELECT * FROM t WHERE a = 10 OR b = 100")
+	require.Len(t, result.Rows, 2, "expected 2 rows via full scan fallback")
+	ids := map[int64]bool{}
+	for _, row := range result.Rows {
+		ids[row[0].(int64)] = true
+	}
+	assert.True(t, ids[1] && ids[3], "expected ids 1 and 3, got %v", ids)
+}
+
+func TestSelectWithOrIndexMergeThreeBranches(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, a INT, b INT, c INT)")
+	run(t, exec, "CREATE INDEX idx_a ON t(a)")
+	run(t, exec, "CREATE INDEX idx_b ON t(b)")
+	run(t, exec, "CREATE INDEX idx_c ON t(c)")
+	run(t, exec, "INSERT INTO t VALUES (1, 10, 100, 1000)")
+	run(t, exec, "INSERT INTO t VALUES (2, 20, 200, 2000)")
+	run(t, exec, "INSERT INTO t VALUES (3, 30, 300, 3000)")
+	run(t, exec, "INSERT INTO t VALUES (4, 40, 400, 4000)")
+
+	result := run(t, exec, "SELECT * FROM t WHERE a = 10 OR b = 200 OR c = 3000")
+	require.Len(t, result.Rows, 3, "expected 3 rows")
+	ids := map[int64]bool{}
+	for _, row := range result.Rows {
+		ids[row[0].(int64)] = true
+	}
+	assert.True(t, ids[1] && ids[2] && ids[3], "expected ids 1,2,3, got %v", ids)
+}
+
+func TestSelectWithOrIndexMergeAndBranch(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, a INT, b INT)")
+	run(t, exec, "CREATE INDEX idx_ab ON t(a, b)")
+	run(t, exec, "CREATE INDEX idx_b ON t(b)")
+	run(t, exec, "INSERT INTO t VALUES (1, 10, 100)")
+	run(t, exec, "INSERT INTO t VALUES (2, 10, 200)")
+	run(t, exec, "INSERT INTO t VALUES (3, 20, 300)")
+	run(t, exec, "INSERT INTO t VALUES (4, 30, 100)")
+
+	// (a=10 AND b=100) uses composite index, b=300 uses idx_b
+	result := run(t, exec, "SELECT * FROM t WHERE (a = 10 AND b = 100) OR b = 300")
+	require.Len(t, result.Rows, 2, "expected 2 rows")
+	ids := map[int64]bool{}
+	for _, row := range result.Rows {
+		ids[row[0].(int64)] = true
+	}
+	assert.True(t, ids[1] && ids[3], "expected ids 1 and 3, got %v", ids)
+}
+
+func TestSelectWithOrIndexMergePK(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, a INT)")
+	run(t, exec, "CREATE INDEX idx_a ON t(a)")
+	run(t, exec, "INSERT INTO t VALUES (1, 10)")
+	run(t, exec, "INSERT INTO t VALUES (2, 20)")
+	run(t, exec, "INSERT INTO t VALUES (3, 30)")
+
+	// PK lookup OR secondary index
+	result := run(t, exec, "SELECT * FROM t WHERE id = 1 OR a = 30")
+	require.Len(t, result.Rows, 2, "expected 2 rows")
+	ids := map[int64]bool{}
+	for _, row := range result.Rows {
+		ids[row[0].(int64)] = true
+	}
+	assert.True(t, ids[1] && ids[3], "expected ids 1 and 3, got %v", ids)
+}
+
+func TestSelectWithOrIndexMergeRange(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, a INT, b INT)")
+	run(t, exec, "CREATE INDEX idx_a ON t(a)")
+	run(t, exec, "CREATE INDEX idx_b ON t(b)")
+	run(t, exec, "INSERT INTO t VALUES (1, 10, 100)")
+	run(t, exec, "INSERT INTO t VALUES (2, 20, 200)")
+	run(t, exec, "INSERT INTO t VALUES (3, 30, 300)")
+	run(t, exec, "INSERT INTO t VALUES (4, 40, 400)")
+	run(t, exec, "INSERT INTO t VALUES (5, 50, 500)")
+
+	// Range scan OR equality
+	result := run(t, exec, "SELECT * FROM t WHERE a > 35 OR b = 100")
+	require.Len(t, result.Rows, 3, "expected 3 rows")
+	ids := map[int64]bool{}
+	for _, row := range result.Rows {
+		ids[row[0].(int64)] = true
+	}
+	assert.True(t, ids[1] && ids[4] && ids[5], "expected ids 1,4,5, got %v", ids)
+}

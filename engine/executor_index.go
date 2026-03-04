@@ -614,8 +614,52 @@ func (e *Executor) tryIndexScanParams(where ast.Expr, info *TableInfo) (*indexSc
 	return nil, false
 }
 
+// flattenOrBranches recursively flattens an OR tree into a slice of non-OR expressions.
+// Returns nil if the expression is not an OR logical expression.
+func flattenOrBranches(expr ast.Expr) []ast.Expr {
+	logical, ok := expr.(*ast.LogicalExpr)
+	if !ok || logical.Op != "OR" {
+		return nil
+	}
+	var branches []ast.Expr
+	// Flatten left
+	if left := flattenOrBranches(logical.Left); left != nil {
+		branches = append(branches, left...)
+	} else {
+		branches = append(branches, logical.Left)
+	}
+	// Flatten right
+	if right := flattenOrBranches(logical.Right); right != nil {
+		branches = append(branches, right...)
+	} else {
+		branches = append(branches, logical.Right)
+	}
+	return branches
+}
+
+// tryIndexMergeUnion attempts to use multiple indexes for OR conditions.
+// Each OR branch is delegated to tryIndexScan. If all branches use an index,
+// the results are merged with deduplication. If any branch cannot use an index,
+// falls back to full scan.
+func (e *Executor) tryIndexMergeUnion(where ast.Expr, info *TableInfo) ([]int64, bool) {
+	branches := flattenOrBranches(where)
+	if branches == nil {
+		return nil, false
+	}
+	var allKeys []int64
+	for _, branch := range branches {
+		keys, ok := e.tryIndexScan(branch, info)
+		if !ok {
+			return nil, false
+		}
+		allKeys = append(allKeys, keys...)
+	}
+	return dedupKeys(allKeys), true
+}
+
 // tryIndexScan attempts to use an index for the WHERE clause.
-// Tries PK direct lookup, then equality lookup, then IN lookup, then range scan.
+// Tries PK direct lookup, then equality lookup, then IN lookup, then range scan,
+// then index merge union for OR conditions.
 // Returns BTree keys and whether an index was used.
 func (e *Executor) tryIndexScan(where ast.Expr, info *TableInfo) ([]int64, bool) {
 	if keys, ok := e.tryPrimaryKeyLookup(where, info); ok {
@@ -628,6 +672,9 @@ func (e *Executor) tryIndexScan(where ast.Expr, info *TableInfo) ([]int64, bool)
 		return keys, true
 	}
 	if keys, ok := e.tryIndexRangeScan(where, info); ok {
+		return keys, true
+	}
+	if keys, ok := e.tryIndexMergeUnion(where, info); ok {
 		return keys, true
 	}
 	return nil, false

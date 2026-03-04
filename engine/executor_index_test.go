@@ -391,6 +391,98 @@ func TestExtractRangeConditions(t *testing.T) {
 
 // --- collectColumnRefs / collectNeededColumns / isIndexCovering tests ---
 
+func TestFlattenOrBranches(t *testing.T) {
+	tests := []struct {
+		name    string
+		expr    ast.Expr
+		wantLen int
+		wantNil bool
+	}{
+		{
+			"simple OR (2 branches)",
+			&ast.LogicalExpr{
+				Left: &ast.BinaryExpr{
+					Left:  &ast.IdentExpr{Name: "a"},
+					Op:    "=",
+					Right: &ast.IntLitExpr{Value: 1},
+				},
+				Op: "OR",
+				Right: &ast.BinaryExpr{
+					Left:  &ast.IdentExpr{Name: "b"},
+					Op:    "=",
+					Right: &ast.IntLitExpr{Value: 2},
+				},
+			},
+			2,
+			false,
+		},
+		{
+			"nested OR (3 branches)",
+			&ast.LogicalExpr{
+				Left: &ast.LogicalExpr{
+					Left: &ast.BinaryExpr{
+						Left:  &ast.IdentExpr{Name: "a"},
+						Op:    "=",
+						Right: &ast.IntLitExpr{Value: 1},
+					},
+					Op: "OR",
+					Right: &ast.BinaryExpr{
+						Left:  &ast.IdentExpr{Name: "b"},
+						Op:    "=",
+						Right: &ast.IntLitExpr{Value: 2},
+					},
+				},
+				Op: "OR",
+				Right: &ast.BinaryExpr{
+					Left:  &ast.IdentExpr{Name: "c"},
+					Op:    "=",
+					Right: &ast.IntLitExpr{Value: 3},
+				},
+			},
+			3,
+			false,
+		},
+		{
+			"non-OR expr returns nil",
+			&ast.BinaryExpr{
+				Left:  &ast.IdentExpr{Name: "a"},
+				Op:    "=",
+				Right: &ast.IntLitExpr{Value: 1},
+			},
+			0,
+			true,
+		},
+		{
+			"AND expr returns nil",
+			&ast.LogicalExpr{
+				Left: &ast.BinaryExpr{
+					Left:  &ast.IdentExpr{Name: "a"},
+					Op:    "=",
+					Right: &ast.IntLitExpr{Value: 1},
+				},
+				Op: "AND",
+				Right: &ast.BinaryExpr{
+					Left:  &ast.IdentExpr{Name: "b"},
+					Op:    "=",
+					Right: &ast.IntLitExpr{Value: 2},
+				},
+			},
+			0,
+			true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := flattenOrBranches(tt.expr)
+			if tt.wantNil {
+				assert.Nil(t, got)
+			} else {
+				require.Len(t, got, tt.wantLen)
+			}
+		})
+	}
+}
+
 func TestCollectColumnRefs(t *testing.T) {
 	info := &TableInfo{
 		Name: "t",

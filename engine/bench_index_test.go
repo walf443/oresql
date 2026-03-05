@@ -1012,6 +1012,30 @@ func BenchmarkBatchIndexPostFilterLimit_10000(b *testing.B) {
 
 // --- MIN/MAX index optimization benchmarks (memory) ---
 
+// --- COUNT(*) RowCount optimization benchmarks ---
+
+func BenchmarkCountStarOptimized_10000(b *testing.B) {
+	exec := setupBenchTable(b, 10000, false)
+	sql := "SELECT COUNT(*) FROM bench"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkCountStarFullScan_10000(b *testing.B) {
+	exec := setupBenchTable(b, 10000, false)
+	sql := "SELECT COUNT(*) FROM bench WHERE val >= 0"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkMinWithIndex_10000(b *testing.B) {
 	exec := setupBenchTable(b, 10000, true)
 	sql := "SELECT MIN(val) FROM bench"

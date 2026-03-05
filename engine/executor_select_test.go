@@ -1181,6 +1181,97 @@ func TestMaxWithIndex(t *testing.T) {
 	assert.Equal(t, int64(30), result.Rows[0][0])
 }
 
+// --- COUNT(*) RowCount optimization tests ---
+
+func TestCountStarOptimization(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT)")
+	run(t, exec, "INSERT INTO t VALUES (1, 10)")
+	run(t, exec, "INSERT INTO t VALUES (2, 20)")
+	run(t, exec, "INSERT INTO t VALUES (3, 30)")
+
+	result := run(t, exec, "SELECT COUNT(*) FROM t")
+	assert.Equal(t, "COUNT(*)", result.Columns[0])
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, int64(3), result.Rows[0][0])
+}
+
+func TestCountStarEmpty(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT)")
+
+	result := run(t, exec, "SELECT COUNT(*) FROM t")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, int64(0), result.Rows[0][0])
+}
+
+func TestCountStarWithAlias(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT)")
+	run(t, exec, "INSERT INTO t VALUES (1, 10)")
+	run(t, exec, "INSERT INTO t VALUES (2, 20)")
+
+	result := run(t, exec, "SELECT COUNT(*) AS cnt FROM t")
+	assert.Equal(t, "cnt", result.Columns[0])
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, int64(2), result.Rows[0][0])
+}
+
+func TestCountLiteralOptimization(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT)")
+	run(t, exec, "INSERT INTO t VALUES (1, 10)")
+	run(t, exec, "INSERT INTO t VALUES (2, 20)")
+	run(t, exec, "INSERT INTO t VALUES (3, 30)")
+
+	result := run(t, exec, "SELECT COUNT(1) FROM t")
+	assert.Equal(t, "COUNT(1)", result.Columns[0])
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, int64(3), result.Rows[0][0])
+}
+
+func TestCountStarWithWhere(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT)")
+	run(t, exec, "INSERT INTO t VALUES (1, 10)")
+	run(t, exec, "INSERT INTO t VALUES (2, 20)")
+	run(t, exec, "INSERT INTO t VALUES (3, 30)")
+
+	// WHERE condition → optimization should NOT apply, but result should be correct
+	result := run(t, exec, "SELECT COUNT(*) FROM t WHERE val > 10")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, int64(2), result.Rows[0][0])
+}
+
+func TestCountStarWithGroupBy(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT, category INT)")
+	run(t, exec, "INSERT INTO t VALUES (1, 10, 1)")
+	run(t, exec, "INSERT INTO t VALUES (2, 20, 2)")
+	run(t, exec, "INSERT INTO t VALUES (3, 30, 1)")
+
+	// GROUP BY → optimization should NOT apply, but result should be correct
+	result := run(t, exec, "SELECT category, COUNT(*) FROM t GROUP BY category ORDER BY category")
+	require.Len(t, result.Rows, 2)
+	assert.Equal(t, int64(1), result.Rows[0][0])
+	assert.Equal(t, int64(2), result.Rows[0][1])
+	assert.Equal(t, int64(2), result.Rows[1][0])
+	assert.Equal(t, int64(1), result.Rows[1][1])
+}
+
+func TestCountColumnNoOptimization(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT)")
+	run(t, exec, "INSERT INTO t VALUES (1, 10)")
+	run(t, exec, "INSERT INTO t VALUES (2, NULL)")
+	run(t, exec, "INSERT INTO t VALUES (3, 30)")
+
+	// COUNT(col) counts non-NULL values → optimization should NOT apply
+	result := run(t, exec, "SELECT COUNT(val) FROM t")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, int64(2), result.Rows[0][0])
+}
+
 func TestMinMaxWithPK(t *testing.T) {
 	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT)")

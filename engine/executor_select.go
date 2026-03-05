@@ -169,6 +169,11 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 		}
 	}
 
+	// Try COUNT(*) optimization using RowCount
+	if result, ok := e.tryCountStarOptimization(stmt); ok {
+		return result, nil
+	}
+
 	// Try MIN/MAX index optimization
 	if result, ok := e.tryMinMaxIndexOptimization(stmt); ok {
 		return result, nil
@@ -1301,6 +1306,88 @@ func evalAggregate(call *ast.CallExpr, rows []Row, info *TableInfo) (Value, stri
 	default:
 		return nil, "", fmt.Errorf("unknown aggregate function: %s", call.Name)
 	}
+}
+
+// tryCountStarOptimization attempts to satisfy SELECT COUNT(*) / COUNT(literal) queries
+// using Storage.RowCount() (O(1)) instead of a full table scan (O(N)).
+// Returns (result, true) if optimization was applied, (nil, false) otherwise.
+func (e *Executor) tryCountStarOptimization(stmt *ast.SelectStmt) (*Result, bool) {
+	// Only optimize simple single-table queries without GROUP BY, JOIN, WHERE, subquery, alias
+	if len(stmt.GroupBy) > 0 || len(stmt.Joins) > 0 || stmt.FromSubquery != nil ||
+		stmt.TableAlias != "" || stmt.Where != nil || stmt.Having != nil || stmt.Distinct {
+		return nil, false
+	}
+
+	// All columns must be COUNT(*) or COUNT(literal) CallExprs
+	type countCol struct {
+		dispName string // display name e.g. "COUNT(*)"
+	}
+	var cols []countCol
+	for _, colExpr := range stmt.Columns {
+		expr := colExpr
+		if ae, ok := expr.(*ast.AliasExpr); ok {
+			expr = ae.Expr
+		}
+		call, ok := expr.(*ast.CallExpr)
+		if !ok {
+			return nil, false
+		}
+		if strings.ToUpper(call.Name) != "COUNT" {
+			return nil, false
+		}
+		if call.Distinct {
+			return nil, false
+		}
+		if len(call.Args) != 1 {
+			return nil, false
+		}
+		// Only COUNT(*) and COUNT(literal) are eligible
+		switch call.Args[0].(type) {
+		case *ast.StarExpr:
+			// COUNT(*) — OK
+		case *ast.IntLitExpr:
+			// COUNT(1) — OK
+		case *ast.StringLitExpr:
+			// COUNT('x') — OK
+		default:
+			// COUNT(col) needs non-NULL check — not eligible
+			return nil, false
+		}
+		cols = append(cols, countCol{dispName: formatCallExpr(call)})
+	}
+	if len(cols) == 0 {
+		return nil, false
+	}
+
+	db, err := e.resolveDatabase(stmt.DatabaseName)
+	if err != nil {
+		return nil, false
+	}
+
+	count, err := db.storage.RowCount(stmt.TableName)
+	if err != nil {
+		return nil, false
+	}
+
+	colNames := make([]string, len(cols))
+	colTypes := make([]string, len(cols))
+	resultRow := make(Row, len(cols))
+
+	for i, cc := range cols {
+		if ae, ok := stmt.Columns[i].(*ast.AliasExpr); ok {
+			colNames[i] = ae.Alias
+		} else {
+			colNames[i] = cc.dispName
+		}
+		colTypes[i] = "INT"
+		resultRow[i] = int64(count)
+	}
+
+	return &Result{
+		Columns:     colNames,
+		ColumnTypes: colTypes,
+		Rows:        []Row{resultRow},
+	}, true
 }
 
 // tryMinMaxIndexOptimization attempts to satisfy SELECT MIN(col)/MAX(col) queries

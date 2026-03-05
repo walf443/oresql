@@ -261,3 +261,34 @@ oresql 独自の拡張や実装上の項目は末尾にまとめる。
 
 - [ ] EXPLAIN（実行計画の表示）
 - [ ] EXPLAIN ANALYZE（実行計画 + 実測値）
+
+## oresql 独自 — BTree インデックス最適化
+
+現状の BTree インデックス活用状況と未対応のケースを整理する。
+
+### 対応済み
+
+- [x] WHERE 等値検索 (`WHERE col = val`) — インデックスルックアップ
+- [x] WHERE 範囲検索 (`WHERE col > val`) — `OrderedRangeScan`
+- [x] WHERE IN (`WHERE col IN (...)`) — 複数キーインデックスルックアップ
+- [x] WHERE LIKE 前方一致 (`WHERE col LIKE 'prefix%'`) — プレフィックス範囲スキャン
+- [x] WHERE 複合インデックス — プレフィックス等値 + 範囲条件
+- [x] WHERE OR 条件 — Index Merge Union
+- [x] ORDER BY + LIMIT on indexed col — インデックス順スキャン
+- [x] JOIN inner テーブル equi-join カラム — インデックスネステッドループ
+- [x] JOIN inner テーブル LocalWhere — 複合インデックス活用
+- [x] MIN/MAX on indexed col (WHERE なし) — B-tree 先頭/末尾の O(log N) ルックアップ
+- [x] COUNT(*) (WHERE なし) — `RowCount()` による O(1) カウント
+- [x] Covering Index — composite key から直接カラム値デコード（Disk 向け）
+- [x] PK Covering Index — PK カラムのみ参照時に行データ読み取りスキップ（Disk 向け）
+- [x] WHERE + LIMIT ストリーミング — インデックス走査の早期打ち切り
+
+### 未対応
+
+- [ ] GROUP BY on indexed col — インデックス順走査による1パスグループ化（現状はハッシュマップ）
+- [ ] DISTINCT on indexed col — インデックス順走査による重複スキップ（現状はハッシュ dedup）
+- [ ] COUNT(*) WHERE indexed_col = val — インデックスのマッチキー数カウント（行フェッチ省略）
+- [ ] COUNT(DISTINCT col) on indexed col — インデックス順走査による一意値カウント
+- [ ] ORDER BY indexed col (LIMIT なし) — ソート省略（現状は LIMIT ありのみ最適化）
+- [ ] GROUP BY + ORDER BY 同一カラム — インデックス順グループ化でソート不要化
+- [ ] Correlated subquery on indexed col — 相関条件カラムのインデックスルックアップ（現状はフルスキャン）

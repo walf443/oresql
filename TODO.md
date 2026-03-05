@@ -285,7 +285,7 @@ oresql 独自の拡張や実装上の項目は末尾にまとめる。
 
 ### 未対応
 
-- [ ] GROUP BY on indexed col — インデックス順走査による1パスグループ化（現状はハッシュマップ）
+- [x] GROUP BY on indexed col — インデックス順走査による1パスグループ化（現状はハッシュマップ）
 - [ ] DISTINCT on indexed col — インデックス順走査による重複スキップ（現状はハッシュ dedup）
 - [ ] COUNT(*) WHERE indexed_col = val — インデックスのマッチキー数カウント（行フェッチ省略）
 - [ ] COUNT(DISTINCT col) on indexed col — インデックス順走査による一意値カウント

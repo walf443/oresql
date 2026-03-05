@@ -1101,3 +1101,25 @@ func BenchmarkMaxPK_10000(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkGroupByIndexOptimized_10000(b *testing.B) {
+	exec := setupLowSelectivityTable(b, 10000, true)
+	sql := "SELECT grp, COUNT(*), SUM(val) FROM bench_low GROUP BY grp"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkGroupByNoIndex_10000(b *testing.B) {
+	exec := setupLowSelectivityTable(b, 10000, false)
+	sql := "SELECT grp, COUNT(*), SUM(val) FROM bench_low GROUP BY grp"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

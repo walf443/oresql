@@ -169,6 +169,11 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 		}
 	}
 
+	// Try GROUP BY index optimization (streaming aggregation via index-ordered scan)
+	if result, ok := e.tryGroupByIndexOptimization(stmt); ok {
+		return result, nil
+	}
+
 	// Try COUNT(*) optimization using RowCount
 	if result, ok := e.tryCountStarOptimization(stmt); ok {
 		return result, nil
@@ -1306,6 +1311,413 @@ func evalAggregate(call *ast.CallExpr, rows []Row, info *TableInfo) (Value, stri
 	default:
 		return nil, "", fmt.Errorf("unknown aggregate function: %s", call.Name)
 	}
+}
+
+// aggAccumulator accumulates aggregate values for streaming GROUP BY optimization.
+type aggAccumulator struct {
+	kind   string // "GROUP_COL", "COUNT_STAR", "COUNT_COL", "COUNT_DISTINCT", "SUM", "AVG", "MIN", "MAX"
+	colIdx int    // row column index (-1 for COUNT(*))
+
+	count   int64
+	sumInt  int64
+	sumF    float64
+	isFloat bool
+	minVal  Value
+	maxVal  Value
+	seen    map[interface{}]bool // for COUNT(DISTINCT)
+}
+
+func (a *aggAccumulator) reset() {
+	a.count = 0
+	a.sumInt = 0
+	a.sumF = 0
+	a.isFloat = false
+	a.minVal = nil
+	a.maxVal = nil
+	if a.seen != nil {
+		a.seen = make(map[interface{}]bool)
+	}
+}
+
+func (a *aggAccumulator) feed(row Row) {
+	switch a.kind {
+	case "GROUP_COL":
+		// no accumulation needed
+	case "COUNT_STAR":
+		a.count++
+	case "COUNT_COL":
+		if row[a.colIdx] != nil {
+			a.count++
+		}
+	case "COUNT_DISTINCT":
+		v := row[a.colIdx]
+		if v != nil && !a.seen[v] {
+			a.seen[v] = true
+			a.count++
+		}
+	case "SUM", "AVG":
+		v := row[a.colIdx]
+		if v == nil {
+			return
+		}
+		a.count++
+		switch tv := v.(type) {
+		case int64:
+			a.sumInt += tv
+		case float64:
+			a.isFloat = true
+			a.sumF += tv
+		}
+	case "MIN":
+		v := row[a.colIdx]
+		if v == nil {
+			return
+		}
+		if a.minVal == nil || compareValues(v, a.minVal) < 0 {
+			a.minVal = v
+		}
+	case "MAX":
+		v := row[a.colIdx]
+		if v == nil {
+			return
+		}
+		if a.maxVal == nil || compareValues(v, a.maxVal) > 0 {
+			a.maxVal = v
+		}
+	}
+}
+
+func (a *aggAccumulator) result() Value {
+	switch a.kind {
+	case "COUNT_STAR", "COUNT_COL", "COUNT_DISTINCT":
+		return a.count
+	case "SUM":
+		if a.count == 0 {
+			return nil
+		}
+		if a.isFloat {
+			return a.sumF + float64(a.sumInt)
+		}
+		return a.sumInt
+	case "AVG":
+		if a.count == 0 {
+			return nil
+		}
+		total := a.sumF + float64(a.sumInt)
+		return total / float64(a.count)
+	case "MIN":
+		return a.minVal
+	case "MAX":
+		return a.maxVal
+	default:
+		return nil
+	}
+}
+
+// tryGroupByIndexOptimization attempts to perform GROUP BY using an index-ordered scan
+// for streaming aggregation without a hash map. Returns (result, true) if applied.
+func (e *Executor) tryGroupByIndexOptimization(stmt *ast.SelectStmt) (*Result, bool) {
+	// Only single-column GROUP BY on IdentExpr
+	if len(stmt.GroupBy) != 1 {
+		return nil, false
+	}
+	gbIdent, ok := stmt.GroupBy[0].(*ast.IdentExpr)
+	if !ok {
+		return nil, false
+	}
+
+	// Guard conditions
+	if len(stmt.Joins) > 0 || stmt.FromSubquery != nil || stmt.TableAlias != "" {
+		return nil, false
+	}
+	if stmt.Having != nil || stmt.Distinct {
+		return nil, false
+	}
+	if hasWindowFunction(stmt.Columns) {
+		return nil, false
+	}
+	if containsSubquery(stmt.Where) {
+		return nil, false
+	}
+
+	// All SELECT columns must be GROUP BY column (IdentExpr) or aggregate (CallExpr)
+	// Build accumulators
+	type accInfo struct {
+		acc      *aggAccumulator
+		dispName string
+		colType  string
+	}
+
+	db, err := e.resolveDatabase(stmt.DatabaseName)
+	if err != nil {
+		return nil, false
+	}
+	info, err := db.catalog.GetTable(stmt.TableName)
+	if err != nil {
+		return nil, false
+	}
+
+	gbCol, err := info.FindColumn(gbIdent.Name)
+	if err != nil {
+		return nil, false
+	}
+	gbColIdx := gbCol.Index
+
+	// Check that GROUP BY column has PK or secondary index
+	isPK := gbColIdx == info.PrimaryKeyCol
+	var idxReader IndexReader
+	if !isPK {
+		idxReader = db.storage.LookupSingleColumnIndex(info.Name, gbColIdx)
+		if idxReader == nil {
+			return nil, false
+		}
+	}
+
+	// Build accumulators for each SELECT column
+	accs := make([]accInfo, len(stmt.Columns))
+	for i, colExpr := range stmt.Columns {
+		expr := colExpr
+		alias := ""
+		if ae, ok := expr.(*ast.AliasExpr); ok {
+			alias = ae.Alias
+			expr = ae.Expr
+		}
+
+		switch inner := expr.(type) {
+		case *ast.IdentExpr:
+			// Must be the GROUP BY column
+			if strings.ToLower(inner.Name) != strings.ToLower(gbIdent.Name) {
+				return nil, false
+			}
+			dispName := gbCol.Name
+			if alias != "" {
+				dispName = alias
+			}
+			accs[i] = accInfo{
+				acc:      &aggAccumulator{kind: "GROUP_COL", colIdx: gbColIdx},
+				dispName: dispName,
+				colType:  gbCol.DataType,
+			}
+		case *ast.CallExpr:
+			fn := strings.ToUpper(inner.Name)
+			if isScalarFunc(fn) {
+				return nil, false
+			}
+			dispName := formatCallExpr(inner)
+			if alias != "" {
+				dispName = alias
+			}
+
+			switch fn {
+			case "COUNT":
+				if inner.Distinct {
+					if len(inner.Args) != 1 {
+						return nil, false
+					}
+					ident, ok := inner.Args[0].(*ast.IdentExpr)
+					if !ok {
+						return nil, false
+					}
+					col, err := info.FindColumn(ident.Name)
+					if err != nil {
+						return nil, false
+					}
+					accs[i] = accInfo{
+						acc:      &aggAccumulator{kind: "COUNT_DISTINCT", colIdx: col.Index, seen: make(map[interface{}]bool)},
+						dispName: dispName,
+						colType:  "INT",
+					}
+				} else if len(inner.Args) == 1 {
+					switch inner.Args[0].(type) {
+					case *ast.StarExpr, *ast.IntLitExpr, *ast.StringLitExpr:
+						accs[i] = accInfo{
+							acc:      &aggAccumulator{kind: "COUNT_STAR", colIdx: -1},
+							dispName: dispName,
+							colType:  "INT",
+						}
+					default:
+						ident, ok := inner.Args[0].(*ast.IdentExpr)
+						if !ok {
+							return nil, false
+						}
+						col, err := info.FindColumn(ident.Name)
+						if err != nil {
+							return nil, false
+						}
+						accs[i] = accInfo{
+							acc:      &aggAccumulator{kind: "COUNT_COL", colIdx: col.Index},
+							dispName: dispName,
+							colType:  "INT",
+						}
+					}
+				} else {
+					return nil, false
+				}
+			case "SUM":
+				if len(inner.Args) != 1 {
+					return nil, false
+				}
+				ident, ok := inner.Args[0].(*ast.IdentExpr)
+				if !ok {
+					return nil, false
+				}
+				col, err := info.FindColumn(ident.Name)
+				if err != nil {
+					return nil, false
+				}
+				accs[i] = accInfo{
+					acc:      &aggAccumulator{kind: "SUM", colIdx: col.Index},
+					dispName: dispName,
+					colType:  col.DataType,
+				}
+			case "AVG":
+				if len(inner.Args) != 1 {
+					return nil, false
+				}
+				ident, ok := inner.Args[0].(*ast.IdentExpr)
+				if !ok {
+					return nil, false
+				}
+				col, err := info.FindColumn(ident.Name)
+				if err != nil {
+					return nil, false
+				}
+				accs[i] = accInfo{
+					acc:      &aggAccumulator{kind: "AVG", colIdx: col.Index},
+					dispName: dispName,
+					colType:  col.DataType,
+				}
+			case "MIN":
+				if len(inner.Args) != 1 {
+					return nil, false
+				}
+				ident, ok := inner.Args[0].(*ast.IdentExpr)
+				if !ok {
+					return nil, false
+				}
+				col, err := info.FindColumn(ident.Name)
+				if err != nil {
+					return nil, false
+				}
+				accs[i] = accInfo{
+					acc:      &aggAccumulator{kind: "MIN", colIdx: col.Index},
+					dispName: dispName,
+					colType:  col.DataType,
+				}
+			case "MAX":
+				if len(inner.Args) != 1 {
+					return nil, false
+				}
+				ident, ok := inner.Args[0].(*ast.IdentExpr)
+				if !ok {
+					return nil, false
+				}
+				col, err := info.FindColumn(ident.Name)
+				if err != nil {
+					return nil, false
+				}
+				accs[i] = accInfo{
+					acc:      &aggAccumulator{kind: "MAX", colIdx: col.Index},
+					dispName: dispName,
+					colType:  col.DataType,
+				}
+			default:
+				return nil, false
+			}
+		default:
+			return nil, false
+		}
+	}
+
+	// Build evaluator for WHERE filter
+	var eval *tableEvaluator
+	if stmt.Where != nil {
+		eval = newTableEvaluator(e, info)
+	}
+
+	// Streaming aggregation
+	var resultRows []Row
+	var prevGroupVal Value
+	initialized := false
+
+	emitGroup := func() {
+		row := make(Row, len(accs))
+		for i, ai := range accs {
+			if ai.acc.kind == "GROUP_COL" {
+				row[i] = prevGroupVal
+			} else {
+				row[i] = ai.acc.result()
+			}
+		}
+		resultRows = append(resultRows, row)
+	}
+
+	resetAccs := func() {
+		for _, ai := range accs {
+			ai.acc.reset()
+		}
+	}
+
+	processRow := func(row Row) {
+		// WHERE filter
+		if eval != nil {
+			match, err := eval.Eval(stmt.Where, row)
+			if err != nil {
+				return
+			}
+			b, ok := match.(bool)
+			if !ok || !b {
+				return
+			}
+		}
+
+		currentVal := row[gbColIdx]
+		if initialized && currentVal != prevGroupVal {
+			emitGroup()
+			resetAccs()
+		}
+
+		for _, ai := range accs {
+			ai.acc.feed(row)
+		}
+		prevGroupVal = currentVal
+		initialized = true
+	}
+
+	if isPK {
+		db.storage.ForEachRow(info.Name, false, func(key int64, row Row) bool {
+			processRow(row)
+			return true
+		}, 0)
+	} else {
+		idxReader.OrderedRangeScan(nil, false, nil, false, false, func(rowKey int64) bool {
+			row, ok := db.storage.GetRow(info.Name, rowKey)
+			if !ok {
+				return true
+			}
+			processRow(row)
+			return true
+		})
+	}
+
+	// Emit the last group
+	if initialized {
+		emitGroup()
+	}
+
+	// Build column names and types
+	colNames := make([]string, len(accs))
+	colTypes := make([]string, len(accs))
+	for i, ai := range accs {
+		colNames[i] = ai.dispName
+		colTypes[i] = ai.colType
+	}
+
+	return &Result{
+		Columns:     colNames,
+		ColumnTypes: colTypes,
+		Rows:        resultRows,
+	}, true
 }
 
 // tryCountStarOptimization attempts to satisfy SELECT COUNT(*) / COUNT(literal) queries

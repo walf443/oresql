@@ -1364,3 +1364,271 @@ func TestMinMaxNoIndex(t *testing.T) {
 	require.Len(t, result.Rows, 1)
 	assert.Equal(t, int64(30), result.Rows[0][0])
 }
+
+// --- GROUP BY Index Optimization Tests ---
+
+func TestGroupByIndexOptimization(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE orders (id INT PRIMARY KEY, category INT, amount INT)")
+	run(t, exec, "INSERT INTO orders VALUES (1, 1, 100)")
+	run(t, exec, "INSERT INTO orders VALUES (2, 2, 200)")
+	run(t, exec, "INSERT INTO orders VALUES (3, 1, 150)")
+	run(t, exec, "INSERT INTO orders VALUES (4, 3, 300)")
+	run(t, exec, "INSERT INTO orders VALUES (5, 2, 250)")
+
+	// GROUP BY PK column with COUNT(*)
+	result := run(t, exec, "SELECT id, COUNT(*) FROM orders GROUP BY id")
+	require.Len(t, result.Rows, 5)
+	// Each id appears once, so COUNT(*) = 1 for each
+	for _, row := range result.Rows {
+		assert.Equal(t, int64(1), row[1])
+	}
+}
+
+func TestGroupBySecondaryIndex(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE orders (id INT PRIMARY KEY, category INT, amount INT)")
+	run(t, exec, "CREATE INDEX idx_category ON orders(category)")
+	run(t, exec, "INSERT INTO orders VALUES (1, 1, 100)")
+	run(t, exec, "INSERT INTO orders VALUES (2, 2, 200)")
+	run(t, exec, "INSERT INTO orders VALUES (3, 1, 150)")
+	run(t, exec, "INSERT INTO orders VALUES (4, 3, 300)")
+	run(t, exec, "INSERT INTO orders VALUES (5, 2, 250)")
+
+	result := run(t, exec, "SELECT category, COUNT(*) FROM orders GROUP BY category")
+	require.Len(t, result.Rows, 3)
+
+	// Collect results into a map for order-independent assertion
+	counts := make(map[int64]int64)
+	for _, row := range result.Rows {
+		cat := row[0].(int64)
+		cnt := row[1].(int64)
+		counts[cat] = cnt
+	}
+	assert.Equal(t, int64(2), counts[1])
+	assert.Equal(t, int64(2), counts[2])
+	assert.Equal(t, int64(1), counts[3])
+}
+
+func TestGroupByIndexWithSum(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE orders (id INT PRIMARY KEY, category INT, amount INT)")
+	run(t, exec, "CREATE INDEX idx_category ON orders(category)")
+	run(t, exec, "INSERT INTO orders VALUES (1, 1, 100)")
+	run(t, exec, "INSERT INTO orders VALUES (2, 2, 200)")
+	run(t, exec, "INSERT INTO orders VALUES (3, 1, 150)")
+	run(t, exec, "INSERT INTO orders VALUES (4, 2, 250)")
+
+	result := run(t, exec, "SELECT category, SUM(amount) FROM orders GROUP BY category")
+	require.Len(t, result.Rows, 2)
+
+	sums := make(map[int64]int64)
+	for _, row := range result.Rows {
+		sums[row[0].(int64)] = row[1].(int64)
+	}
+	assert.Equal(t, int64(250), sums[1])
+	assert.Equal(t, int64(450), sums[2])
+}
+
+func TestGroupByIndexWithAvg(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE orders (id INT PRIMARY KEY, category INT, amount INT)")
+	run(t, exec, "CREATE INDEX idx_category ON orders(category)")
+	run(t, exec, "INSERT INTO orders VALUES (1, 1, 100)")
+	run(t, exec, "INSERT INTO orders VALUES (2, 2, 200)")
+	run(t, exec, "INSERT INTO orders VALUES (3, 1, 300)")
+
+	result := run(t, exec, "SELECT category, AVG(amount) FROM orders GROUP BY category")
+	require.Len(t, result.Rows, 2)
+
+	avgs := make(map[int64]float64)
+	for _, row := range result.Rows {
+		avgs[row[0].(int64)] = row[1].(float64)
+	}
+	assert.InDelta(t, 200.0, avgs[1], 0.001)
+	assert.InDelta(t, 200.0, avgs[2], 0.001)
+}
+
+func TestGroupByIndexWithMinMax(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE orders (id INT PRIMARY KEY, category INT, amount INT)")
+	run(t, exec, "CREATE INDEX idx_category ON orders(category)")
+	run(t, exec, "INSERT INTO orders VALUES (1, 1, 100)")
+	run(t, exec, "INSERT INTO orders VALUES (2, 1, 300)")
+	run(t, exec, "INSERT INTO orders VALUES (3, 2, 200)")
+	run(t, exec, "INSERT INTO orders VALUES (4, 2, 400)")
+
+	result := run(t, exec, "SELECT category, MIN(amount), MAX(amount) FROM orders GROUP BY category")
+	require.Len(t, result.Rows, 2)
+
+	type minMax struct{ min, max int64 }
+	mm := make(map[int64]minMax)
+	for _, row := range result.Rows {
+		mm[row[0].(int64)] = minMax{row[1].(int64), row[2].(int64)}
+	}
+	assert.Equal(t, int64(100), mm[1].min)
+	assert.Equal(t, int64(300), mm[1].max)
+	assert.Equal(t, int64(200), mm[2].min)
+	assert.Equal(t, int64(400), mm[2].max)
+}
+
+func TestGroupByIndexWithCountCol(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, grp INT, val INT)")
+	run(t, exec, "CREATE INDEX idx_grp ON t(grp)")
+	run(t, exec, "INSERT INTO t VALUES (1, 1, 10)")
+	run(t, exec, "INSERT INTO t VALUES (2, 1, NULL)")
+	run(t, exec, "INSERT INTO t VALUES (3, 2, 20)")
+
+	result := run(t, exec, "SELECT grp, COUNT(val) FROM t GROUP BY grp")
+	require.Len(t, result.Rows, 2)
+
+	counts := make(map[int64]int64)
+	for _, row := range result.Rows {
+		counts[row[0].(int64)] = row[1].(int64)
+	}
+	// grp=1 has 2 rows but val is NULL in one → COUNT(val) = 1
+	assert.Equal(t, int64(1), counts[1])
+	assert.Equal(t, int64(1), counts[2])
+}
+
+func TestGroupByIndexWithCountDistinct(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, grp INT, val INT)")
+	run(t, exec, "CREATE INDEX idx_grp ON t(grp)")
+	run(t, exec, "INSERT INTO t VALUES (1, 1, 10)")
+	run(t, exec, "INSERT INTO t VALUES (2, 1, 10)")
+	run(t, exec, "INSERT INTO t VALUES (3, 1, 20)")
+	run(t, exec, "INSERT INTO t VALUES (4, 2, 30)")
+	run(t, exec, "INSERT INTO t VALUES (5, 2, 30)")
+
+	result := run(t, exec, "SELECT grp, COUNT(DISTINCT val) FROM t GROUP BY grp")
+	require.Len(t, result.Rows, 2)
+
+	counts := make(map[int64]int64)
+	for _, row := range result.Rows {
+		counts[row[0].(int64)] = row[1].(int64)
+	}
+	assert.Equal(t, int64(2), counts[1]) // 10, 20
+	assert.Equal(t, int64(1), counts[2]) // 30
+}
+
+func TestGroupByIndexMultipleAggregates(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, grp INT, val INT)")
+	run(t, exec, "CREATE INDEX idx_grp ON t(grp)")
+	run(t, exec, "INSERT INTO t VALUES (1, 1, 10)")
+	run(t, exec, "INSERT INTO t VALUES (2, 1, 20)")
+	run(t, exec, "INSERT INTO t VALUES (3, 2, 30)")
+
+	result := run(t, exec, "SELECT grp, COUNT(*), SUM(val), MIN(val), MAX(val) FROM t GROUP BY grp")
+	require.Len(t, result.Rows, 2)
+
+	for _, row := range result.Rows {
+		grp := row[0].(int64)
+		if grp == 1 {
+			assert.Equal(t, int64(2), row[1])  // COUNT(*)
+			assert.Equal(t, int64(30), row[2]) // SUM
+			assert.Equal(t, int64(10), row[3]) // MIN
+			assert.Equal(t, int64(20), row[4]) // MAX
+		} else {
+			assert.Equal(t, int64(1), row[1])
+			assert.Equal(t, int64(30), row[2])
+			assert.Equal(t, int64(30), row[3])
+			assert.Equal(t, int64(30), row[4])
+		}
+	}
+}
+
+func TestGroupByIndexEmpty(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, grp INT, val INT)")
+	run(t, exec, "CREATE INDEX idx_grp ON t(grp)")
+
+	result := run(t, exec, "SELECT grp, COUNT(*) FROM t GROUP BY grp")
+	require.Len(t, result.Rows, 0)
+}
+
+func TestGroupByIndexWithAlias(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, grp INT, val INT)")
+	run(t, exec, "CREATE INDEX idx_grp ON t(grp)")
+	run(t, exec, "INSERT INTO t VALUES (1, 1, 10)")
+	run(t, exec, "INSERT INTO t VALUES (2, 1, 20)")
+	run(t, exec, "INSERT INTO t VALUES (3, 2, 30)")
+
+	result := run(t, exec, "SELECT grp AS g, COUNT(*) AS cnt FROM t GROUP BY grp")
+	require.Len(t, result.Rows, 2)
+	assert.Equal(t, "g", result.Columns[0])
+	assert.Equal(t, "cnt", result.Columns[1])
+}
+
+func TestGroupByIndexWithWhere(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, grp INT, val INT)")
+	run(t, exec, "CREATE INDEX idx_grp ON t(grp)")
+	run(t, exec, "INSERT INTO t VALUES (1, 1, 10)")
+	run(t, exec, "INSERT INTO t VALUES (2, 1, 20)")
+	run(t, exec, "INSERT INTO t VALUES (3, 2, 30)")
+	run(t, exec, "INSERT INTO t VALUES (4, 2, 40)")
+	run(t, exec, "INSERT INTO t VALUES (5, 3, 50)")
+
+	// WHERE val > 15 filters out (1,1,10)
+	result := run(t, exec, "SELECT grp, COUNT(*) FROM t WHERE val > 15 GROUP BY grp")
+	require.Len(t, result.Rows, 3)
+
+	counts := make(map[int64]int64)
+	for _, row := range result.Rows {
+		counts[row[0].(int64)] = row[1].(int64)
+	}
+	assert.Equal(t, int64(1), counts[1]) // only (1,20) passes
+	assert.Equal(t, int64(2), counts[2])
+	assert.Equal(t, int64(1), counts[3])
+}
+
+func TestGroupByNoIndex(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, grp INT, val INT)")
+	// No index on grp — should fall back to hash-based GROUP BY
+	run(t, exec, "INSERT INTO t VALUES (1, 1, 10)")
+	run(t, exec, "INSERT INTO t VALUES (2, 2, 20)")
+	run(t, exec, "INSERT INTO t VALUES (3, 1, 30)")
+
+	result := run(t, exec, "SELECT grp, COUNT(*) FROM t GROUP BY grp")
+	require.Len(t, result.Rows, 2)
+
+	counts := make(map[int64]int64)
+	for _, row := range result.Rows {
+		counts[row[0].(int64)] = row[1].(int64)
+	}
+	assert.Equal(t, int64(2), counts[1])
+	assert.Equal(t, int64(1), counts[2])
+}
+
+func TestGroupByWithHaving(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, grp INT, val INT)")
+	run(t, exec, "CREATE INDEX idx_grp ON t(grp)")
+	run(t, exec, "INSERT INTO t VALUES (1, 1, 10)")
+	run(t, exec, "INSERT INTO t VALUES (2, 1, 20)")
+	run(t, exec, "INSERT INTO t VALUES (3, 2, 30)")
+
+	// HAVING should fall back to traditional path
+	result := run(t, exec, "SELECT grp, COUNT(*) FROM t GROUP BY grp HAVING COUNT(*) > 1")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, int64(1), result.Rows[0][0])
+	assert.Equal(t, int64(2), result.Rows[0][1])
+}
+
+func TestGroupByMultipleColumns(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, a INT, b INT, val INT)")
+	run(t, exec, "CREATE INDEX idx_a ON t(a)")
+	run(t, exec, "INSERT INTO t VALUES (1, 1, 1, 10)")
+	run(t, exec, "INSERT INTO t VALUES (2, 1, 2, 20)")
+	run(t, exec, "INSERT INTO t VALUES (3, 1, 1, 30)")
+
+	// Multiple GROUP BY columns should fall back to traditional path
+	result := run(t, exec, "SELECT a, b, COUNT(*) FROM t GROUP BY a, b")
+	require.Len(t, result.Rows, 2)
+}

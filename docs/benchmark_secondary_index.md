@@ -569,10 +569,55 @@ PK カラムのみを参照するクエリ（`SELECT id FROM t ORDER BY id LIMIT
 
 ---
 
+### 16. MIN/MAX インデックス最適化
+
+`SELECT MIN(col)` / `SELECT MAX(col)` でインデックスがあるカラムの場合、全行スキャン + ループ走査の代わりに、B-tree の先頭（MIN）または末尾（MAX）から1件を取得して即座に返す最適化。PK カラムの場合は `ScanOrdered(table, reverse, 1)` を使用し、セカンダリインデックスの場合は `OrderedRangeScan` で非 NULL の最初の1件を取得する。
+
+```
+従来:    全行スキャン → evalAggregate でループ → 最小/最大を計算 → O(N)
+最適化後: インデックスの先頭/末尾から1件取得 → O(log N)
+```
+
+適用条件:
+- GROUP BY なし、JOIN なし、WHERE なし、サブクエリなし、DISTINCT なし
+- SELECT のすべてのカラムが `MIN(col)` または `MAX(col)` の CallExpr
+- 各カラムに PK またはセカンダリインデックスが存在
+
+#### 16a. セカンダリインデックスでの MIN/MAX
+
+`SELECT MIN(val) FROM bench` / `SELECT MAX(val) FROM bench`（10,000行、val インデックスあり）
+
+| パターン | インデックスなし | インデックスあり | 高速化倍率 |
+|---------|----------------|----------------|-----------|
+| MIN(val) | 250,101 ns/op | 880 ns/op | **284x** |
+| MAX(val) | 253,746 ns/op | 888 ns/op | **286x** |
+
+**メモリ使用量 (10,000行):**
+- インデックスなし: 977,860 B/op, 39 allocs/op
+- インデックスあり: 808 B/op, 21 allocs/op（メモリ **1,210x 削減**、allocs **1.9x 削減**）
+
+#### 16b. PK カラムでの MIN/MAX
+
+`SELECT MIN(id) FROM bench` / `SELECT MAX(id) FROM bench`（10,000行、PK カラム）
+
+| パターン | ns/op | B/op | allocs/op |
+|---------|-------|------|-----------|
+| MIN(id) | 695 | 728 | 17 |
+| MAX(id) | 696 | 728 | 17 |
+
+**考察:** MIN/MAX インデックス最適化は劇的な効果を発揮する。
+
+- **セカンダリインデックス**: O(N) の全行スキャン + 全件ループが O(log N) の B-tree 端点取得に置き換わり、10,000行で **284x〜286x 高速化**。メモリ使用量も 977,860 → 808 B/op（**1,210x 削減**）と劇的に改善。全行を `[]Row` に実体化する必要がなくなるため。NULL はスキャン中にスキップされ、非 NULL の最初の値で走査を停止する
+- **PK カラム**: `ScanOrdered(table, reverse, 1)` で B-tree の先頭/末尾の1行を直接取得するため、セカンダリインデックスよりさらに高速（695 ns/op vs 880 ns/op、**1.3x**）。これは PK が1段ルックアップなのに対し、セカンダリインデックスは encoded key → rowKey → GetRow の2段ルックアップが必要なため
+- MIN と MAX の性能差はほぼゼロ。B-tree の先頭走査と末尾走査が同等の効率で動作する
+
+---
+
 ## まとめ
 
 | クエリパターン | 高速化効果 | 推奨度 |
 |--------------|----------|-------|
+| MIN/MAX インデックス最適化（セカンダリ） | 284x〜286x（メモリ1,210x削減） | 強く推奨 |
 | PK ORDER BY + LIMIT（インデックス順スキャン） | 429x | 強く推奨 |
 | JOIN + LIMIT 早期打ち切り（ORDER BY なし） | 223x〜4,863x | 強く推奨 |
 | 等値検索（高選択性） | 50x〜721x | 強く推奨 |
@@ -613,4 +658,5 @@ PK カラムのみを参照するクエリ（`SELECT id FROM t ORDER BY id LIMIT
 14. **Hash Join はインデックスなし equi-join を劇的に高速化**: equi-join カラムにインデックスがない場合、inner 行からハッシュテーブルを構築し outer 行ごとにプローブすることで O(N*M) → O(N+M) に改善。10,000行で 209x の高速化・メモリ 181x 削減を実現。スケーリングも二次的（1K→10K で 123倍増加）から線形（12.8倍増加）に改善された。WHERE インデックスとの組み合わせで inner テーブルを pre-filter してからハッシュテーブルを構築すると、さらに高速化（245x）する。複数カラム equi-join、LEFT JOIN、residual ON 条件にも対応
 15. **WHERE + LIMIT のインデックスストリーミングで範囲検索が劇的に高速化**: `OrderedRangeScan` のコールバックベース走査を `executeIndexScanStreaming` で再利用し、LIMIT 件数に達した時点でインデックス走査を早期打ち切り。従来のバッチパス（全マッチキー収集 → 全行フェッチ → LIMIT 適用）に比べ、マッチ行数が多い範囲検索（`WHERE val > 5000 LIMIT 10`、5,000行マッチ）で Memory **410x**・Disk **124x** の高速化、メモリ使用量も Memory **399x**・Disk **113x** 削減。等値検索（100行マッチ）でも Disk **3.2x** 高速化。単一カラムインデックスの等値/範囲条件に適用し、PK・IN・複合インデックスは既存バッチパスにフォールスルー。コールバック内で全 WHERE を再評価するためポストフィルタも正しく動作する
 16. **Covering Index はメモリストレージでは速度改善なし（Disk 向け最適化）**: composite key から直接カラム値をデコードして PK ルックアップをスキップする Covering Index は、メモリストレージでは速度が微減（-5〜-7%）となる。メモリ上の PK ルックアップが Go ポインタ直接参照で非常に高速なため、`DecodeCompositeKeyValues` のデコードオーバーヘッドが節約分を上回る。ただし B/op は 6〜20% 削減される。一方、Disk ストレージではバッファプール経由のページフェッチコストが大きいため、等値 **1.3x**、範囲 + LIMIT **1.7x**、ORDER BY + LIMIT **2.0x** の高速化が得られる。Covering Index は**ディスクストレージ向けの最適化**
+18. **MIN/MAX インデックス最適化で集約クエリが劇的に高速化**: `SELECT MIN(col)` / `SELECT MAX(col)` でインデックスがある場合、B-tree の先頭/末尾から1件を取得するだけで完了し、全行スキャン + ループ走査を完全にスキップ。10,000行で **284x〜286x 高速化**、メモリ **1,210x 削減**（977,860 → 808 B/op）を実現。PK カラムでは `ScanOrdered` の1段ルックアップにより 695 ns/op とさらに高速。NULL は `OrderedRangeScan` のコールバック内でスキップされ、非 NULL の最初の値で走査を停止する。GROUP BY なし、WHERE なし、JOIN なしの単純な集約クエリのみに適用される
 17. **PK Covering Index もメモリストレージでは速度改善なし（Disk 向け最適化）**: PK カラムのみ参照するクエリで行データの読み取りをスキップする PK Covering Index は、メモリストレージでは速度が微増（-15%）となる。`isPKOnlyCovering` の判定 + `buildPKOnlyRow` の Row 構築のオーバーヘッドが、Go ポインタ直接参照の行アクセス節約分を上回る。B/op は 4% 削減（2,352 vs 2,456）。Disk ストレージでは `DecodeRowN` スキップにより **1.2x 高速化**、B/op **28% 削減**、Disk/Memory 比率が 1.5x → **1.1x** に改善。`COUNT(*)` も `collectColumnRefs` の `CallExpr` 内 `StarExpr` 特殊処理で自動的に PK Covering 対象となる

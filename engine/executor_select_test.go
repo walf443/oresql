@@ -1152,3 +1152,124 @@ func TestIndexScanStreamingINFallthrough(t *testing.T) {
 		assert.True(t, cat == 1 || cat == 3, "category should be 1 or 3, got %d", cat)
 	}
 }
+
+func TestMinWithIndex(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT)")
+	run(t, exec, "CREATE INDEX idx_val ON t(val)")
+	run(t, exec, "INSERT INTO t VALUES (1, 30)")
+	run(t, exec, "INSERT INTO t VALUES (2, 10)")
+	run(t, exec, "INSERT INTO t VALUES (3, 20)")
+
+	result := run(t, exec, "SELECT MIN(val) FROM t")
+	assert.Equal(t, "MIN(val)", result.Columns[0])
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, int64(10), result.Rows[0][0])
+}
+
+func TestMaxWithIndex(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT)")
+	run(t, exec, "CREATE INDEX idx_val ON t(val)")
+	run(t, exec, "INSERT INTO t VALUES (1, 30)")
+	run(t, exec, "INSERT INTO t VALUES (2, 10)")
+	run(t, exec, "INSERT INTO t VALUES (3, 20)")
+
+	result := run(t, exec, "SELECT MAX(val) FROM t")
+	assert.Equal(t, "MAX(val)", result.Columns[0])
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, int64(30), result.Rows[0][0])
+}
+
+func TestMinMaxWithPK(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT)")
+	run(t, exec, "INSERT INTO t VALUES (5, 50)")
+	run(t, exec, "INSERT INTO t VALUES (2, 20)")
+	run(t, exec, "INSERT INTO t VALUES (8, 80)")
+
+	// MIN on PK column
+	result := run(t, exec, "SELECT MIN(id) FROM t")
+	assert.Equal(t, "MIN(id)", result.Columns[0])
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, int64(2), result.Rows[0][0])
+
+	// MAX on PK column
+	result = run(t, exec, "SELECT MAX(id) FROM t")
+	assert.Equal(t, "MAX(id)", result.Columns[0])
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, int64(8), result.Rows[0][0])
+}
+
+func TestMinMaxWithNulls(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT)")
+	run(t, exec, "CREATE INDEX idx_val ON t(val)")
+	run(t, exec, "INSERT INTO t VALUES (1, NULL)")
+	run(t, exec, "INSERT INTO t VALUES (2, 30)")
+	run(t, exec, "INSERT INTO t VALUES (3, NULL)")
+	run(t, exec, "INSERT INTO t VALUES (4, 10)")
+
+	// MIN should skip NULLs
+	result := run(t, exec, "SELECT MIN(val) FROM t")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, int64(10), result.Rows[0][0])
+
+	// MAX should skip NULLs
+	result = run(t, exec, "SELECT MAX(val) FROM t")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, int64(30), result.Rows[0][0])
+}
+
+func TestMinMaxWithEmptyTable(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT)")
+	run(t, exec, "CREATE INDEX idx_val ON t(val)")
+
+	// MIN on empty table → NULL
+	result := run(t, exec, "SELECT MIN(val) FROM t")
+	require.Len(t, result.Rows, 1)
+	assert.Nil(t, result.Rows[0][0])
+
+	// MAX on empty table → NULL
+	result = run(t, exec, "SELECT MAX(val) FROM t")
+	require.Len(t, result.Rows, 1)
+	assert.Nil(t, result.Rows[0][0])
+}
+
+func TestMinMaxWithWhere(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT, category INT)")
+	run(t, exec, "CREATE INDEX idx_val ON t(val)")
+	run(t, exec, "INSERT INTO t VALUES (1, 10, 1)")
+	run(t, exec, "INSERT INTO t VALUES (2, 20, 2)")
+	run(t, exec, "INSERT INTO t VALUES (3, 30, 1)")
+	run(t, exec, "INSERT INTO t VALUES (4, 40, 2)")
+
+	// WHERE condition → optimization should NOT apply (falls back to full scan)
+	// but should still produce correct results
+	result := run(t, exec, "SELECT MIN(val) FROM t WHERE category = 1")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, int64(10), result.Rows[0][0])
+
+	result = run(t, exec, "SELECT MAX(val) FROM t WHERE category = 2")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, int64(40), result.Rows[0][0])
+}
+
+func TestMinMaxNoIndex(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE t (id INT PRIMARY KEY, val INT)")
+	// No index on val — should fall back to full scan and still work
+	run(t, exec, "INSERT INTO t VALUES (1, 30)")
+	run(t, exec, "INSERT INTO t VALUES (2, 10)")
+	run(t, exec, "INSERT INTO t VALUES (3, 20)")
+
+	result := run(t, exec, "SELECT MIN(val) FROM t")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, int64(10), result.Rows[0][0])
+
+	result = run(t, exec, "SELECT MAX(val) FROM t")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, int64(30), result.Rows[0][0])
+}

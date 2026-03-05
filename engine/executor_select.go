@@ -169,6 +169,11 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 		}
 	}
 
+	// Try MIN/MAX index optimization
+	if result, ok := e.tryMinMaxIndexOptimization(stmt); ok {
+		return result, nil
+	}
+
 	// Determine if early limit termination is safe
 	canEarlyLimit := stmt.Limit != nil &&
 		len(stmt.OrderBy) == 0 &&
@@ -1296,6 +1301,136 @@ func evalAggregate(call *ast.CallExpr, rows []Row, info *TableInfo) (Value, stri
 	default:
 		return nil, "", fmt.Errorf("unknown aggregate function: %s", call.Name)
 	}
+}
+
+// tryMinMaxIndexOptimization attempts to satisfy SELECT MIN(col)/MAX(col) queries
+// using an index scan (O(log N)) instead of a full table scan (O(N)).
+// Returns (result, true) if optimization was applied, (nil, false) otherwise.
+func (e *Executor) tryMinMaxIndexOptimization(stmt *ast.SelectStmt) (*Result, bool) {
+	// Only optimize simple single-table queries without GROUP BY, JOIN, WHERE, subquery, alias
+	if len(stmt.GroupBy) > 0 || len(stmt.Joins) > 0 || stmt.FromSubquery != nil ||
+		stmt.TableAlias != "" || stmt.Where != nil || stmt.Having != nil || stmt.Distinct {
+		return nil, false
+	}
+
+	// All columns must be MIN(col) or MAX(col) CallExprs
+	type minMaxCol struct {
+		funcName string // "MIN" or "MAX"
+		colName  string // column name
+		dispName string // display name e.g. "MIN(val)"
+	}
+	var cols []minMaxCol
+	for _, colExpr := range stmt.Columns {
+		expr := colExpr
+		if ae, ok := expr.(*ast.AliasExpr); ok {
+			expr = ae.Expr
+		}
+		call, ok := expr.(*ast.CallExpr)
+		if !ok {
+			return nil, false
+		}
+		fn := strings.ToUpper(call.Name)
+		if fn != "MIN" && fn != "MAX" {
+			return nil, false
+		}
+		if len(call.Args) != 1 {
+			return nil, false
+		}
+		ident, ok := call.Args[0].(*ast.IdentExpr)
+		if !ok {
+			return nil, false
+		}
+		cols = append(cols, minMaxCol{
+			funcName: fn,
+			colName:  ident.Name,
+			dispName: formatCallExpr(call),
+		})
+	}
+	if len(cols) == 0 {
+		return nil, false
+	}
+
+	db, err := e.resolveDatabase(stmt.DatabaseName)
+	if err != nil {
+		return nil, false
+	}
+	info, err := db.catalog.GetTable(stmt.TableName)
+	if err != nil {
+		return nil, false
+	}
+
+	// Check all columns have an index or are PK
+	for _, mc := range cols {
+		col, err := info.FindColumn(mc.colName)
+		if err != nil {
+			return nil, false
+		}
+		isPK := col.Index == info.PrimaryKeyCol
+		if !isPK {
+			idx := db.storage.LookupSingleColumnIndex(info.Name, col.Index)
+			if idx == nil {
+				return nil, false
+			}
+		}
+	}
+
+	// All columns are index-backed; execute the optimization
+	colNames := make([]string, len(cols))
+	colTypes := make([]string, len(cols))
+	resultRow := make(Row, len(cols))
+
+	for i, mc := range cols {
+		// Use alias if present
+		if ae, ok := stmt.Columns[i].(*ast.AliasExpr); ok {
+			colNames[i] = ae.Alias
+		} else {
+			colNames[i] = mc.dispName
+		}
+
+		col, _ := info.FindColumn(mc.colName)
+		colTypes[i] = col.DataType
+		reverse := mc.funcName == "MAX"
+		isPK := col.Index == info.PrimaryKeyCol
+
+		if isPK {
+			// PK column: use ScanOrdered with limit=1
+			rows, err := db.storage.ScanOrdered(info.Name, reverse, 1)
+			if err != nil || len(rows) == 0 {
+				resultRow[i] = nil
+				continue
+			}
+			resultRow[i] = rows[0][col.Index]
+		} else {
+			// Secondary index: use OrderedRangeScan
+			idx := db.storage.LookupSingleColumnIndex(info.Name, col.Index)
+			var val Value
+			found := false
+			idx.OrderedRangeScan(nil, false, nil, false, reverse, func(rowKey int64) bool {
+				row, ok := db.storage.GetRow(info.Name, rowKey)
+				if !ok {
+					return true // skip missing rows
+				}
+				v := row[col.Index]
+				if v == nil {
+					return true // skip NULLs
+				}
+				val = v
+				found = true
+				return false // stop after first non-NULL
+			})
+			if found {
+				resultRow[i] = val
+			} else {
+				resultRow[i] = nil
+			}
+		}
+	}
+
+	return &Result{
+		Columns:     colNames,
+		ColumnTypes: colTypes,
+		Rows:        []Row{resultRow},
+	}, true
 }
 
 // formatCallExpr returns a display name for a function call (e.g. "COUNT(*)").

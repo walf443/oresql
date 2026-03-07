@@ -80,7 +80,8 @@ func (e *Executor) ExecuteSQL(sql string) (*Result, error) {
 		_, isShowDBs := stmt.(*ast.ShowDatabasesStmt)
 		_, isShowTbls := stmt.(*ast.ShowTablesStmt)
 		_, isWith := stmt.(*ast.WithStmt)
-		if !isSelect && !isSetOp && !isShowDBs && !isShowTbls && !isWith {
+		_, isExplain := stmt.(*ast.ExplainStmt)
+		if !isSelect && !isSetOp && !isShowDBs && !isShowTbls && !isWith && !isExplain {
 			if err := e.wal.Append(sql); err != nil {
 				return nil, fmt.Errorf("WAL write error: %w", err)
 			}
@@ -225,6 +226,8 @@ func (e *Executor) executeInner(stmt ast.Statement) (*Result, error) {
 		return e.executeShowTables(s)
 	case *ast.WithStmt:
 		return e.executeWith(s)
+	case *ast.ExplainStmt:
+		return e.executeExplain(s)
 	default:
 		return nil, fmt.Errorf("unknown statement type: %T", stmt)
 	}

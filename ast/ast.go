@@ -454,6 +454,14 @@ type ShowTablesStmt struct{}
 func (s *ShowTablesStmt) NodeType() string { return "ShowTables" }
 func (s *ShowTablesStmt) statementNode()   {}
 
+// ExplainStmt represents EXPLAIN <statement>.
+type ExplainStmt struct {
+	Statement Statement
+}
+
+func (s *ExplainStmt) NodeType() string { return "Explain" }
+func (s *ExplainStmt) statementNode()   {}
+
 // CTEDef represents a single CTE definition: name AS (query).
 type CTEDef struct {
 	Name      string

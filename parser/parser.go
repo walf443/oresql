@@ -79,6 +79,8 @@ func (p *Parser) Parse() (ast.Statement, error) {
 		stmt, err = p.parseAlterTable()
 	case token.WITH:
 		stmt, err = p.parseWith()
+	case token.EXPLAIN:
+		stmt, err = p.parseExplain()
 	default:
 		return nil, fmt.Errorf("unexpected token %s (%q)", p.curToken.Type, p.curToken.Literal)
 	}
@@ -2026,6 +2028,16 @@ func (p *Parser) parseAlterTable() (ast.Statement, error) {
 }
 
 // parseWith parses WITH name AS (query) [, name AS (query)] ... SELECT ...
+func (p *Parser) parseExplain() (ast.Statement, error) {
+	p.nextToken() // consume EXPLAIN
+
+	inner, err := p.Parse()
+	if err != nil {
+		return nil, fmt.Errorf("EXPLAIN: %w", err)
+	}
+	return &ast.ExplainStmt{Statement: inner}, nil
+}
+
 func (p *Parser) parseWith() (ast.Statement, error) {
 	p.nextToken() // consume WITH
 

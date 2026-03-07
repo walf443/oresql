@@ -148,43 +148,49 @@ func (e *Executor) lookupCTE(name string) (*TableInfo, []Row, bool) {
 }
 
 func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
-	// SELECT without FROM: evaluate expressions directly
-	if stmt.TableName == "" && stmt.FromSubquery == nil {
+	plan := e.planSelect(stmt)
+	return e.executeSelectWithPlan(stmt, plan)
+}
+
+// executeSelectWithPlan executes a SELECT statement according to the given plan.
+func (e *Executor) executeSelectWithPlan(stmt *ast.SelectStmt, plan *SelectPlan) (*Result, error) {
+	switch plan.Type {
+	case PlanNoTable:
 		return e.executeSelectWithoutTable(stmt)
-	}
 
-	// Try index-ordered scan for ORDER BY optimization
-	if len(stmt.OrderBy) > 0 && len(stmt.Joins) == 0 && stmt.TableAlias == "" &&
-		stmt.FromSubquery == nil &&
-		len(stmt.GroupBy) == 0 && !hasAggregate(stmt.Columns) && !stmt.Distinct &&
-		!hasWindowFunction(stmt.Columns) {
-		db, err := e.resolveDatabase(stmt.DatabaseName)
-		if err == nil {
-			info, err := db.catalog.GetTable(stmt.TableName)
-			if err == nil {
-				if ior := e.tryIndexOrder(stmt.OrderBy, stmt.Where, info, stmt.Limit != nil); ior != nil {
-					return e.executeSelectWithIndexOrder(stmt, db, info, ior)
-				}
-			}
+	case PlanIndexOrderScan:
+		return e.executeSelectWithIndexOrder(stmt, plan.db, plan.info, plan.IndexOrder)
+
+	case PlanGroupByIndex:
+		if result, ok := e.tryGroupByIndexOptimization(stmt); ok {
+			return result, nil
 		}
+		// Fallthrough to general path if optimization failed (shouldn't happen)
+
+	case PlanCountStar:
+		if result, ok := e.tryCountStarOptimization(stmt); ok {
+			return result, nil
+		}
+
+	case PlanMinMax:
+		if result, ok := e.tryMinMaxIndexOptimization(stmt); ok {
+			return result, nil
+		}
+
+	case PlanStreamingIndex:
+		earlyLimit := computeEarlyLimit(stmt)
+		return e.executeIndexScanStreaming(stmt, plan.db, plan.info, plan.streamingParams, earlyLimit, stmt.Distinct)
+
+	case PlanStreamingBatch:
+		earlyLimit := computeEarlyLimit(stmt)
+		return e.executeForEachByKeysStreaming(stmt, plan.db, plan.info, plan.batchKeys, earlyLimit, stmt.Distinct)
+
+	case PlanStreamingFullScan:
+		earlyLimit := computeEarlyLimit(stmt)
+		return e.executeScanEachStreaming(stmt, plan.db, plan.info, earlyLimit, stmt.Distinct)
 	}
 
-	// Try GROUP BY index optimization (streaming aggregation via index-ordered scan)
-	if result, ok := e.tryGroupByIndexOptimization(stmt); ok {
-		return result, nil
-	}
-
-	// Try COUNT(*) optimization using RowCount
-	if result, ok := e.tryCountStarOptimization(stmt); ok {
-		return result, nil
-	}
-
-	// Try MIN/MAX index optimization
-	if result, ok := e.tryMinMaxIndexOptimization(stmt); ok {
-		return result, nil
-	}
-
-	// Determine if early limit termination is safe
+	// PlanSubquery, PlanBatchIndex, PlanFullScan — general batch path
 	canEarlyLimit := stmt.Limit != nil &&
 		len(stmt.OrderBy) == 0 &&
 		len(stmt.GroupBy) == 0 &&
@@ -193,37 +199,7 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 
 	var earlyLimit int
 	if canEarlyLimit {
-		earlyLimit = int(*stmt.Limit)
-		if stmt.Offset != nil {
-			earlyLimit += int(*stmt.Offset)
-		}
-	}
-
-	// Streaming scan: scan rows with early exit for LIMIT.
-	// Handles both DISTINCT + LIMIT and WHERE + LIMIT without ORDER BY/GROUP BY/aggregate.
-	// Safe only when there are no subqueries in WHERE/SELECT, no JOINs, no CTE,
-	// no table alias, no subquery source.
-	// Flow: index streaming (equality/range) → full scan streaming → batch fallthrough.
-	if canEarlyLimit && (stmt.Distinct || stmt.Where != nil) &&
-		stmt.FromSubquery == nil && len(stmt.Joins) == 0 && stmt.TableAlias == "" &&
-		!containsSubquery(stmt.Where) && !columnsContainSubquery(stmt.Columns) {
-		if _, _, cteOk := e.lookupCTE(stmt.TableName); !cteOk {
-			db, info, err := e.resolveTable(stmt.DatabaseName, stmt.TableName)
-			if err == nil {
-				// 1. Index streaming (single-column equality/range)
-				if stmt.Where != nil {
-					if params, ok := e.tryIndexScanParams(stmt.Where, info); ok {
-						return e.executeIndexScanStreaming(stmt, db, info, params, earlyLimit, stmt.Distinct)
-					}
-				}
-				// 2. Batch index keys — stream through ForEachByKeys
-				if keys, indexUsed := e.tryIndexScan(stmt.Where, info); indexUsed {
-					return e.executeForEachByKeysStreaming(stmt, db, info, keys, earlyLimit, stmt.Distinct)
-				}
-				// 3. Full scan streaming (no index available)
-				return e.executeScanEachStreaming(stmt, db, info, earlyLimit, stmt.Distinct)
-			}
-		}
+		earlyLimit = computeEarlyLimit(stmt)
 	}
 
 	// Phase 1: Source rows + evaluator

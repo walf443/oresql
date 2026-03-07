@@ -259,7 +259,7 @@ oresql 独自の拡張や実装上の項目は末尾にまとめる。
 
 ## oresql 独自 — クエリ分析
 
-- [ ] EXPLAIN（実行計画の表示）
+- [x] EXPLAIN（実行計画の表示）
 - [ ] EXPLAIN ANALYZE（実行計画 + 実測値）
 
 ## oresql 独自 — BTree インデックス最適化

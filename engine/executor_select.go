@@ -162,20 +162,13 @@ func (e *Executor) executeSelectWithPlan(stmt *ast.SelectStmt, plan *SelectPlan)
 		return e.executeSelectWithIndexOrder(stmt, plan.db, plan.info, plan.IndexOrder)
 
 	case PlanGroupByIndex:
-		if result, ok := e.tryGroupByIndexOptimization(stmt); ok {
-			return result, nil
-		}
-		// Fallthrough to general path if optimization failed (shouldn't happen)
+		return e.executeGroupByIndex(stmt, plan.db, plan.info)
 
 	case PlanCountStar:
-		if result, ok := e.tryCountStarOptimization(stmt); ok {
-			return result, nil
-		}
+		return e.executeCountStar(stmt, plan.db)
 
 	case PlanMinMax:
-		if result, ok := e.tryMinMaxIndexOptimization(stmt); ok {
-			return result, nil
-		}
+		return e.executeMinMax(stmt, plan.db, plan.info)
 
 	case PlanStreamingIndex:
 		earlyLimit := computeEarlyLimit(stmt)
@@ -208,9 +201,23 @@ func (e *Executor) executeSelectWithPlan(stmt *ast.SelectStmt, plan *SelectPlan)
 	if stmt.Distinct {
 		scanLimit = 0
 	}
-	rows, eval, err := e.scanSource(stmt, scanLimit)
-	if err != nil {
-		return nil, err
+	var rows []Row
+	var eval ExprEvaluator
+	var err error
+	// Use pre-computed batch keys from the plan for single-table queries only.
+	// JOIN, subquery, alias, and CTE paths must go through scanSource.
+	if plan.Type == PlanBatchIndex && plan.batchKeys != nil && plan.db != nil && plan.info != nil &&
+		len(stmt.Joins) == 0 && stmt.FromSubquery == nil && stmt.TableAlias == "" {
+		rows, err = plan.db.storage.GetByKeys(plan.info.Name, plan.batchKeys)
+		if err != nil {
+			return nil, err
+		}
+		eval = newTableEvaluator(e, plan.info)
+	} else {
+		rows, eval, err = e.scanSource(stmt, scanLimit)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Resolve column types early (before GROUP BY may replace eval)
@@ -1416,14 +1423,6 @@ func (e *Executor) tryGroupByIndexOptimization(stmt *ast.SelectStmt) (*Result, b
 		return nil, false
 	}
 
-	// All SELECT columns must be GROUP BY column (IdentExpr) or aggregate (CallExpr)
-	// Build accumulators
-	type accInfo struct {
-		acc      *aggAccumulator
-		dispName string
-		colType  string
-	}
-
 	db, err := e.resolveDatabase(stmt.DatabaseName)
 	if err != nil {
 		return nil, false
@@ -1437,172 +1436,44 @@ func (e *Executor) tryGroupByIndexOptimization(stmt *ast.SelectStmt) (*Result, b
 	if err != nil {
 		return nil, false
 	}
-	gbColIdx := gbCol.Index
 
-	// Check that GROUP BY column has PK or secondary index
-	isPK := gbColIdx == info.PrimaryKeyCol
-	var idxReader IndexReader
+	isPK := gbCol.Index == info.PrimaryKeyCol
 	if !isPK {
-		idxReader = db.storage.LookupSingleColumnIndex(info.Name, gbColIdx)
-		if idxReader == nil {
+		idx := db.storage.LookupSingleColumnIndex(info.Name, gbCol.Index)
+		if idx == nil {
 			return nil, false
 		}
 	}
 
+	result, err := e.executeGroupByIndex(stmt, db, info)
+	if err != nil {
+		return nil, false
+	}
+	return result, true
+}
+
+// executeGroupByIndex executes GROUP BY using an index-ordered scan for streaming aggregation.
+// Caller must ensure the GROUP BY index optimization guards have passed.
+func (e *Executor) executeGroupByIndex(stmt *ast.SelectStmt, db *Database, info *TableInfo) (*Result, error) {
+	gbIdent := stmt.GroupBy[0].(*ast.IdentExpr)
+	gbCol, _ := info.FindColumn(gbIdent.Name)
+	gbColIdx := gbCol.Index
+
+	isPK := gbColIdx == info.PrimaryKeyCol
+	var idxReader IndexReader
+	if !isPK {
+		idxReader = db.storage.LookupSingleColumnIndex(info.Name, gbColIdx)
+	}
+
 	// Build accumulators for each SELECT column
-	accs := make([]accInfo, len(stmt.Columns))
-	for i, colExpr := range stmt.Columns {
-		expr := colExpr
-		alias := ""
-		if ae, ok := expr.(*ast.AliasExpr); ok {
-			alias = ae.Alias
-			expr = ae.Expr
-		}
-
-		switch inner := expr.(type) {
-		case *ast.IdentExpr:
-			// Must be the GROUP BY column
-			if strings.ToLower(inner.Name) != strings.ToLower(gbIdent.Name) {
-				return nil, false
-			}
-			dispName := gbCol.Name
-			if alias != "" {
-				dispName = alias
-			}
-			accs[i] = accInfo{
-				acc:      &aggAccumulator{kind: "GROUP_COL", colIdx: gbColIdx},
-				dispName: dispName,
-				colType:  gbCol.DataType,
-			}
-		case *ast.CallExpr:
-			fn := strings.ToUpper(inner.Name)
-			if isScalarFunc(fn) {
-				return nil, false
-			}
-			dispName := formatCallExpr(inner)
-			if alias != "" {
-				dispName = alias
-			}
-
-			switch fn {
-			case "COUNT":
-				if inner.Distinct {
-					if len(inner.Args) != 1 {
-						return nil, false
-					}
-					ident, ok := inner.Args[0].(*ast.IdentExpr)
-					if !ok {
-						return nil, false
-					}
-					col, err := info.FindColumn(ident.Name)
-					if err != nil {
-						return nil, false
-					}
-					accs[i] = accInfo{
-						acc:      &aggAccumulator{kind: "COUNT_DISTINCT", colIdx: col.Index, seen: make(map[interface{}]bool)},
-						dispName: dispName,
-						colType:  "INT",
-					}
-				} else if len(inner.Args) == 1 {
-					switch inner.Args[0].(type) {
-					case *ast.StarExpr, *ast.IntLitExpr, *ast.StringLitExpr:
-						accs[i] = accInfo{
-							acc:      &aggAccumulator{kind: "COUNT_STAR", colIdx: -1},
-							dispName: dispName,
-							colType:  "INT",
-						}
-					default:
-						ident, ok := inner.Args[0].(*ast.IdentExpr)
-						if !ok {
-							return nil, false
-						}
-						col, err := info.FindColumn(ident.Name)
-						if err != nil {
-							return nil, false
-						}
-						accs[i] = accInfo{
-							acc:      &aggAccumulator{kind: "COUNT_COL", colIdx: col.Index},
-							dispName: dispName,
-							colType:  "INT",
-						}
-					}
-				} else {
-					return nil, false
-				}
-			case "SUM":
-				if len(inner.Args) != 1 {
-					return nil, false
-				}
-				ident, ok := inner.Args[0].(*ast.IdentExpr)
-				if !ok {
-					return nil, false
-				}
-				col, err := info.FindColumn(ident.Name)
-				if err != nil {
-					return nil, false
-				}
-				accs[i] = accInfo{
-					acc:      &aggAccumulator{kind: "SUM", colIdx: col.Index},
-					dispName: dispName,
-					colType:  col.DataType,
-				}
-			case "AVG":
-				if len(inner.Args) != 1 {
-					return nil, false
-				}
-				ident, ok := inner.Args[0].(*ast.IdentExpr)
-				if !ok {
-					return nil, false
-				}
-				col, err := info.FindColumn(ident.Name)
-				if err != nil {
-					return nil, false
-				}
-				accs[i] = accInfo{
-					acc:      &aggAccumulator{kind: "AVG", colIdx: col.Index},
-					dispName: dispName,
-					colType:  col.DataType,
-				}
-			case "MIN":
-				if len(inner.Args) != 1 {
-					return nil, false
-				}
-				ident, ok := inner.Args[0].(*ast.IdentExpr)
-				if !ok {
-					return nil, false
-				}
-				col, err := info.FindColumn(ident.Name)
-				if err != nil {
-					return nil, false
-				}
-				accs[i] = accInfo{
-					acc:      &aggAccumulator{kind: "MIN", colIdx: col.Index},
-					dispName: dispName,
-					colType:  col.DataType,
-				}
-			case "MAX":
-				if len(inner.Args) != 1 {
-					return nil, false
-				}
-				ident, ok := inner.Args[0].(*ast.IdentExpr)
-				if !ok {
-					return nil, false
-				}
-				col, err := info.FindColumn(ident.Name)
-				if err != nil {
-					return nil, false
-				}
-				accs[i] = accInfo{
-					acc:      &aggAccumulator{kind: "MAX", colIdx: col.Index},
-					dispName: dispName,
-					colType:  col.DataType,
-				}
-			default:
-				return nil, false
-			}
-		default:
-			return nil, false
-		}
+	type accInfo struct {
+		acc      *aggAccumulator
+		dispName string
+		colType  string
+	}
+	accs, err := buildGroupByAccumulators(stmt, gbIdent, gbCol, info)
+	if err != nil {
+		return nil, err
 	}
 
 	// Build evaluator for WHERE filter
@@ -1693,79 +1564,158 @@ func (e *Executor) tryGroupByIndexOptimization(stmt *ast.SelectStmt) (*Result, b
 		Columns:     colNames,
 		ColumnTypes: colTypes,
 		Rows:        resultRows,
-	}, true
+	}, nil
+}
+
+// groupByAccInfo holds accumulator info for GROUP BY index optimization.
+type groupByAccInfo struct {
+	acc      *aggAccumulator
+	dispName string
+	colType  string
+}
+
+// buildGroupByAccumulators builds accumulators for each SELECT column in GROUP BY.
+func buildGroupByAccumulators(stmt *ast.SelectStmt, gbIdent *ast.IdentExpr, gbCol *ColumnInfo, info *TableInfo) ([]groupByAccInfo, error) {
+	accs := make([]groupByAccInfo, len(stmt.Columns))
+	for i, colExpr := range stmt.Columns {
+		expr := colExpr
+		alias := ""
+		if ae, ok := expr.(*ast.AliasExpr); ok {
+			alias = ae.Alias
+			expr = ae.Expr
+		}
+
+		switch inner := expr.(type) {
+		case *ast.IdentExpr:
+			if strings.ToLower(inner.Name) != strings.ToLower(gbIdent.Name) {
+				return nil, fmt.Errorf("non-aggregate column %q not in GROUP BY", inner.Name)
+			}
+			dispName := gbCol.Name
+			if alias != "" {
+				dispName = alias
+			}
+			accs[i] = groupByAccInfo{
+				acc:      &aggAccumulator{kind: "GROUP_COL", colIdx: gbCol.Index},
+				dispName: dispName,
+				colType:  gbCol.DataType,
+			}
+		case *ast.CallExpr:
+			fn := strings.ToUpper(inner.Name)
+			if isScalarFunc(fn) {
+				return nil, fmt.Errorf("scalar function %q not supported in GROUP BY index optimization", fn)
+			}
+			dispName := formatCallExpr(inner)
+			if alias != "" {
+				dispName = alias
+			}
+
+			acc, colType, err := buildAggAccumulator(fn, inner, info)
+			if err != nil {
+				return nil, err
+			}
+			accs[i] = groupByAccInfo{
+				acc:      acc,
+				dispName: dispName,
+				colType:  colType,
+			}
+		default:
+			return nil, fmt.Errorf("unsupported expression type in GROUP BY index optimization")
+		}
+	}
+	return accs, nil
+}
+
+// buildAggAccumulator builds a single aggregate accumulator from a CallExpr.
+func buildAggAccumulator(fn string, call *ast.CallExpr, info *TableInfo) (*aggAccumulator, string, error) {
+	switch fn {
+	case "COUNT":
+		if call.Distinct {
+			if len(call.Args) != 1 {
+				return nil, "", fmt.Errorf("COUNT(DISTINCT) requires exactly 1 argument")
+			}
+			ident, ok := call.Args[0].(*ast.IdentExpr)
+			if !ok {
+				return nil, "", fmt.Errorf("COUNT(DISTINCT) argument must be a column")
+			}
+			col, err := info.FindColumn(ident.Name)
+			if err != nil {
+				return nil, "", err
+			}
+			return &aggAccumulator{kind: "COUNT_DISTINCT", colIdx: col.Index, seen: make(map[interface{}]bool)}, "INT", nil
+		}
+		if len(call.Args) == 1 {
+			switch call.Args[0].(type) {
+			case *ast.StarExpr, *ast.IntLitExpr, *ast.StringLitExpr:
+				return &aggAccumulator{kind: "COUNT_STAR", colIdx: -1}, "INT", nil
+			default:
+				ident, ok := call.Args[0].(*ast.IdentExpr)
+				if !ok {
+					return nil, "", fmt.Errorf("COUNT argument must be a column or *")
+				}
+				col, err := info.FindColumn(ident.Name)
+				if err != nil {
+					return nil, "", err
+				}
+				return &aggAccumulator{kind: "COUNT_COL", colIdx: col.Index}, "INT", nil
+			}
+		}
+		return nil, "", fmt.Errorf("COUNT requires exactly 1 argument")
+	case "SUM", "AVG", "MIN", "MAX":
+		if len(call.Args) != 1 {
+			return nil, "", fmt.Errorf("%s requires exactly 1 argument", fn)
+		}
+		ident, ok := call.Args[0].(*ast.IdentExpr)
+		if !ok {
+			return nil, "", fmt.Errorf("%s argument must be a column", fn)
+		}
+		col, err := info.FindColumn(ident.Name)
+		if err != nil {
+			return nil, "", err
+		}
+		return &aggAccumulator{kind: fn, colIdx: col.Index}, col.DataType, nil
+	default:
+		return nil, "", fmt.Errorf("unsupported aggregate function %q", fn)
+	}
 }
 
 // tryCountStarOptimization attempts to satisfy SELECT COUNT(*) / COUNT(literal) queries
 // using Storage.RowCount() (O(1)) instead of a full table scan (O(N)).
 // Returns (result, true) if optimization was applied, (nil, false) otherwise.
 func (e *Executor) tryCountStarOptimization(stmt *ast.SelectStmt) (*Result, bool) {
-	// Only optimize simple single-table queries without GROUP BY, JOIN, WHERE, subquery, alias
-	if len(stmt.GroupBy) > 0 || len(stmt.Joins) > 0 || stmt.FromSubquery != nil ||
-		stmt.TableAlias != "" || stmt.Where != nil || stmt.Having != nil || stmt.Distinct {
+	if !e.isCountStarOptimizable(stmt) {
 		return nil, false
 	}
-
-	// All columns must be COUNT(*) or COUNT(literal) CallExprs
-	type countCol struct {
-		dispName string // display name e.g. "COUNT(*)"
-	}
-	var cols []countCol
-	for _, colExpr := range stmt.Columns {
-		expr := colExpr
-		if ae, ok := expr.(*ast.AliasExpr); ok {
-			expr = ae.Expr
-		}
-		call, ok := expr.(*ast.CallExpr)
-		if !ok {
-			return nil, false
-		}
-		if strings.ToUpper(call.Name) != "COUNT" {
-			return nil, false
-		}
-		if call.Distinct {
-			return nil, false
-		}
-		if len(call.Args) != 1 {
-			return nil, false
-		}
-		// Only COUNT(*) and COUNT(literal) are eligible
-		switch call.Args[0].(type) {
-		case *ast.StarExpr:
-			// COUNT(*) — OK
-		case *ast.IntLitExpr:
-			// COUNT(1) — OK
-		case *ast.StringLitExpr:
-			// COUNT('x') — OK
-		default:
-			// COUNT(col) needs non-NULL check — not eligible
-			return nil, false
-		}
-		cols = append(cols, countCol{dispName: formatCallExpr(call)})
-	}
-	if len(cols) == 0 {
-		return nil, false
-	}
-
 	db, err := e.resolveDatabase(stmt.DatabaseName)
 	if err != nil {
 		return nil, false
 	}
-
-	count, err := db.storage.RowCount(stmt.TableName)
+	result, err := e.executeCountStar(stmt, db)
 	if err != nil {
 		return nil, false
 	}
+	return result, true
+}
 
-	colNames := make([]string, len(cols))
-	colTypes := make([]string, len(cols))
-	resultRow := make(Row, len(cols))
+// executeCountStar executes a COUNT(*) query using RowCount().
+// Caller must ensure isCountStarOptimizable(stmt) is true.
+func (e *Executor) executeCountStar(stmt *ast.SelectStmt, db *Database) (*Result, error) {
+	count, err := db.storage.RowCount(stmt.TableName)
+	if err != nil {
+		return nil, err
+	}
 
-	for i, cc := range cols {
-		if ae, ok := stmt.Columns[i].(*ast.AliasExpr); ok {
+	colNames := make([]string, len(stmt.Columns))
+	colTypes := make([]string, len(stmt.Columns))
+	resultRow := make(Row, len(stmt.Columns))
+
+	for i, colExpr := range stmt.Columns {
+		expr := colExpr
+		if ae, ok := expr.(*ast.AliasExpr); ok {
 			colNames[i] = ae.Alias
+			expr = ae.Expr
 		} else {
-			colNames[i] = cc.dispName
+			call := expr.(*ast.CallExpr)
+			colNames[i] = formatCallExpr(call)
 		}
 		colTypes[i] = "INT"
 		resultRow[i] = int64(count)
@@ -1775,56 +1725,13 @@ func (e *Executor) tryCountStarOptimization(stmt *ast.SelectStmt) (*Result, bool
 		Columns:     colNames,
 		ColumnTypes: colTypes,
 		Rows:        []Row{resultRow},
-	}, true
+	}, nil
 }
 
 // tryMinMaxIndexOptimization attempts to satisfy SELECT MIN(col)/MAX(col) queries
 // using an index scan (O(log N)) instead of a full table scan (O(N)).
 // Returns (result, true) if optimization was applied, (nil, false) otherwise.
 func (e *Executor) tryMinMaxIndexOptimization(stmt *ast.SelectStmt) (*Result, bool) {
-	// Only optimize simple single-table queries without GROUP BY, JOIN, WHERE, subquery, alias
-	if len(stmt.GroupBy) > 0 || len(stmt.Joins) > 0 || stmt.FromSubquery != nil ||
-		stmt.TableAlias != "" || stmt.Where != nil || stmt.Having != nil || stmt.Distinct {
-		return nil, false
-	}
-
-	// All columns must be MIN(col) or MAX(col) CallExprs
-	type minMaxCol struct {
-		funcName string // "MIN" or "MAX"
-		colName  string // column name
-		dispName string // display name e.g. "MIN(val)"
-	}
-	var cols []minMaxCol
-	for _, colExpr := range stmt.Columns {
-		expr := colExpr
-		if ae, ok := expr.(*ast.AliasExpr); ok {
-			expr = ae.Expr
-		}
-		call, ok := expr.(*ast.CallExpr)
-		if !ok {
-			return nil, false
-		}
-		fn := strings.ToUpper(call.Name)
-		if fn != "MIN" && fn != "MAX" {
-			return nil, false
-		}
-		if len(call.Args) != 1 {
-			return nil, false
-		}
-		ident, ok := call.Args[0].(*ast.IdentExpr)
-		if !ok {
-			return nil, false
-		}
-		cols = append(cols, minMaxCol{
-			funcName: fn,
-			colName:  ident.Name,
-			dispName: formatCallExpr(call),
-		})
-	}
-	if len(cols) == 0 {
-		return nil, false
-	}
-
 	db, err := e.resolveDatabase(stmt.DatabaseName)
 	if err != nil {
 		return nil, false
@@ -1833,29 +1740,44 @@ func (e *Executor) tryMinMaxIndexOptimization(stmt *ast.SelectStmt) (*Result, bo
 	if err != nil {
 		return nil, false
 	}
+	if !e.isMinMaxOptimizable(stmt, info) {
+		return nil, false
+	}
+	result, err := e.executeMinMax(stmt, db, info)
+	if err != nil {
+		return nil, false
+	}
+	return result, true
+}
 
-	// Check all columns have an index or are PK
-	for _, mc := range cols {
-		col, err := info.FindColumn(mc.colName)
-		if err != nil {
-			return nil, false
+// executeMinMax executes a MIN/MAX query using index edge lookup.
+// Caller must ensure isMinMaxOptimizable(stmt, info) is true.
+func (e *Executor) executeMinMax(stmt *ast.SelectStmt, db *Database, info *TableInfo) (*Result, error) {
+	type minMaxCol struct {
+		funcName string
+		colName  string
+		dispName string
+	}
+	var cols []minMaxCol
+	for _, colExpr := range stmt.Columns {
+		expr := colExpr
+		if ae, ok := expr.(*ast.AliasExpr); ok {
+			expr = ae.Expr
 		}
-		isPK := col.Index == info.PrimaryKeyCol
-		if !isPK {
-			idx := db.storage.LookupSingleColumnIndex(info.Name, col.Index)
-			if idx == nil {
-				return nil, false
-			}
-		}
+		call := expr.(*ast.CallExpr)
+		ident := call.Args[0].(*ast.IdentExpr)
+		cols = append(cols, minMaxCol{
+			funcName: strings.ToUpper(call.Name),
+			colName:  ident.Name,
+			dispName: formatCallExpr(call),
+		})
 	}
 
-	// All columns are index-backed; execute the optimization
 	colNames := make([]string, len(cols))
 	colTypes := make([]string, len(cols))
 	resultRow := make(Row, len(cols))
 
 	for i, mc := range cols {
-		// Use alias if present
 		if ae, ok := stmt.Columns[i].(*ast.AliasExpr); ok {
 			colNames[i] = ae.Alias
 		} else {
@@ -1868,7 +1790,6 @@ func (e *Executor) tryMinMaxIndexOptimization(stmt *ast.SelectStmt) (*Result, bo
 		isPK := col.Index == info.PrimaryKeyCol
 
 		if isPK {
-			// PK column: use ScanOrdered with limit=1
 			rows, err := db.storage.ScanOrdered(info.Name, reverse, 1)
 			if err != nil || len(rows) == 0 {
 				resultRow[i] = nil
@@ -1876,22 +1797,21 @@ func (e *Executor) tryMinMaxIndexOptimization(stmt *ast.SelectStmt) (*Result, bo
 			}
 			resultRow[i] = rows[0][col.Index]
 		} else {
-			// Secondary index: use OrderedRangeScan
 			idx := db.storage.LookupSingleColumnIndex(info.Name, col.Index)
 			var val Value
 			found := false
 			idx.OrderedRangeScan(nil, false, nil, false, reverse, func(rowKey int64) bool {
 				row, ok := db.storage.GetRow(info.Name, rowKey)
 				if !ok {
-					return true // skip missing rows
+					return true
 				}
 				v := row[col.Index]
 				if v == nil {
-					return true // skip NULLs
+					return true
 				}
 				val = v
 				found = true
-				return false // stop after first non-NULL
+				return false
 			})
 			if found {
 				resultRow[i] = val
@@ -1905,7 +1825,7 @@ func (e *Executor) tryMinMaxIndexOptimization(stmt *ast.SelectStmt) (*Result, bo
 		Columns:     colNames,
 		ColumnTypes: colTypes,
 		Rows:        []Row{resultRow},
-	}, true
+	}, nil
 }
 
 // formatCallExpr returns a display name for a function call (e.g. "COUNT(*)").

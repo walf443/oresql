@@ -286,32 +286,38 @@ func (e *Executor) planSelect(stmt *ast.SelectStmt) *SelectPlan {
 }
 
 // planWhereIndex determines which index (if any) can be used for the WHERE clause.
+// It also stores the batch keys in the plan for use during execution.
 func (e *Executor) planWhereIndex(plan *SelectPlan, where ast.Expr, info *TableInfo) {
 	if where == nil || plan.db == nil {
 		return
 	}
 	if keys, ok := e.tryPrimaryKeyLookup(where, info); ok && keys != nil {
 		plan.WhereIndex = WherePKLookup
+		plan.batchKeys = keys
 		return
 	}
-	if _, ok := e.tryIndexLookup(where, info); ok {
+	if keys, ok := e.tryIndexLookup(where, info); ok {
 		plan.WhereIndex = WhereIndexLookup
 		plan.WhereIndexName = findUsedIndexName(where, info, plan.db)
+		plan.batchKeys = keys
 		return
 	}
-	if _, ok := e.tryIndexInLookup(where, info); ok {
+	if keys, ok := e.tryIndexInLookup(where, info); ok {
 		plan.WhereIndex = WhereIndexIn
 		plan.WhereIndexName = findUsedIndexName(where, info, plan.db)
+		plan.batchKeys = keys
 		return
 	}
-	if _, ok := e.tryIndexRangeScan(where, info); ok {
+	if keys, ok := e.tryIndexRangeScan(where, info); ok {
 		plan.WhereIndex = WhereRangeScan
 		plan.WhereIndexName = findUsedRangeIndexName(where, info, plan.db)
+		plan.batchKeys = keys
 		return
 	}
-	if _, ok := e.tryIndexMergeUnion(where, info); ok {
+	if keys, ok := e.tryIndexMergeUnion(where, info); ok {
 		plan.WhereIndex = WhereIndexMerge
 		plan.Extras = append(plan.Extras, "Using union")
+		plan.batchKeys = keys
 		return
 	}
 }

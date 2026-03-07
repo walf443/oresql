@@ -34,8 +34,8 @@ func TestThreeTableJoinWithIndex(t *testing.T) {
 
 	assertExplain(t, exec, q, []planRow{
 		{Table: "users", Type: "full scan"},
-		{Table: "orders", Type: "full scan"},
-		{Table: "items", Type: "full scan"},
+		{Table: "orders", Type: "ref", Key: "idx_orders_uid"},
+		{Table: "items", Type: "ref", Key: "idx_items_oid"},
 	})
 
 	// Sorted by product: doohickey, gadget, widget
@@ -172,8 +172,8 @@ func TestFourTableJoin(t *testing.T) {
 
 	assertExplain(t, exec, q, []planRow{
 		{Table: "customers", Type: "full scan"},
-		{Table: "orders", Type: "full scan"},
-		{Table: "items", Type: "full scan"},
+		{Table: "orders", Type: "ref", Key: "idx_orders_cid"},
+		{Table: "items", Type: "ref", Key: "idx_items_oid"},
 		{Table: "products", Type: "full scan"},
 	})
 	assert.Equal(t, "alice", result.Rows[0][0])

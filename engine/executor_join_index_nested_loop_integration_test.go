@@ -30,12 +30,9 @@ func TestJoinWithIndexNestedLoop(t *testing.T) {
 	assert.Equal(t, "alice", result.Rows[2][0])
 	assert.Equal(t, "tablet", result.Rows[2][1])
 
-	// NOTE: EXPLAIN currently shows "full scan" for inner table because
-	// addJoinPlans uses tryIndexLookup which only handles col=literal, not col=col.
-	// In execution, the index IS used via scanSourceJoin.
 	assertExplain(t, exec, q, []planRow{
 		{Table: "users", Type: "full scan"},
-		{Table: "orders", Type: "full scan"},
+		{Table: "orders", Type: "ref", Key: "idx_orders_user_id"},
 	})
 }
 
@@ -270,7 +267,7 @@ func TestJoinCompositeIndexFullEquality(t *testing.T) {
 
 	assertExplain(t, exec, q, []planRow{
 		{Table: "users", Type: "full scan"},
-		{Table: "orders", Type: "full scan"},
+		{Table: "orders", Type: "ref", Key: "idx_orders_uid_status"},
 	})
 }
 

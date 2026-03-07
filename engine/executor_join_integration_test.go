@@ -271,7 +271,7 @@ func TestLeftJoinWithIndex(t *testing.T) {
 
 	assertExplain(t, exec, q, []planRow{
 		{Table: "users", Type: "full scan"},
-		{Table: "orders", Type: "full scan"},
+		{Table: "orders", Type: "ref", Key: "idx_orders_user_id"},
 	})
 }
 

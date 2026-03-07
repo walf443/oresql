@@ -355,6 +355,22 @@ func (e *Executor) addCommonExtras(plan *SelectPlan, stmt *ast.SelectStmt) {
 
 // addJoinPlans builds JoinPlan entries for each JOIN clause.
 func (e *Executor) addJoinPlans(plan *SelectPlan, stmt *ast.SelectStmt) {
+	// Build joinTableInfo for the driving (FROM) table
+	fromInfo := &joinTableInfo{
+		tableName:     strings.ToLower(stmt.TableName),
+		alias:         strings.ToLower(stmt.TableAlias),
+		effectiveName: strings.ToLower(stmt.TableName),
+	}
+	if fromInfo.alias != "" {
+		fromInfo.effectiveName = fromInfo.alias
+	}
+	if plan.info != nil {
+		fromInfo.info = plan.info
+	}
+
+	// Track all joined tables so far for multi-table join equi-pair extraction
+	knownTables := []*joinTableInfo{fromInfo}
+
 	for _, join := range stmt.Joins {
 		jp := JoinPlan{
 			JoinType:   join.JoinType,
@@ -363,15 +379,48 @@ func (e *Executor) addJoinPlans(plan *SelectPlan, stmt *ast.SelectStmt) {
 		}
 
 		joinDB, err := e.resolveDatabase(join.DatabaseName)
-		if err == nil {
-			joinInfo, err := joinDB.catalog.GetTable(join.TableName)
-			if err == nil {
-				jp.PossibleKeys = collectPossibleKeys(joinInfo, joinDB)
-				if join.On != nil {
-					if _, ok := e.tryIndexLookup(join.On, joinInfo); ok {
-						jp.AccessType = "ref"
-						jp.KeyUsed = findUsedIndexName(join.On, joinInfo, joinDB)
-					}
+		if err != nil {
+			plan.JoinPlans = append(plan.JoinPlans, jp)
+			continue
+		}
+		joinInfo, err := joinDB.catalog.GetTable(join.TableName)
+		if err != nil {
+			plan.JoinPlans = append(plan.JoinPlans, jp)
+			continue
+		}
+
+		jp.PossibleKeys = collectPossibleKeys(joinInfo, joinDB)
+
+		if join.On != nil {
+			// Build joinTableInfo for this JOIN table
+			joinTI := &joinTableInfo{
+				info:          joinInfo,
+				tableName:     strings.ToLower(join.TableName),
+				alias:         strings.ToLower(join.TableAlias),
+				effectiveName: strings.ToLower(join.TableName),
+			}
+			if joinTI.alias != "" {
+				joinTI.effectiveName = joinTI.alias
+			}
+
+			// Try to find equi-join pairs by checking against all known tables
+			found := false
+			for _, knownTI := range knownTables {
+				pairs, _ := extractAllEquiJoinPairs(join.On, knownTI, joinTI)
+				if len(pairs) > 0 {
+					// Check if the join table has an index on the equi-join column
+					joinCol := pairs[0].rightCol
+					e.resolveJoinAccessType(&jp, joinCol, joinInfo, joinDB, join, stmt)
+					found = true
+					break
+				}
+			}
+
+			if !found {
+				// Try col=literal fallback (e.g., ON t.col = 1)
+				if _, ok := e.tryIndexLookup(join.On, joinInfo); ok {
+					jp.AccessType = "ref"
+					jp.KeyUsed = findUsedIndexName(join.On, joinInfo, joinDB)
 				}
 			}
 		}
@@ -381,10 +430,106 @@ func (e *Executor) addJoinPlans(plan *SelectPlan, stmt *ast.SelectStmt) {
 		}
 		if len(join.Using) > 0 {
 			jp.Extras = append(jp.Extras, "Using USING("+strings.Join(join.Using, ", ")+")")
+
+			// Check if USING columns have indexes
+			for _, usingCol := range join.Using {
+				col, findErr := joinInfo.FindColumn(usingCol)
+				if findErr != nil {
+					continue
+				}
+				if col.Index == joinInfo.PrimaryKeyCol {
+					jp.AccessType = "ref"
+					jp.KeyUsed = "PRIMARY"
+					break
+				}
+				idx := joinDB.storage.LookupSingleColumnIndex(joinInfo.Name, col.Index)
+				if idx != nil {
+					jp.AccessType = "ref"
+					jp.KeyUsed = idx.GetInfo().Name
+					break
+				}
+			}
 		}
 
 		plan.JoinPlans = append(plan.JoinPlans, jp)
+
+		// Add this table to known tables for subsequent joins
+		joinTI := &joinTableInfo{
+			info:          joinInfo,
+			tableName:     strings.ToLower(join.TableName),
+			alias:         strings.ToLower(join.TableAlias),
+			effectiveName: strings.ToLower(join.TableName),
+		}
+		if joinTI.alias != "" {
+			joinTI.effectiveName = joinTI.alias
+		}
+		knownTables = append(knownTables, joinTI)
 	}
+}
+
+// resolveJoinAccessType determines the access type for a join table based on
+// the equi-join column, considering single-column indexes, PK, and composite
+// indexes that combine the join column with pushed-down WHERE conditions.
+func (e *Executor) resolveJoinAccessType(
+	jp *JoinPlan, joinCol string, joinInfo *TableInfo, joinDB *Database,
+	join ast.JoinClause, stmt *ast.SelectStmt,
+) {
+	col, err := joinInfo.FindColumn(joinCol)
+	if err != nil {
+		return
+	}
+
+	// Check PK
+	if col.Index == joinInfo.PrimaryKeyCol {
+		jp.AccessType = "ref"
+		jp.KeyUsed = "PRIMARY"
+		return
+	}
+
+	// Check single-column index
+	idx := joinDB.storage.LookupSingleColumnIndex(joinInfo.Name, col.Index)
+	if idx != nil {
+		jp.AccessType = "ref"
+		jp.KeyUsed = idx.GetInfo().Name
+	}
+
+	// Try composite index covering join column + WHERE conditions
+	if stmt.Where != nil {
+		localWhere := extractLocalWhere(stmt.Where, join.TableName, join.TableAlias, joinInfo)
+		if localWhere != nil {
+			cjPlan := e.findCompositeJoinIndex(col.Index, localWhere, joinInfo, joinDB.storage)
+			if cjPlan != nil {
+				jp.AccessType = "ref"
+				jp.KeyUsed = cjPlan.index.GetInfo().Name
+			}
+		}
+	}
+}
+
+// extractLocalWhere extracts WHERE conditions that reference only the given table.
+func extractLocalWhere(where ast.Expr, tableName, tableAlias string, info *TableInfo) ast.Expr {
+	conds := flattenAND(where)
+	var local []ast.Expr
+	lowerName := strings.ToLower(tableName)
+	lowerAlias := strings.ToLower(tableAlias)
+	for _, cond := range conds {
+		refs := collectTableRefs(cond)
+		if len(refs) == 0 {
+			continue
+		}
+		allLocal := true
+		for ref := range refs {
+			if ref != lowerName && (lowerAlias == "" || ref != lowerAlias) {
+				allLocal = false
+				break
+			}
+		}
+		if allLocal {
+			stripped := stripTableQualifier(cond, tableName, tableAlias)
+			local = append(local, stripped)
+		}
+	}
+	return combineExprsAND(local)
 }
 
 // isCountStarOptimizable checks whether COUNT(*) row-count optimization applies.

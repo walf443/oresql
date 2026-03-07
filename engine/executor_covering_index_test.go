@@ -36,9 +36,12 @@ func TestCoveringIndexEquality(t *testing.T) {
 			exec := setupCoveringTestTable(t, storageType)
 
 			// Covering: SELECT indexed_col FROM t WHERE indexed_col = X
-			result := run(t, exec, "SELECT val FROM items WHERE val = 20")
+			q := "SELECT val FROM items WHERE val = 20"
+			result := run(t, exec, q)
 			require.Len(t, result.Rows, 1)
 			assert.Equal(t, int64(20), result.Rows[0][0])
+
+			assertExplain(t, exec, q, []planRow{{Type: "ref", Key: "idx_val", Extra: "Using covering index"}})
 		})
 	}
 }
@@ -49,9 +52,12 @@ func TestCoveringIndexNonCovering(t *testing.T) {
 			exec := setupCoveringTestTable(t, storageType)
 
 			// Non-covering: SELECT non_indexed FROM t WHERE indexed_col = X
-			result := run(t, exec, "SELECT name FROM items WHERE val = 20")
+			q := "SELECT name FROM items WHERE val = 20"
+			result := run(t, exec, q)
 			require.Len(t, result.Rows, 1)
 			assert.Equal(t, "banana", result.Rows[0][0])
+
+			assertExplain(t, exec, q, []planRow{{Type: "ref", Key: "idx_val"}})
 		})
 	}
 }
@@ -62,10 +68,13 @@ func TestCoveringIndexPKAndIndexed(t *testing.T) {
 			exec := setupCoveringTestTable(t, storageType)
 
 			// PK + indexed column: both are covered
-			result := run(t, exec, "SELECT id, val FROM items WHERE val = 30")
+			q := "SELECT id, val FROM items WHERE val = 30"
+			result := run(t, exec, q)
 			require.Len(t, result.Rows, 1)
 			assert.Equal(t, int64(3), result.Rows[0][0])
 			assert.Equal(t, int64(30), result.Rows[0][1])
+
+			assertExplain(t, exec, q, []planRow{{Type: "ref", Key: "idx_val", Extra: "Using covering index"}})
 		})
 	}
 }
@@ -76,12 +85,18 @@ func TestCoveringIndexSelectStar(t *testing.T) {
 			exec := setupCoveringTestTable(t, storageType)
 
 			// SELECT * should not be covering (needs all columns)
-			result := run(t, exec, "SELECT * FROM items WHERE val = 20")
+			q := "SELECT * FROM items WHERE val = 20"
+			result := run(t, exec, q)
 			require.Len(t, result.Rows, 1)
 			assert.Equal(t, int64(2), result.Rows[0][0])
 			assert.Equal(t, int64(20), result.Rows[0][1])
 			assert.Equal(t, "banana", result.Rows[0][2])
 			assert.Equal(t, int64(1), result.Rows[0][3])
+
+			// Should NOT have "Using covering index"
+			explainResult := run(t, exec, "EXPLAIN "+q)
+			extra, _ := explainResult.Rows[0][6].(string)
+			assert.NotContains(t, extra, "Using covering index")
 		})
 	}
 }
@@ -92,10 +107,13 @@ func TestCoveringIndexComposite(t *testing.T) {
 			exec := setupCoveringTestTable(t, storageType)
 
 			// Composite index covering: SELECT col1, col2 FROM t WHERE col1 = X AND col2 = Y
-			result := run(t, exec, "SELECT category, val FROM items WHERE category = 2 AND val = 30")
+			q := "SELECT category, val FROM items WHERE category = 2 AND val = 30"
+			result := run(t, exec, q)
 			require.Len(t, result.Rows, 1)
 			assert.Equal(t, int64(2), result.Rows[0][0])
 			assert.Equal(t, int64(30), result.Rows[0][1])
+
+			assertExplain(t, exec, q, []planRow{{Type: "ref", Extra: "Using covering index"}})
 		})
 	}
 }
@@ -125,11 +143,15 @@ func TestCoveringIndexOrderBy(t *testing.T) {
 			exec := setupCoveringTestTable(t, storageType)
 
 			// ORDER BY + covering: SELECT indexed_col FROM t ORDER BY indexed_col LIMIT 3
-			result := run(t, exec, "SELECT val FROM items ORDER BY val LIMIT 3")
+			q := "SELECT val FROM items ORDER BY val LIMIT 3"
+			result := run(t, exec, q)
 			require.Len(t, result.Rows, 3)
 			assert.Equal(t, int64(10), result.Rows[0][0])
 			assert.Equal(t, int64(20), result.Rows[1][0])
 			assert.Equal(t, int64(30), result.Rows[2][0])
+
+			// This table has PRIMARY KEY so tryIndexOrder may pick PK, not idx_val
+			// Just verify covering is detected when index order scan is used
 		})
 	}
 }
@@ -140,7 +162,8 @@ func TestCoveringIndexOrderByDesc(t *testing.T) {
 			exec := setupCoveringTestTable(t, storageType)
 
 			// ORDER BY DESC + covering
-			result := run(t, exec, "SELECT val FROM items ORDER BY val DESC LIMIT 3")
+			q := "SELECT val FROM items ORDER BY val DESC LIMIT 3"
+			result := run(t, exec, q)
 			require.Len(t, result.Rows, 3)
 			assert.Equal(t, int64(50), result.Rows[0][0])
 			assert.Equal(t, int64(40), result.Rows[1][0])
@@ -155,8 +178,11 @@ func TestCoveringIndexStreamingLimit(t *testing.T) {
 			exec := setupCoveringTestTable(t, storageType)
 
 			// Streaming with LIMIT: should work with covering index
-			result := run(t, exec, "SELECT val FROM items WHERE val >= 20 LIMIT 2")
+			q := "SELECT val FROM items WHERE val >= 20 LIMIT 2"
+			result := run(t, exec, q)
 			require.Len(t, result.Rows, 2)
+
+			assertExplain(t, exec, q, []planRow{{Type: "range", Key: "idx_val", Extra: "Using covering index"}})
 		})
 	}
 }
@@ -167,7 +193,8 @@ func TestCoveringIndexPKOnly(t *testing.T) {
 			exec := setupCoveringTestTable(t, storageType)
 
 			// Select PK + indexed columns should be covered
-			result := run(t, exec, "SELECT id, category FROM items WHERE category = 1")
+			q := "SELECT id, category FROM items WHERE category = 1"
+			result := run(t, exec, q)
 			require.Len(t, result.Rows, 2)
 			// Both apple(1) and banana(2) have category=1
 			ids := make(map[int64]bool)
@@ -176,6 +203,8 @@ func TestCoveringIndexPKOnly(t *testing.T) {
 			}
 			assert.True(t, ids[1])
 			assert.True(t, ids[2])
+
+			assertExplain(t, exec, q, []planRow{{Type: "ref", Key: "idx_category", Extra: "Using covering index"}})
 		})
 	}
 }
@@ -186,11 +215,14 @@ func TestCoveringIndexMultipleResults(t *testing.T) {
 			exec := setupCoveringTestTable(t, storageType)
 
 			// Multiple matching rows with covering
-			result := run(t, exec, "SELECT category FROM items WHERE category = 2")
+			q := "SELECT category FROM items WHERE category = 2"
+			result := run(t, exec, q)
 			require.Len(t, result.Rows, 2)
 			for _, row := range result.Rows {
 				assert.Equal(t, int64(2), row[0])
 			}
+
+			assertExplain(t, exec, q, []planRow{{Type: "ref", Key: "idx_category", Extra: "Using covering index"}})
 		})
 	}
 }

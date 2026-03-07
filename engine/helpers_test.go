@@ -26,6 +26,7 @@ type planRow struct {
 	Table string // expected table name (column 2)
 	Type  string // expected access type (column 3)
 	Key   string // expected key used (column 5)
+	Extra string // substring expected in extra (column 6)
 }
 
 // assertExplain runs EXPLAIN on the given SQL and asserts each row's table, access type and key.
@@ -42,6 +43,10 @@ func assertExplain(t *testing.T, exec *Executor, sql string, expected []planRow)
 		}
 		if exp.Key != "" {
 			assert.Equal(t, exp.Key, result.Rows[i][5], "EXPLAIN %s: row %d key used", sql, i)
+		}
+		if exp.Extra != "" {
+			extra, _ := result.Rows[i][6].(string)
+			assert.Contains(t, extra, exp.Extra, "EXPLAIN %s: row %d extra", sql, i)
 		}
 	}
 }

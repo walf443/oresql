@@ -30,11 +30,14 @@ func TestPKCoveringOrderByASC(t *testing.T) {
 	for _, st := range []string{"memory", "disk"} {
 		t.Run(st, func(t *testing.T) {
 			exec := setupPKCoveringTestTable(t, st)
-			result := run(t, exec, "SELECT id FROM t ORDER BY id LIMIT 3")
+			q := "SELECT id FROM t ORDER BY id LIMIT 3"
+			result := run(t, exec, q)
 			require.Len(t, result.Rows, 3)
 			assert.Equal(t, int64(1), result.Rows[0][0])
 			assert.Equal(t, int64(2), result.Rows[1][0])
 			assert.Equal(t, int64(3), result.Rows[2][0])
+
+			assertExplain(t, exec, q, []planRow{{Type: "index scan", Key: "PRIMARY", Extra: "Using covering index"}})
 		})
 	}
 }
@@ -93,12 +96,18 @@ func TestPKCoveringNonCoveringIDName(t *testing.T) {
 		t.Run(st, func(t *testing.T) {
 			exec := setupPKCoveringTestTable(t, st)
 			// Non-covering: needs name column too
-			result := run(t, exec, "SELECT id, name FROM t ORDER BY id LIMIT 3")
+			q := "SELECT id, name FROM t ORDER BY id LIMIT 3"
+			result := run(t, exec, q)
 			require.Len(t, result.Rows, 3)
 			assert.Equal(t, int64(1), result.Rows[0][0])
 			assert.Equal(t, "name_1", result.Rows[0][1])
 			assert.Equal(t, int64(2), result.Rows[1][0])
 			assert.Equal(t, "name_2", result.Rows[1][1])
+
+			// Should NOT have "Using covering index"
+			explainResult := run(t, exec, "EXPLAIN "+q)
+			extra, _ := explainResult.Rows[0][6].(string)
+			assert.NotContains(t, extra, "Using covering index")
 		})
 	}
 }

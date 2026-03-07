@@ -189,6 +189,7 @@ func (e *Executor) planSelect(stmt *ast.SelectStmt) *SelectPlan {
 			} else {
 				plan.Extras = append(plan.Extras, "Using index for partial ORDER BY")
 			}
+			e.planCoveringIndex(plan, stmt)
 			e.addCommonExtras(plan, stmt)
 			e.addJoinPlans(plan, stmt)
 			return plan
@@ -258,6 +259,7 @@ func (e *Executor) planSelect(stmt *ast.SelectStmt) *SelectPlan {
 						}
 						plan.WhereIndexName = findIndexNameForScanParams(params, info, db)
 					}
+					e.planCoveringIndex(plan, stmt)
 					e.addCommonExtras(plan, stmt)
 					return plan
 				}
@@ -268,6 +270,7 @@ func (e *Executor) planSelect(stmt *ast.SelectStmt) *SelectPlan {
 			} else {
 				plan.Type = PlanStreamingFullScan
 			}
+			e.planCoveringIndex(plan, stmt)
 			e.addCommonExtras(plan, stmt)
 			return plan
 		}
@@ -280,6 +283,7 @@ func (e *Executor) planSelect(stmt *ast.SelectStmt) *SelectPlan {
 		plan.Type = PlanFullScan
 	}
 
+	e.planCoveringIndex(plan, stmt)
 	e.addCommonExtras(plan, stmt)
 	e.addJoinPlans(plan, stmt)
 	return plan
@@ -319,6 +323,71 @@ func (e *Executor) planWhereIndex(plan *SelectPlan, where ast.Expr, info *TableI
 		plan.Extras = append(plan.Extras, "Using union")
 		plan.batchKeys = keys
 		return
+	}
+}
+
+// planCoveringIndex checks if the query can be satisfied entirely from an index
+// (without reading the base table rows) and adds "Using covering index" to Extras.
+func (e *Executor) planCoveringIndex(plan *SelectPlan, stmt *ast.SelectStmt) {
+	if plan.info == nil || plan.db == nil {
+		return
+	}
+	// JOINs are not handled for covering index detection
+	if len(stmt.Joins) > 0 {
+		return
+	}
+
+	neededCols := collectNeededColumns(stmt.Columns, stmt.Where, stmt.OrderBy, plan.info)
+
+	// PK-only covering (e.g., SELECT id FROM t ORDER BY id)
+	if isPKOnlyCovering(neededCols, plan.info.PrimaryKeyCol) {
+		plan.Extras = append(plan.Extras, "Using covering index")
+		return
+	}
+
+	// Check index used for ORDER BY scan
+	if plan.IndexOrder != nil && plan.IndexOrder.index != nil {
+		if isIndexCovering(plan.IndexOrder.index, neededCols, plan.info.PrimaryKeyCol) {
+			plan.Extras = append(plan.Extras, "Using covering index")
+			return
+		}
+	}
+
+	// Check index used for WHERE lookup
+	if plan.WhereIndex != WhereNoIndex && plan.WhereIndexName != "" {
+		indexes := plan.db.storage.GetIndexes(plan.info.Name)
+		for _, idx := range indexes {
+			if idx.GetInfo().Name == plan.WhereIndexName {
+				if isIndexCovering(idx, neededCols, plan.info.PrimaryKeyCol) {
+					plan.Extras = append(plan.Extras, "Using covering index")
+					return
+				}
+				break
+			}
+		}
+	}
+
+	// Check if any index used for equality covering (tryIndexLookupCovering path)
+	if plan.WhereIndex == WhereIndexLookup || plan.WhereIndex == WhereIndexIn {
+		indexes := plan.db.storage.GetIndexes(plan.info.Name)
+		for _, idx := range indexes {
+			if isIndexCovering(idx, neededCols, plan.info.PrimaryKeyCol) {
+				// Verify this index matches the WHERE conditions
+				eqConds := extractEqualityConditions(stmt.Where)
+				idxInfo := idx.GetInfo()
+				allFound := true
+				for _, colName := range idxInfo.ColumnNames {
+					if _, ok := eqConds[strings.ToLower(colName)]; !ok {
+						allFound = false
+						break
+					}
+				}
+				if allFound {
+					plan.Extras = append(plan.Extras, "Using covering index")
+					return
+				}
+			}
+		}
 	}
 }
 

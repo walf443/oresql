@@ -184,10 +184,14 @@ func (e *Executor) planSelect(stmt *ast.SelectStmt) *SelectPlan {
 		if ior := e.tryIndexOrder(stmt.OrderBy, stmt.Where, info, stmt.Limit != nil); ior != nil {
 			plan.Type = PlanIndexOrderScan
 			plan.IndexOrder = ior
+			dir := "ASC"
+			if ior.reverse {
+				dir = "DESC"
+			}
 			if ior.fullOrder {
-				plan.Extras = append(plan.Extras, "Using index for ORDER BY")
+				plan.Extras = append(plan.Extras, "Using index for ORDER BY ("+dir+")")
 			} else {
-				plan.Extras = append(plan.Extras, "Using index for partial ORDER BY")
+				plan.Extras = append(plan.Extras, "Using index for partial ORDER BY ("+dir+")")
 			}
 			e.planCoveringIndex(plan, stmt)
 			e.addCommonExtras(plan, stmt)

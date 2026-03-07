@@ -806,7 +806,7 @@ func TestIndexOrderByAsc(t *testing.T) {
 		assert.Equal(t, expected, result.Rows[i][1], "row %d: expected val=%d", i, expected)
 	}
 
-	assertExplain(t, exec, q, []planRow{{Type: "index scan", Key: "idx_val"}})
+	assertExplain(t, exec, q, []planRow{{Type: "index scan", Key: "idx_val", Extra: "Using index for ORDER BY (ASC)"}})
 }
 
 func TestIndexOrderByDesc(t *testing.T) {
@@ -817,12 +817,15 @@ func TestIndexOrderByDesc(t *testing.T) {
 		run(t, exec, fmt.Sprintf("INSERT INTO t VALUES (%d, %d)", i, i*10))
 	}
 
-	result := run(t, exec, "SELECT id, val FROM t ORDER BY val DESC")
+	q := "SELECT id, val FROM t ORDER BY val DESC"
+	result := run(t, exec, q)
 	require.Len(t, result.Rows, 10, "expected 10 rows")
 	for i := 0; i < 10; i++ {
 		expected := int64((10 - i) * 10)
 		assert.Equal(t, expected, result.Rows[i][1], "row %d: expected val=%d", i, expected)
 	}
+
+	assertExplain(t, exec, q, []planRow{{Type: "index scan", Key: "idx_val", Extra: "Using index for ORDER BY (DESC)"}})
 }
 
 func TestPKOrderByAscDesc(t *testing.T) {
@@ -840,7 +843,7 @@ func TestPKOrderByAscDesc(t *testing.T) {
 		assert.Equal(t, exp, result.Rows[i][0], "ASC[%d]: expected %d", i, exp)
 	}
 
-	assertExplain(t, exec, qAsc, []planRow{{Type: "index scan", Key: "PRIMARY"}})
+	assertExplain(t, exec, qAsc, []planRow{{Type: "index scan", Key: "PRIMARY", Extra: "Using index for ORDER BY (ASC)"}})
 
 	// DESC
 	qDesc := "SELECT id FROM t ORDER BY id DESC"
@@ -850,7 +853,7 @@ func TestPKOrderByAscDesc(t *testing.T) {
 		assert.Equal(t, exp, result.Rows[i][0], "DESC[%d]: expected %d", i, exp)
 	}
 
-	assertExplain(t, exec, qDesc, []planRow{{Type: "index scan", Key: "PRIMARY"}})
+	assertExplain(t, exec, qDesc, []planRow{{Type: "index scan", Key: "PRIMARY", Extra: "Using index for ORDER BY (DESC)"}})
 }
 
 func TestIndexOrderByLimit(t *testing.T) {
@@ -861,19 +864,27 @@ func TestIndexOrderByLimit(t *testing.T) {
 		run(t, exec, fmt.Sprintf("INSERT INTO t VALUES (%d, %d)", i, i*10))
 	}
 
-	result := run(t, exec, "SELECT val FROM t ORDER BY val ASC LIMIT 5")
+	qAsc := "SELECT val FROM t ORDER BY val ASC LIMIT 5"
+	result := run(t, exec, qAsc)
 	require.Len(t, result.Rows, 5, "expected 5 rows")
 	expected := []int64{10, 20, 30, 40, 50}
 	for i, exp := range expected {
 		assert.Equal(t, exp, result.Rows[i][0], "row %d: expected %d", i, exp)
 	}
 
-	result = run(t, exec, "SELECT val FROM t ORDER BY val DESC LIMIT 5")
+	// ASC + LIMIT on nullable column falls back to filesort (NULL ordering issue)
+	assertExplain(t, exec, qAsc, []planRow{{Extra: "Using filesort"}})
+
+	qDesc := "SELECT val FROM t ORDER BY val DESC LIMIT 5"
+	result = run(t, exec, qDesc)
 	require.Len(t, result.Rows, 5, "expected 5 rows")
 	expected = []int64{1000, 990, 980, 970, 960}
 	for i, exp := range expected {
 		assert.Equal(t, exp, result.Rows[i][0], "DESC row %d: expected %d", i, exp)
 	}
+
+	// DESC + LIMIT on nullable column uses index (NULLs sort last naturally)
+	assertExplain(t, exec, qDesc, []planRow{{Type: "index scan", Key: "idx_val", Extra: "Using index for ORDER BY (DESC)"}})
 }
 
 func TestIndexOrderByWithWhereRange(t *testing.T) {
@@ -884,12 +895,16 @@ func TestIndexOrderByWithWhereRange(t *testing.T) {
 		run(t, exec, fmt.Sprintf("INSERT INTO t VALUES (%d, %d)", i, i))
 	}
 
-	result := run(t, exec, "SELECT val FROM t WHERE val > 50 ORDER BY val ASC LIMIT 5")
+	q := "SELECT val FROM t WHERE val > 50 ORDER BY val ASC LIMIT 5"
+	result := run(t, exec, q)
 	require.Len(t, result.Rows, 5, "expected 5 rows")
 	expected := []int64{51, 52, 53, 54, 55}
 	for i, exp := range expected {
 		assert.Equal(t, exp, result.Rows[i][0], "row %d: expected %d", i, exp)
 	}
+
+	// ASC + LIMIT on nullable column falls back to filesort
+	assertExplain(t, exec, q, []planRow{{Extra: "Using filesort"}})
 }
 
 func TestIndexOrderByOffsetLimit(t *testing.T) {
@@ -900,12 +915,16 @@ func TestIndexOrderByOffsetLimit(t *testing.T) {
 		run(t, exec, fmt.Sprintf("INSERT INTO t VALUES (%d, %d)", i, i*10))
 	}
 
-	result := run(t, exec, "SELECT val FROM t ORDER BY val ASC LIMIT 3 OFFSET 5")
+	q := "SELECT val FROM t ORDER BY val ASC LIMIT 3 OFFSET 5"
+	result := run(t, exec, q)
 	require.Len(t, result.Rows, 3, "expected 3 rows")
 	expected := []int64{60, 70, 80}
 	for i, exp := range expected {
 		assert.Equal(t, exp, result.Rows[i][0], "row %d: expected %d", i, exp)
 	}
+
+	// ASC + LIMIT on nullable column falls back to filesort
+	assertExplain(t, exec, q, []planRow{{Extra: "Using filesort"}})
 }
 
 func TestIndexOrderByDuplicates(t *testing.T) {
@@ -938,7 +957,8 @@ func TestIndexOrderByMultiColumn(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (4, 1, 40)")
 	run(t, exec, "INSERT INTO t VALUES (5, 3, 50)")
 
-	result := run(t, exec, "SELECT col1, col2 FROM t ORDER BY col1 ASC, col2 ASC")
+	q := "SELECT col1, col2 FROM t ORDER BY col1 ASC, col2 ASC"
+	result := run(t, exec, q)
 	require.Len(t, result.Rows, 5, "expected 5 rows")
 	type pair struct{ c1, c2 int64 }
 	expected := []pair{{1, 20}, {1, 40}, {2, 10}, {2, 30}, {3, 50}}
@@ -946,6 +966,8 @@ func TestIndexOrderByMultiColumn(t *testing.T) {
 		assert.Equal(t, exp.c1, result.Rows[i][0], "row %d col1: expected %d", i, exp.c1)
 		assert.Equal(t, exp.c2, result.Rows[i][1], "row %d col2: expected %d", i, exp.c2)
 	}
+
+	assertExplain(t, exec, q, []planRow{{Type: "index scan", Key: "idx_col1", Extra: "Using index for partial ORDER BY (ASC)"}})
 }
 
 func TestIndexOrderByMultiColumnLimit(t *testing.T) {
@@ -1033,12 +1055,15 @@ func TestOrderByNonIndexedFallback(t *testing.T) {
 	}
 
 	// ORDER BY other (no index) should still work via normal sort path
-	result := run(t, exec, "SELECT other FROM t ORDER BY other ASC")
+	q := "SELECT other FROM t ORDER BY other ASC"
+	result := run(t, exec, q)
 	require.Len(t, result.Rows, 5, "expected 5 rows")
 	expected := []int64{10, 20, 30, 40, 50}
 	for i, exp := range expected {
 		assert.Equal(t, exp, result.Rows[i][0], "row %d: expected %d", i, exp)
 	}
+
+	assertExplain(t, exec, q, []planRow{{Type: "full scan", Extra: "Using filesort"}})
 }
 
 func TestOrderByWithGroupByFallback(t *testing.T) {
@@ -1050,11 +1075,14 @@ func TestOrderByWithGroupByFallback(t *testing.T) {
 	}
 
 	// GROUP BY + ORDER BY should use fallback (not index order)
-	result := run(t, exec, "SELECT grp, COUNT(*) FROM t GROUP BY grp ORDER BY grp ASC")
+	q := "SELECT grp, COUNT(*) FROM t GROUP BY grp ORDER BY grp ASC"
+	result := run(t, exec, q)
 	require.Len(t, result.Rows, 3, "expected 3 rows")
 	assert.Equal(t, int64(0), result.Rows[0][0], "row 0: expected grp=0")
 	assert.Equal(t, int64(1), result.Rows[1][0], "row 1: expected grp=1")
 	assert.Equal(t, int64(2), result.Rows[2][0], "row 2: expected grp=2")
+
+	assertExplain(t, exec, q, []planRow{{Type: "index scan", Extra: "Using filesort"}})
 }
 
 // --- Index scan streaming (WHERE + LIMIT without ORDER BY) ---

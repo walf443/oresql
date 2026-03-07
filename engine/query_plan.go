@@ -140,6 +140,9 @@ func (p *SelectPlan) KeyUsed() string {
 
 // planSelect builds a SelectPlan describing how the SELECT will be executed.
 // This is the single source of truth for both EXPLAIN and executeSelect.
+// It determines only the execution strategy and related fields (Type, db, info,
+// IndexOrder, streamingParams, batchKeys, WhereIndex). Display metadata
+// (PossibleKeys, Extras, JoinPlans) is added separately by enrichPlanForExplain.
 func (e *Executor) planSelect(stmt *ast.SelectStmt) *SelectPlan {
 	plan := &SelectPlan{
 		TableName:    stmt.TableName,
@@ -155,7 +158,6 @@ func (e *Executor) planSelect(stmt *ast.SelectStmt) *SelectPlan {
 	// FROM subquery
 	if stmt.FromSubquery != nil {
 		plan.Type = PlanSubquery
-		plan.Extras = append(plan.Extras, "FROM subquery")
 		return plan
 	}
 
@@ -173,9 +175,6 @@ func (e *Executor) planSelect(stmt *ast.SelectStmt) *SelectPlan {
 	plan.db = db
 	plan.info = info
 
-	// Collect possible keys
-	plan.PossibleKeys = collectPossibleKeys(info, db)
-
 	// 1. Try ORDER BY index optimization
 	if len(stmt.OrderBy) > 0 && len(stmt.Joins) == 0 && stmt.TableAlias == "" &&
 		stmt.FromSubquery == nil &&
@@ -184,18 +183,6 @@ func (e *Executor) planSelect(stmt *ast.SelectStmt) *SelectPlan {
 		if ior := e.tryIndexOrder(stmt.OrderBy, stmt.Where, info, stmt.Limit != nil); ior != nil {
 			plan.Type = PlanIndexOrderScan
 			plan.IndexOrder = ior
-			dir := "ASC"
-			if ior.reverse {
-				dir = "DESC"
-			}
-			if ior.fullOrder {
-				plan.Extras = append(plan.Extras, "Using index for ORDER BY ("+dir+")")
-			} else {
-				plan.Extras = append(plan.Extras, "Using index for partial ORDER BY ("+dir+")")
-			}
-			e.planCoveringIndex(plan, stmt)
-			e.addCommonExtras(plan, stmt)
-			e.addJoinPlans(plan, stmt)
 			return plan
 		}
 	}
@@ -216,9 +203,6 @@ func (e *Executor) planSelect(stmt *ast.SelectStmt) *SelectPlan {
 					} else {
 						plan.WhereIndexName = idx.GetInfo().Name
 					}
-					plan.Extras = append(plan.Extras, "Using index for GROUP BY")
-					e.addCommonExtras(plan, stmt)
-					e.addJoinPlans(plan, stmt)
 					return plan
 				}
 			}
@@ -228,16 +212,12 @@ func (e *Executor) planSelect(stmt *ast.SelectStmt) *SelectPlan {
 	// 3. Try COUNT(*) optimization
 	if e.isCountStarOptimizable(stmt) {
 		plan.Type = PlanCountStar
-		plan.Extras = append(plan.Extras, "Using row count optimization")
-		e.addCommonExtras(plan, stmt)
 		return plan
 	}
 
 	// 4. Try MIN/MAX optimization
 	if e.isMinMaxOptimizable(stmt, info) {
 		plan.Type = PlanMinMax
-		plan.Extras = append(plan.Extras, "Using index for MIN/MAX")
-		e.addCommonExtras(plan, stmt)
 		return plan
 	}
 
@@ -268,8 +248,6 @@ func (e *Executor) planSelect(stmt *ast.SelectStmt) *SelectPlan {
 						}
 						plan.WhereIndexName = findIndexNameForScanParams(params, info, db)
 					}
-					e.planCoveringIndex(plan, stmt)
-					e.addCommonExtras(plan, stmt)
 					return plan
 				}
 			}
@@ -279,8 +257,6 @@ func (e *Executor) planSelect(stmt *ast.SelectStmt) *SelectPlan {
 			} else {
 				plan.Type = PlanStreamingFullScan
 			}
-			e.planCoveringIndex(plan, stmt)
-			e.addCommonExtras(plan, stmt)
 			return plan
 		}
 	}
@@ -292,10 +268,64 @@ func (e *Executor) planSelect(stmt *ast.SelectStmt) *SelectPlan {
 		plan.Type = PlanFullScan
 	}
 
-	e.planCoveringIndex(plan, stmt)
+	return plan
+}
+
+// enrichPlanForExplain populates display-only metadata on an existing SelectPlan.
+// This includes PossibleKeys, Extras, JoinPlans, WhereIndexName, and covering
+// index detection. It must be called only for EXPLAIN output, after planSelect.
+func (e *Executor) enrichPlanForExplain(plan *SelectPlan, stmt *ast.SelectStmt) {
+	if plan.Type == PlanSubquery {
+		plan.Extras = append(plan.Extras, "FROM subquery")
+		return
+	}
+
+	if plan.info == nil || plan.db == nil {
+		return
+	}
+
+	plan.PossibleKeys = collectPossibleKeys(plan.info, plan.db)
+
+	// Enrich WhereIndexName if not already set
+	if plan.WhereIndex != WhereNoIndex && plan.WhereIndexName == "" && plan.WhereIndex != WherePKLookup {
+		switch plan.WhereIndex {
+		case WhereIndexLookup, WhereIndexIn:
+			plan.WhereIndexName = findUsedIndexName(stmt.Where, plan.info, plan.db)
+		case WhereRangeScan:
+			plan.WhereIndexName = findUsedRangeIndexName(stmt.Where, plan.info, plan.db)
+		case WhereIndexMerge:
+			plan.Extras = append(plan.Extras, "Using union")
+		}
+	}
+
+	switch plan.Type {
+	case PlanIndexOrderScan:
+		if plan.IndexOrder != nil {
+			dir := "ASC"
+			if plan.IndexOrder.reverse {
+				dir = "DESC"
+			}
+			if plan.IndexOrder.fullOrder {
+				plan.Extras = append(plan.Extras, "Using index for ORDER BY ("+dir+")")
+			} else {
+				plan.Extras = append(plan.Extras, "Using index for partial ORDER BY ("+dir+")")
+			}
+		}
+		e.planCoveringIndex(plan, stmt)
+	case PlanGroupByIndex:
+		plan.Extras = append(plan.Extras, "Using index for GROUP BY")
+	case PlanCountStar:
+		plan.Extras = append(plan.Extras, "Using row count optimization")
+	case PlanMinMax:
+		plan.Extras = append(plan.Extras, "Using index for MIN/MAX")
+	case PlanStreamingIndex, PlanStreamingBatch, PlanStreamingFullScan:
+		e.planCoveringIndex(plan, stmt)
+	case PlanBatchIndex, PlanFullScan:
+		e.planCoveringIndex(plan, stmt)
+	}
+
 	e.addCommonExtras(plan, stmt)
 	e.addJoinPlans(plan, stmt)
-	return plan
 }
 
 // planWhereIndex determines which index (if any) can be used for the WHERE clause.
@@ -311,25 +341,21 @@ func (e *Executor) planWhereIndex(plan *SelectPlan, where ast.Expr, info *TableI
 	}
 	if keys, ok := e.tryIndexLookup(where, info); ok {
 		plan.WhereIndex = WhereIndexLookup
-		plan.WhereIndexName = findUsedIndexName(where, info, plan.db)
 		plan.batchKeys = keys
 		return
 	}
 	if keys, ok := e.tryIndexInLookup(where, info); ok {
 		plan.WhereIndex = WhereIndexIn
-		plan.WhereIndexName = findUsedIndexName(where, info, plan.db)
 		plan.batchKeys = keys
 		return
 	}
 	if keys, ok := e.tryIndexRangeScan(where, info); ok {
 		plan.WhereIndex = WhereRangeScan
-		plan.WhereIndexName = findUsedRangeIndexName(where, info, plan.db)
 		plan.batchKeys = keys
 		return
 	}
 	if keys, ok := e.tryIndexMergeUnion(where, info); ok {
 		plan.WhereIndex = WhereIndexMerge
-		plan.Extras = append(plan.Extras, "Using union")
 		plan.batchKeys = keys
 		return
 	}
@@ -438,6 +464,10 @@ func (e *Executor) addCommonExtras(plan *SelectPlan, stmt *ast.SelectStmt) {
 
 // addJoinPlans builds JoinPlan entries for each JOIN clause.
 func (e *Executor) addJoinPlans(plan *SelectPlan, stmt *ast.SelectStmt) {
+	if len(stmt.Joins) == 0 {
+		return
+	}
+
 	// Build joinTableInfo for the driving (FROM) table
 	fromInfo := &joinTableInfo{
 		tableName:     strings.ToLower(stmt.TableName),

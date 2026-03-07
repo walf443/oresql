@@ -40,6 +40,7 @@ func (e *Executor) executeExplain(stmt *ast.ExplainStmt) (*Result, error) {
 // explainSelect builds explain rows for a SELECT statement using planSelect.
 func (e *Executor) explainSelect(stmt *ast.SelectStmt) []Row {
 	plan := e.planSelect(stmt)
+	e.enrichPlanForExplain(plan, stmt)
 	return planToRows(plan)
 }
 

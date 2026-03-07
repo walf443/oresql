@@ -427,7 +427,12 @@ func (e *Executor) addCommonExtras(plan *SelectPlan, stmt *ast.SelectStmt) {
 		plan.Extras = append(plan.Extras, "Using distinct")
 	}
 	if stmt.Limit != nil {
-		plan.Extras = append(plan.Extras, "Using limit")
+		switch plan.Type {
+		case PlanStreamingIndex, PlanStreamingBatch, PlanStreamingFullScan, PlanIndexOrderScan:
+			plan.Extras = append(plan.Extras, "Using streaming limit")
+		default:
+			plan.Extras = append(plan.Extras, "Using limit")
+		}
 	}
 }
 

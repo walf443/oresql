@@ -883,8 +883,8 @@ func TestIndexOrderByLimit(t *testing.T) {
 		assert.Equal(t, exp, result.Rows[i][0], "DESC row %d: expected %d", i, exp)
 	}
 
-	// DESC + LIMIT on nullable column uses index (NULLs sort last naturally)
-	assertExplain(t, exec, qDesc, []planRow{{Type: "index scan", Key: "idx_val", Extra: "Using index for ORDER BY (DESC)"}})
+	// DESC + LIMIT on nullable column uses index with streaming limit
+	assertExplain(t, exec, qDesc, []planRow{{Type: "index scan", Key: "idx_val", Extra: "Using streaming limit"}})
 }
 
 func TestIndexOrderByWithWhereRange(t *testing.T) {
@@ -1103,7 +1103,7 @@ func TestIndexScanStreamingEquality(t *testing.T) {
 		assert.Equal(t, int64(3), row[2], "all rows should have category=3")
 	}
 
-	assertExplain(t, exec, q, []planRow{{Type: "ref", Key: "idx_cat"}})
+	assertExplain(t, exec, q, []planRow{{Type: "ref", Key: "idx_cat", Extra: "Using streaming limit"}})
 }
 
 func TestIndexScanStreamingRange(t *testing.T) {
@@ -1123,7 +1123,7 @@ func TestIndexScanStreamingRange(t *testing.T) {
 		assert.Greater(t, v, int64(50), "all rows should have val > 50")
 	}
 
-	assertExplain(t, exec, q, []planRow{{Type: "range", Key: "idx_val"}})
+	assertExplain(t, exec, q, []planRow{{Type: "range", Key: "idx_val", Extra: "Using streaming limit"}})
 }
 
 func TestIndexScanStreamingPostFilter(t *testing.T) {
@@ -1135,13 +1135,16 @@ func TestIndexScanStreamingPostFilter(t *testing.T) {
 	}
 
 	// category = 3 AND val > 500 LIMIT 5: index on category, post-filter on val
-	result := run(t, exec, "SELECT id, val, category FROM t WHERE category = 3 AND val > 500 LIMIT 5")
+	q := "SELECT id, val, category FROM t WHERE category = 3 AND val > 500 LIMIT 5"
+	result := run(t, exec, q)
 	require.Len(t, result.Rows, 5, "expected 5 rows")
 	for _, row := range result.Rows {
 		assert.Equal(t, int64(3), row[2], "all rows should have category=3")
 		v := row[1].(int64)
 		assert.Greater(t, v, int64(500), "all rows should have val > 500")
 	}
+
+	assertExplain(t, exec, q, []planRow{{Extra: "Using streaming limit"}})
 }
 
 func TestIndexScanStreamingOffsetLimit(t *testing.T) {
@@ -1154,8 +1157,11 @@ func TestIndexScanStreamingOffsetLimit(t *testing.T) {
 
 	// category = 1 rows: 1,4,7,10,13,16,19,22,25,28,31,34,37,40,43,46,49
 	// OFFSET 5 LIMIT 3 should skip first 5 and return next 3
-	result := run(t, exec, "SELECT id FROM t WHERE category = 1 LIMIT 3 OFFSET 5")
+	q := "SELECT id FROM t WHERE category = 1 LIMIT 3 OFFSET 5"
+	result := run(t, exec, q)
 	require.Len(t, result.Rows, 3, "expected 3 rows")
+
+	assertExplain(t, exec, q, []planRow{{Extra: "Using streaming limit"}})
 }
 
 func TestIndexScanStreamingDistinct(t *testing.T) {
@@ -1168,7 +1174,8 @@ func TestIndexScanStreamingDistinct(t *testing.T) {
 
 	// DISTINCT val WHERE category = 0 LIMIT 5
 	// category = 0 rows have val values: 0,5,0,5,... → distinct = {0, 5} (only 2 unique)
-	result := run(t, exec, "SELECT DISTINCT val FROM t WHERE category = 0 LIMIT 5")
+	q := "SELECT DISTINCT val FROM t WHERE category = 0 LIMIT 5"
+	result := run(t, exec, q)
 	require.LessOrEqual(t, len(result.Rows), 5, "at most 5 rows")
 	// Verify uniqueness
 	seen := make(map[int64]bool)
@@ -1177,6 +1184,8 @@ func TestIndexScanStreamingDistinct(t *testing.T) {
 		assert.False(t, seen[v], "duplicate val %d", v)
 		seen[v] = true
 	}
+
+	assertExplain(t, exec, q, []planRow{{Extra: "Using streaming limit"}})
 }
 
 func TestIndexScanStreamingINFallthrough(t *testing.T) {
@@ -1188,12 +1197,15 @@ func TestIndexScanStreamingINFallthrough(t *testing.T) {
 	}
 
 	// IN condition should fall through to batch path but still produce correct results
-	result := run(t, exec, "SELECT id, category FROM t WHERE category IN (1, 3) LIMIT 5")
+	q := "SELECT id, category FROM t WHERE category IN (1, 3) LIMIT 5"
+	result := run(t, exec, q)
 	require.Len(t, result.Rows, 5, "expected 5 rows")
 	for _, row := range result.Rows {
 		cat := row[1].(int64)
 		assert.True(t, cat == 1 || cat == 3, "category should be 1 or 3, got %d", cat)
 	}
+
+	assertExplain(t, exec, q, []planRow{{Extra: "Using streaming limit"}})
 }
 
 func TestMinWithIndex(t *testing.T) {

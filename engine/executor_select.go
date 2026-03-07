@@ -1397,61 +1397,6 @@ func (a *aggAccumulator) result() Value {
 	}
 }
 
-// tryGroupByIndexOptimization attempts to perform GROUP BY using an index-ordered scan
-// for streaming aggregation without a hash map. Returns (result, true) if applied.
-func (e *Executor) tryGroupByIndexOptimization(stmt *ast.SelectStmt) (*Result, bool) {
-	// Only single-column GROUP BY on IdentExpr
-	if len(stmt.GroupBy) != 1 {
-		return nil, false
-	}
-	gbIdent, ok := stmt.GroupBy[0].(*ast.IdentExpr)
-	if !ok {
-		return nil, false
-	}
-
-	// Guard conditions
-	if len(stmt.Joins) > 0 || stmt.FromSubquery != nil || stmt.TableAlias != "" {
-		return nil, false
-	}
-	if stmt.Having != nil || stmt.Distinct {
-		return nil, false
-	}
-	if hasWindowFunction(stmt.Columns) {
-		return nil, false
-	}
-	if containsSubquery(stmt.Where) {
-		return nil, false
-	}
-
-	db, err := e.resolveDatabase(stmt.DatabaseName)
-	if err != nil {
-		return nil, false
-	}
-	info, err := db.catalog.GetTable(stmt.TableName)
-	if err != nil {
-		return nil, false
-	}
-
-	gbCol, err := info.FindColumn(gbIdent.Name)
-	if err != nil {
-		return nil, false
-	}
-
-	isPK := gbCol.Index == info.PrimaryKeyCol
-	if !isPK {
-		idx := db.storage.LookupSingleColumnIndex(info.Name, gbCol.Index)
-		if idx == nil {
-			return nil, false
-		}
-	}
-
-	result, err := e.executeGroupByIndex(stmt, db, info)
-	if err != nil {
-		return nil, false
-	}
-	return result, true
-}
-
 // executeGroupByIndex executes GROUP BY using an index-ordered scan for streaming aggregation.
 // Caller must ensure the GROUP BY index optimization guards have passed.
 func (e *Executor) executeGroupByIndex(stmt *ast.SelectStmt, db *Database, info *TableInfo) (*Result, error) {
@@ -1678,24 +1623,6 @@ func buildAggAccumulator(fn string, call *ast.CallExpr, info *TableInfo) (*aggAc
 	}
 }
 
-// tryCountStarOptimization attempts to satisfy SELECT COUNT(*) / COUNT(literal) queries
-// using Storage.RowCount() (O(1)) instead of a full table scan (O(N)).
-// Returns (result, true) if optimization was applied, (nil, false) otherwise.
-func (e *Executor) tryCountStarOptimization(stmt *ast.SelectStmt) (*Result, bool) {
-	if !e.isCountStarOptimizable(stmt) {
-		return nil, false
-	}
-	db, err := e.resolveDatabase(stmt.DatabaseName)
-	if err != nil {
-		return nil, false
-	}
-	result, err := e.executeCountStar(stmt, db)
-	if err != nil {
-		return nil, false
-	}
-	return result, true
-}
-
 // executeCountStar executes a COUNT(*) query using RowCount().
 // Caller must ensure isCountStarOptimizable(stmt) is true.
 func (e *Executor) executeCountStar(stmt *ast.SelectStmt, db *Database) (*Result, error) {
@@ -1726,28 +1653,6 @@ func (e *Executor) executeCountStar(stmt *ast.SelectStmt, db *Database) (*Result
 		ColumnTypes: colTypes,
 		Rows:        []Row{resultRow},
 	}, nil
-}
-
-// tryMinMaxIndexOptimization attempts to satisfy SELECT MIN(col)/MAX(col) queries
-// using an index scan (O(log N)) instead of a full table scan (O(N)).
-// Returns (result, true) if optimization was applied, (nil, false) otherwise.
-func (e *Executor) tryMinMaxIndexOptimization(stmt *ast.SelectStmt) (*Result, bool) {
-	db, err := e.resolveDatabase(stmt.DatabaseName)
-	if err != nil {
-		return nil, false
-	}
-	info, err := db.catalog.GetTable(stmt.TableName)
-	if err != nil {
-		return nil, false
-	}
-	if !e.isMinMaxOptimizable(stmt, info) {
-		return nil, false
-	}
-	result, err := e.executeMinMax(stmt, db, info)
-	if err != nil {
-		return nil, false
-	}
-	return result, true
 }
 
 // executeMinMax executes a MIN/MAX query using index edge lookup.

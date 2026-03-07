@@ -15,10 +15,13 @@ func TestSelectWithIndexEquality(t *testing.T) {
 	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
 	run(t, exec, "CREATE INDEX idx_name ON users(name)")
 
-	result := run(t, exec, "SELECT * FROM users WHERE name = 'bob'")
+	q := "SELECT * FROM users WHERE name = 'bob'"
+	result := run(t, exec, q)
 	require.Len(t, result.Rows, 1, "expected 1 row")
 	assert.Equal(t, int64(2), result.Rows[0][0])
 	assert.Equal(t, "bob", result.Rows[0][1])
+
+	assertExplain(t, exec, q, []planRow{{Type: "ref", Key: "idx_name"}})
 }
 
 func TestSelectWithIndexNoMatch(t *testing.T) {
@@ -102,9 +105,12 @@ func TestIndexOnIntColumn(t *testing.T) {
 	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
 	run(t, exec, "CREATE INDEX idx_id ON users(id)")
 
-	result := run(t, exec, "SELECT * FROM users WHERE id = 2")
+	q := "SELECT * FROM users WHERE id = 2"
+	result := run(t, exec, q)
 	require.Len(t, result.Rows, 1, "expected 1 row")
 	assert.Equal(t, "bob", result.Rows[0][1])
+
+	assertExplain(t, exec, q, []planRow{{Type: "ref", Key: "idx_id"}})
 }
 
 func TestIndexOnFloatColumn(t *testing.T) {
@@ -170,9 +176,12 @@ func TestSelectWithCompositeIndex(t *testing.T) {
 	run(t, exec, "CREATE INDEX idx_name_age ON users(name, age)")
 
 	// Both columns in equality condition -> use composite index
-	result := run(t, exec, "SELECT * FROM users WHERE name = 'alice' AND age = 30")
+	q := "SELECT * FROM users WHERE name = 'alice' AND age = 30"
+	result := run(t, exec, q)
 	require.Len(t, result.Rows, 1, "expected 1 row")
 	assert.Equal(t, int64(1), result.Rows[0][0])
+
+	assertExplain(t, exec, q, []planRow{{Type: "ref", Key: "idx_name_age"}})
 }
 
 func TestSelectWithCompositeIndexPartialMatch(t *testing.T) {
@@ -184,8 +193,11 @@ func TestSelectWithCompositeIndexPartialMatch(t *testing.T) {
 	run(t, exec, "CREATE INDEX idx_name_age ON users(name, age)")
 
 	// Only one column -> composite index not used, falls back to full scan
-	result := run(t, exec, "SELECT * FROM users WHERE name = 'alice'")
+	q := "SELECT * FROM users WHERE name = 'alice'"
+	result := run(t, exec, q)
 	require.Len(t, result.Rows, 2, "expected 2 rows")
+
+	assertExplain(t, exec, q, []planRow{{Type: "full scan"}})
 }
 
 func TestCompositeIndexMaintainedOnInsert(t *testing.T) {
@@ -304,13 +316,16 @@ func TestSelectWithIndexRangeGt(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (4, 'd')")
 	run(t, exec, "INSERT INTO t VALUES (5, 'e')")
 
-	result := run(t, exec, "SELECT * FROM t WHERE id > 3")
+	q := "SELECT * FROM t WHERE id > 3"
+	result := run(t, exec, q)
 	require.Len(t, result.Rows, 2, "expected 2 rows")
 	ids := map[int64]bool{}
 	for _, row := range result.Rows {
 		ids[row[0].(int64)] = true
 	}
 	assert.True(t, ids[4] && ids[5], "expected ids 4 and 5, got %v", ids)
+
+	assertExplain(t, exec, q, []planRow{{Type: "range", Key: "idx_id"}})
 }
 
 func TestSelectWithIndexRangeGte(t *testing.T) {
@@ -380,13 +395,16 @@ func TestSelectWithIndexRangeBetween(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (4, 'd')")
 	run(t, exec, "INSERT INTO t VALUES (5, 'e')")
 
-	result := run(t, exec, "SELECT * FROM t WHERE id BETWEEN 2 AND 4")
+	q := "SELECT * FROM t WHERE id BETWEEN 2 AND 4"
+	result := run(t, exec, q)
 	require.Len(t, result.Rows, 3, "expected 3 rows")
 	ids := map[int64]bool{}
 	for _, row := range result.Rows {
 		ids[row[0].(int64)] = true
 	}
 	assert.True(t, ids[2] && ids[3] && ids[4], "expected ids 2,3,4, got %v", ids)
+
+	assertExplain(t, exec, q, []planRow{{Type: "range", Key: "idx_id"}})
 }
 
 func TestSelectWithIndexRangeCombined(t *testing.T) {
@@ -489,13 +507,16 @@ func TestSelectWithCompositeIndexRangeGt(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (2, 1, 'e')")
 	run(t, exec, "INSERT INTO t VALUES (2, 8, 'f')")
 
-	result := run(t, exec, "SELECT * FROM t WHERE col1 = 1 AND col2 > 5")
+	q := "SELECT * FROM t WHERE col1 = 1 AND col2 > 5"
+	result := run(t, exec, q)
 	require.Len(t, result.Rows, 2, "expected 2 rows")
 	col2s := map[int64]bool{}
 	for _, row := range result.Rows {
 		col2s[row[1].(int64)] = true
 	}
 	assert.True(t, col2s[7] && col2s[10], "expected col2 7 and 10, got %v", col2s)
+
+	assertExplain(t, exec, q, []planRow{{Type: "range"}})
 }
 
 func TestSelectWithCompositeIndexRangeBetween(t *testing.T) {
@@ -594,13 +615,16 @@ func TestSelectWithIndexIn(t *testing.T) {
 	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
 	run(t, exec, "CREATE INDEX idx_id ON users(id)")
 
-	result := run(t, exec, "SELECT * FROM users WHERE id IN (1, 3)")
+	q := "SELECT * FROM users WHERE id IN (1, 3)"
+	result := run(t, exec, q)
 	require.Len(t, result.Rows, 2, "expected 2 rows")
 	ids := map[int64]bool{}
 	for _, row := range result.Rows {
 		ids[row[0].(int64)] = true
 	}
 	assert.True(t, ids[1] && ids[3], "expected ids 1 and 3, got %v", ids)
+
+	assertExplain(t, exec, q, []planRow{{Type: "range"}})
 }
 
 func TestSelectWithIndexInNoMatch(t *testing.T) {
@@ -724,13 +748,16 @@ func TestSelectWhereLikeWithIndex(t *testing.T) {
 	run(t, exec, "INSERT INTO users VALUES (3, 'bob')")
 	run(t, exec, "INSERT INTO users VALUES (4, 'almond')")
 
-	result := run(t, exec, "SELECT * FROM users WHERE name LIKE 'al%'")
+	q := "SELECT * FROM users WHERE name LIKE 'al%'"
+	result := run(t, exec, q)
 	require.Len(t, result.Rows, 3, "expected 3 rows")
 	// Verify all returned rows start with "al"
 	for _, row := range result.Rows {
 		name := row[1].(string)
 		assert.Equal(t, "al", name[:2], "expected name starting with 'al', got %q", name)
 	}
+
+	assertExplain(t, exec, q, []planRow{{Type: "range", Key: "idx_name"}})
 }
 
 func TestSelectWhereLikeWithIndexNoPrefix(t *testing.T) {
@@ -742,9 +769,12 @@ func TestSelectWhereLikeWithIndexNoPrefix(t *testing.T) {
 	run(t, exec, "INSERT INTO users VALUES (3, 'charlie')")
 
 	// LIKE '%ice' has no prefix, so index should not be used, but results should be correct
-	result := run(t, exec, "SELECT * FROM users WHERE name LIKE '%ice'")
+	q := "SELECT * FROM users WHERE name LIKE '%ice'"
+	result := run(t, exec, q)
 	require.Len(t, result.Rows, 1, "expected 1 row")
 	assert.Equal(t, "alice", result.Rows[0][1])
+
+	assertExplain(t, exec, q, []planRow{{Type: "full scan"}})
 }
 
 func TestSelectWhereLikeWithIndexEscape(t *testing.T) {
@@ -787,13 +817,16 @@ func TestSelectWithOrIndexMerge(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (3, 30, 300)")
 	run(t, exec, "INSERT INTO t VALUES (4, 40, 100)")
 
-	result := run(t, exec, "SELECT * FROM t WHERE a = 10 OR b = 200")
+	q := "SELECT * FROM t WHERE a = 10 OR b = 200"
+	result := run(t, exec, q)
 	require.Len(t, result.Rows, 2, "expected 2 rows")
 	ids := map[int64]bool{}
 	for _, row := range result.Rows {
 		ids[row[0].(int64)] = true
 	}
 	assert.True(t, ids[1] && ids[2], "expected ids 1 and 2, got %v", ids)
+
+	assertExplain(t, exec, q, []planRow{{Type: "index merge"}})
 }
 
 func TestSelectWithOrIndexMergeOverlap(t *testing.T) {
@@ -825,13 +858,16 @@ func TestSelectWithOrIndexMergeFallback(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (3, 30, 100)")
 
 	// b has no index → should fallback to full scan, but result is still correct
-	result := run(t, exec, "SELECT * FROM t WHERE a = 10 OR b = 100")
+	q := "SELECT * FROM t WHERE a = 10 OR b = 100"
+	result := run(t, exec, q)
 	require.Len(t, result.Rows, 2, "expected 2 rows via full scan fallback")
 	ids := map[int64]bool{}
 	for _, row := range result.Rows {
 		ids[row[0].(int64)] = true
 	}
 	assert.True(t, ids[1] && ids[3], "expected ids 1 and 3, got %v", ids)
+
+	assertExplain(t, exec, q, []planRow{{Type: "full scan"}})
 }
 
 func TestSelectWithOrIndexMergeThreeBranches(t *testing.T) {

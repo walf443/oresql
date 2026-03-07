@@ -798,12 +798,15 @@ func TestIndexOrderByAsc(t *testing.T) {
 		run(t, exec, fmt.Sprintf("INSERT INTO t VALUES (%d, %d)", i, (11-i)*10))
 	}
 
-	result := run(t, exec, "SELECT id, val FROM t ORDER BY val ASC")
+	q := "SELECT id, val FROM t ORDER BY val ASC"
+	result := run(t, exec, q)
 	require.Len(t, result.Rows, 10, "expected 10 rows")
 	for i := 0; i < 10; i++ {
 		expected := int64((i + 1) * 10)
 		assert.Equal(t, expected, result.Rows[i][1], "row %d: expected val=%d", i, expected)
 	}
+
+	assertExplain(t, exec, q, []planRow{{Type: "index scan", Key: "idx_val"}})
 }
 
 func TestIndexOrderByDesc(t *testing.T) {
@@ -830,18 +833,24 @@ func TestPKOrderByAscDesc(t *testing.T) {
 	}
 
 	// ASC
-	result := run(t, exec, "SELECT id FROM t ORDER BY id ASC")
+	qAsc := "SELECT id FROM t ORDER BY id ASC"
+	result := run(t, exec, qAsc)
 	expected := []int64{1, 2, 3, 4, 5}
 	for i, exp := range expected {
 		assert.Equal(t, exp, result.Rows[i][0], "ASC[%d]: expected %d", i, exp)
 	}
 
+	assertExplain(t, exec, qAsc, []planRow{{Type: "index scan", Key: "PRIMARY"}})
+
 	// DESC
-	result = run(t, exec, "SELECT id FROM t ORDER BY id DESC")
+	qDesc := "SELECT id FROM t ORDER BY id DESC"
+	result = run(t, exec, qDesc)
 	expected = []int64{5, 4, 3, 2, 1}
 	for i, exp := range expected {
 		assert.Equal(t, exp, result.Rows[i][0], "DESC[%d]: expected %d", i, exp)
 	}
+
+	assertExplain(t, exec, qDesc, []planRow{{Type: "index scan", Key: "PRIMARY"}})
 }
 
 func TestIndexOrderByLimit(t *testing.T) {
@@ -1059,11 +1068,14 @@ func TestIndexScanStreamingEquality(t *testing.T) {
 	}
 
 	// category = 3 has 20 rows (3,8,13,...,98), LIMIT 10 should return first 10
-	result := run(t, exec, "SELECT id, val, category FROM t WHERE category = 3 LIMIT 10")
+	q := "SELECT id, val, category FROM t WHERE category = 3 LIMIT 10"
+	result := run(t, exec, q)
 	require.Len(t, result.Rows, 10, "expected 10 rows")
 	for _, row := range result.Rows {
 		assert.Equal(t, int64(3), row[2], "all rows should have category=3")
 	}
+
+	assertExplain(t, exec, q, []planRow{{Type: "ref", Key: "idx_cat"}})
 }
 
 func TestIndexScanStreamingRange(t *testing.T) {
@@ -1075,12 +1087,15 @@ func TestIndexScanStreamingRange(t *testing.T) {
 	}
 
 	// val > 50 LIMIT 3 should return 3 rows with val > 50
-	result := run(t, exec, "SELECT id, val FROM t WHERE val > 50 LIMIT 3")
+	q := "SELECT id, val FROM t WHERE val > 50 LIMIT 3"
+	result := run(t, exec, q)
 	require.Len(t, result.Rows, 3, "expected 3 rows")
 	for _, row := range result.Rows {
 		v := row[1].(int64)
 		assert.Greater(t, v, int64(50), "all rows should have val > 50")
 	}
+
+	assertExplain(t, exec, q, []planRow{{Type: "range", Key: "idx_val"}})
 }
 
 func TestIndexScanStreamingPostFilter(t *testing.T) {
@@ -1161,10 +1176,13 @@ func TestMinWithIndex(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (2, 10)")
 	run(t, exec, "INSERT INTO t VALUES (3, 20)")
 
-	result := run(t, exec, "SELECT MIN(val) FROM t")
+	q := "SELECT MIN(val) FROM t"
+	result := run(t, exec, q)
 	assert.Equal(t, "MIN(val)", result.Columns[0])
 	require.Len(t, result.Rows, 1)
 	assert.Equal(t, int64(10), result.Rows[0][0])
+
+	assertExplain(t, exec, q, []planRow{{Type: "index"}})
 }
 
 func TestMaxWithIndex(t *testing.T) {
@@ -1175,10 +1193,13 @@ func TestMaxWithIndex(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (2, 10)")
 	run(t, exec, "INSERT INTO t VALUES (3, 20)")
 
-	result := run(t, exec, "SELECT MAX(val) FROM t")
+	q := "SELECT MAX(val) FROM t"
+	result := run(t, exec, q)
 	assert.Equal(t, "MAX(val)", result.Columns[0])
 	require.Len(t, result.Rows, 1)
 	assert.Equal(t, int64(30), result.Rows[0][0])
+
+	assertExplain(t, exec, q, []planRow{{Type: "index"}})
 }
 
 // --- COUNT(*) RowCount optimization tests ---
@@ -1190,10 +1211,13 @@ func TestCountStarOptimization(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (2, 20)")
 	run(t, exec, "INSERT INTO t VALUES (3, 30)")
 
-	result := run(t, exec, "SELECT COUNT(*) FROM t")
+	q := "SELECT COUNT(*) FROM t"
+	result := run(t, exec, q)
 	assert.Equal(t, "COUNT(*)", result.Columns[0])
 	require.Len(t, result.Rows, 1)
 	assert.Equal(t, int64(3), result.Rows[0][0])
+
+	assertExplain(t, exec, q, []planRow{{Type: "row count"}})
 }
 
 func TestCountStarEmpty(t *testing.T) {
@@ -1280,16 +1304,22 @@ func TestMinMaxWithPK(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (8, 80)")
 
 	// MIN on PK column
-	result := run(t, exec, "SELECT MIN(id) FROM t")
+	qMin := "SELECT MIN(id) FROM t"
+	result := run(t, exec, qMin)
 	assert.Equal(t, "MIN(id)", result.Columns[0])
 	require.Len(t, result.Rows, 1)
 	assert.Equal(t, int64(2), result.Rows[0][0])
 
+	assertExplain(t, exec, qMin, []planRow{{Type: "index"}})
+
 	// MAX on PK column
-	result = run(t, exec, "SELECT MAX(id) FROM t")
+	qMax := "SELECT MAX(id) FROM t"
+	result = run(t, exec, qMax)
 	assert.Equal(t, "MAX(id)", result.Columns[0])
 	require.Len(t, result.Rows, 1)
 	assert.Equal(t, int64(8), result.Rows[0][0])
+
+	assertExplain(t, exec, qMax, []planRow{{Type: "index"}})
 }
 
 func TestMinMaxWithNulls(t *testing.T) {
@@ -1356,13 +1386,19 @@ func TestMinMaxNoIndex(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (2, 10)")
 	run(t, exec, "INSERT INTO t VALUES (3, 20)")
 
-	result := run(t, exec, "SELECT MIN(val) FROM t")
+	qMin := "SELECT MIN(val) FROM t"
+	result := run(t, exec, qMin)
 	require.Len(t, result.Rows, 1)
 	assert.Equal(t, int64(10), result.Rows[0][0])
 
-	result = run(t, exec, "SELECT MAX(val) FROM t")
+	assertExplain(t, exec, qMin, []planRow{{Type: "full scan"}})
+
+	qMax := "SELECT MAX(val) FROM t"
+	result = run(t, exec, qMax)
 	require.Len(t, result.Rows, 1)
 	assert.Equal(t, int64(30), result.Rows[0][0])
+
+	assertExplain(t, exec, qMax, []planRow{{Type: "full scan"}})
 }
 
 // --- GROUP BY Index Optimization Tests ---
@@ -1395,7 +1431,8 @@ func TestGroupBySecondaryIndex(t *testing.T) {
 	run(t, exec, "INSERT INTO orders VALUES (4, 3, 300)")
 	run(t, exec, "INSERT INTO orders VALUES (5, 2, 250)")
 
-	result := run(t, exec, "SELECT category, COUNT(*) FROM orders GROUP BY category")
+	q := "SELECT category, COUNT(*) FROM orders GROUP BY category"
+	result := run(t, exec, q)
 	require.Len(t, result.Rows, 3)
 
 	// Collect results into a map for order-independent assertion
@@ -1408,6 +1445,8 @@ func TestGroupBySecondaryIndex(t *testing.T) {
 	assert.Equal(t, int64(2), counts[1])
 	assert.Equal(t, int64(2), counts[2])
 	assert.Equal(t, int64(1), counts[3])
+
+	assertExplain(t, exec, q, []planRow{{Type: "index scan"}})
 }
 
 func TestGroupByIndexWithSum(t *testing.T) {
@@ -1594,7 +1633,8 @@ func TestGroupByNoIndex(t *testing.T) {
 	run(t, exec, "INSERT INTO t VALUES (2, 2, 20)")
 	run(t, exec, "INSERT INTO t VALUES (3, 1, 30)")
 
-	result := run(t, exec, "SELECT grp, COUNT(*) FROM t GROUP BY grp")
+	q := "SELECT grp, COUNT(*) FROM t GROUP BY grp"
+	result := run(t, exec, q)
 	require.Len(t, result.Rows, 2)
 
 	counts := make(map[int64]int64)
@@ -1603,6 +1643,8 @@ func TestGroupByNoIndex(t *testing.T) {
 	}
 	assert.Equal(t, int64(2), counts[1])
 	assert.Equal(t, int64(1), counts[2])
+
+	assertExplain(t, exec, q, []planRow{{Type: "full scan"}})
 }
 
 func TestGroupByWithHaving(t *testing.T) {

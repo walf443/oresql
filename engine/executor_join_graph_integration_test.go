@@ -23,15 +23,20 @@ func TestThreeTableJoinWithIndex(t *testing.T) {
 	run(t, exec, "INSERT INTO items VALUES (101, 10, 'gadget')")
 	run(t, exec, "INSERT INTO items VALUES (200, 20, 'doohickey')")
 
-	result := run(t, exec, `
-		SELECT u.name, o.amount, i.product
+	q := `SELECT u.name, o.amount, i.product
 		FROM users u
 		INNER JOIN orders o ON u.id = o.user_id
 		INNER JOIN items i ON o.id = i.order_id
-		ORDER BY i.product
-	`)
+		ORDER BY i.product`
+	result := run(t, exec, q)
 
 	require.Len(t, result.Rows, 3, "expected 3 rows from three-table join")
+
+	assertExplain(t, exec, q, []planRow{
+		{Table: "users", Type: "full scan"},
+		{Table: "orders", Type: "full scan"},
+		{Table: "items", Type: "full scan"},
+	})
 
 	// Sorted by product: doohickey, gadget, widget
 	expected := []struct {
@@ -156,15 +161,21 @@ func TestFourTableJoin(t *testing.T) {
 	run(t, exec, "INSERT INTO items VALUES (100, 10, 1)")
 	run(t, exec, "INSERT INTO products VALUES (1, 'widget')")
 
-	result := run(t, exec, `
-		SELECT c.name, p.name
+	q := `SELECT c.name, p.name
 		FROM customers c
 		INNER JOIN orders o ON c.id = o.customer_id
 		INNER JOIN items i ON o.id = i.order_id
-		INNER JOIN products p ON i.product_id = p.id
-	`)
+		INNER JOIN products p ON i.product_id = p.id`
+	result := run(t, exec, q)
 
 	require.Len(t, result.Rows, 1, "expected 1 row from four-table join")
+
+	assertExplain(t, exec, q, []planRow{
+		{Table: "customers", Type: "full scan"},
+		{Table: "orders", Type: "full scan"},
+		{Table: "items", Type: "full scan"},
+		{Table: "products", Type: "full scan"},
+	})
 	assert.Equal(t, "alice", result.Rows[0][0])
 	assert.Equal(t, "widget", result.Rows[0][1])
 }

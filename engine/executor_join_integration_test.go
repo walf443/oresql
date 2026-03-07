@@ -17,12 +17,19 @@ func TestInnerJoinBasic(t *testing.T) {
 	run(t, exec, "INSERT INTO orders VALUES (10, 1, 'laptop')")
 	run(t, exec, "INSERT INTO orders VALUES (20, 2, 'phone')")
 
-	result := run(t, exec, "SELECT users.name, orders.product FROM users INNER JOIN orders ON users.id = orders.user_id")
+	q := "SELECT users.name, orders.product FROM users INNER JOIN orders ON users.id = orders.user_id"
+	result := run(t, exec, q)
 	require.Len(t, result.Rows, 2, "expected 2 rows")
 	assert.Equal(t, "alice", result.Rows[0][0])
 	assert.Equal(t, "laptop", result.Rows[0][1])
 	assert.Equal(t, "bob", result.Rows[1][0])
 	assert.Equal(t, "phone", result.Rows[1][1])
+
+	// No index on join column → both tables use full scan
+	assertExplain(t, exec, q, []planRow{
+		{Table: "users", Type: "full scan"},
+		{Table: "orders", Type: "full scan"},
+	})
 }
 
 func TestInnerJoinNoMatch(t *testing.T) {
@@ -254,12 +261,18 @@ func TestLeftJoinWithIndex(t *testing.T) {
 	run(t, exec, "INSERT INTO users VALUES (2, 'bob')")
 	run(t, exec, "INSERT INTO orders VALUES (10, 1, 'laptop')")
 
-	result := run(t, exec, "SELECT users.name, orders.product FROM users LEFT JOIN orders ON users.id = orders.user_id ORDER BY users.id")
+	q := "SELECT users.name, orders.product FROM users LEFT JOIN orders ON users.id = orders.user_id ORDER BY users.id"
+	result := run(t, exec, q)
 	require.Len(t, result.Rows, 2, "expected 2 rows")
 	assert.Equal(t, "alice", result.Rows[0][0])
 	assert.Equal(t, "laptop", result.Rows[0][1])
 	assert.Equal(t, "bob", result.Rows[1][0])
 	assert.Nil(t, result.Rows[1][1])
+
+	assertExplain(t, exec, q, []planRow{
+		{Table: "users", Type: "full scan"},
+		{Table: "orders", Type: "full scan"},
+	})
 }
 
 func TestLeftJoinWithAlias(t *testing.T) {

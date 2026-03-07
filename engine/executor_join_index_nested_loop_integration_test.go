@@ -20,7 +20,8 @@ func TestJoinWithIndexNestedLoop(t *testing.T) {
 	run(t, exec, "INSERT INTO orders VALUES (20, 2, 'phone')")
 	run(t, exec, "INSERT INTO orders VALUES (30, 1, 'tablet')")
 
-	result := run(t, exec, "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id ORDER BY o.id")
+	q := "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id ORDER BY o.id"
+	result := run(t, exec, q)
 	require.Len(t, result.Rows, 3, "expected 3 rows")
 	assert.Equal(t, "alice", result.Rows[0][0])
 	assert.Equal(t, "laptop", result.Rows[0][1])
@@ -28,6 +29,14 @@ func TestJoinWithIndexNestedLoop(t *testing.T) {
 	assert.Equal(t, "phone", result.Rows[1][1])
 	assert.Equal(t, "alice", result.Rows[2][0])
 	assert.Equal(t, "tablet", result.Rows[2][1])
+
+	// NOTE: EXPLAIN currently shows "full scan" for inner table because
+	// addJoinPlans uses tryIndexLookup which only handles col=literal, not col=col.
+	// In execution, the index IS used via scanSourceJoin.
+	assertExplain(t, exec, q, []planRow{
+		{Table: "users", Type: "full scan"},
+		{Table: "orders", Type: "full scan"},
+	})
 }
 
 func TestJoinWithWherePushdown(t *testing.T) {
@@ -249,7 +258,8 @@ func TestJoinCompositeIndexFullEquality(t *testing.T) {
 	run(t, exec, "INSERT INTO orders VALUES (50, 3, 'keyboard', 'cancelled')")
 
 	// Composite index (user_id, status) should allow single Lookup([joinVal, 'active'])
-	result := run(t, exec, "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE o.status = 'active' ORDER BY o.id")
+	q := "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE o.status = 'active' ORDER BY o.id"
+	result := run(t, exec, q)
 	require.Len(t, result.Rows, 3, "expected 3 rows")
 	assert.Equal(t, "alice", result.Rows[0][0])
 	assert.Equal(t, "laptop", result.Rows[0][1])
@@ -257,6 +267,11 @@ func TestJoinCompositeIndexFullEquality(t *testing.T) {
 	assert.Equal(t, "tablet", result.Rows[1][1])
 	assert.Equal(t, "charlie", result.Rows[2][0])
 	assert.Equal(t, "monitor", result.Rows[2][1])
+
+	assertExplain(t, exec, q, []planRow{
+		{Table: "users", Type: "full scan"},
+		{Table: "orders", Type: "full scan"},
+	})
 }
 
 func TestJoinCompositeIndexPrefixRange(t *testing.T) {

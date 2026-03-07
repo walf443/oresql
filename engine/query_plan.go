@@ -211,6 +211,11 @@ func (e *Executor) planSelect(stmt *ast.SelectStmt) *SelectPlan {
 				idx := db.storage.LookupSingleColumnIndex(info.Name, col.Index)
 				if isPK || idx != nil {
 					plan.Type = PlanGroupByIndex
+					if isPK {
+						plan.WhereIndexName = "PRIMARY"
+					} else {
+						plan.WhereIndexName = idx.GetInfo().Name
+					}
 					plan.Extras = append(plan.Extras, "Using index for GROUP BY")
 					e.addCommonExtras(plan, stmt)
 					e.addJoinPlans(plan, stmt)

@@ -1441,12 +1441,15 @@ func TestGroupByIndexOptimization(t *testing.T) {
 	run(t, exec, "INSERT INTO orders VALUES (5, 2, 250)")
 
 	// GROUP BY PK column with COUNT(*)
-	result := run(t, exec, "SELECT id, COUNT(*) FROM orders GROUP BY id")
+	q := "SELECT id, COUNT(*) FROM orders GROUP BY id"
+	result := run(t, exec, q)
 	require.Len(t, result.Rows, 5)
 	// Each id appears once, so COUNT(*) = 1 for each
 	for _, row := range result.Rows {
 		assert.Equal(t, int64(1), row[1])
 	}
+
+	assertExplain(t, exec, q, []planRow{{Type: "index scan", Key: "PRIMARY", Extra: "Using index for GROUP BY"}})
 }
 
 func TestGroupBySecondaryIndex(t *testing.T) {
@@ -1474,7 +1477,7 @@ func TestGroupBySecondaryIndex(t *testing.T) {
 	assert.Equal(t, int64(2), counts[2])
 	assert.Equal(t, int64(1), counts[3])
 
-	assertExplain(t, exec, q, []planRow{{Type: "index scan"}})
+	assertExplain(t, exec, q, []planRow{{Type: "index scan", Key: "idx_category", Extra: "Using index for GROUP BY"}})
 }
 
 func TestGroupByIndexWithSum(t *testing.T) {
@@ -1486,7 +1489,8 @@ func TestGroupByIndexWithSum(t *testing.T) {
 	run(t, exec, "INSERT INTO orders VALUES (3, 1, 150)")
 	run(t, exec, "INSERT INTO orders VALUES (4, 2, 250)")
 
-	result := run(t, exec, "SELECT category, SUM(amount) FROM orders GROUP BY category")
+	q := "SELECT category, SUM(amount) FROM orders GROUP BY category"
+	result := run(t, exec, q)
 	require.Len(t, result.Rows, 2)
 
 	sums := make(map[int64]int64)
@@ -1495,6 +1499,8 @@ func TestGroupByIndexWithSum(t *testing.T) {
 	}
 	assert.Equal(t, int64(250), sums[1])
 	assert.Equal(t, int64(450), sums[2])
+
+	assertExplain(t, exec, q, []planRow{{Type: "index scan", Key: "idx_category", Extra: "Using index for GROUP BY"}})
 }
 
 func TestGroupByIndexWithAvg(t *testing.T) {
@@ -1505,7 +1511,8 @@ func TestGroupByIndexWithAvg(t *testing.T) {
 	run(t, exec, "INSERT INTO orders VALUES (2, 2, 200)")
 	run(t, exec, "INSERT INTO orders VALUES (3, 1, 300)")
 
-	result := run(t, exec, "SELECT category, AVG(amount) FROM orders GROUP BY category")
+	q := "SELECT category, AVG(amount) FROM orders GROUP BY category"
+	result := run(t, exec, q)
 	require.Len(t, result.Rows, 2)
 
 	avgs := make(map[int64]float64)
@@ -1514,6 +1521,8 @@ func TestGroupByIndexWithAvg(t *testing.T) {
 	}
 	assert.InDelta(t, 200.0, avgs[1], 0.001)
 	assert.InDelta(t, 200.0, avgs[2], 0.001)
+
+	assertExplain(t, exec, q, []planRow{{Type: "index scan", Key: "idx_category", Extra: "Using index for GROUP BY"}})
 }
 
 func TestGroupByIndexWithMinMax(t *testing.T) {
@@ -1525,7 +1534,8 @@ func TestGroupByIndexWithMinMax(t *testing.T) {
 	run(t, exec, "INSERT INTO orders VALUES (3, 2, 200)")
 	run(t, exec, "INSERT INTO orders VALUES (4, 2, 400)")
 
-	result := run(t, exec, "SELECT category, MIN(amount), MAX(amount) FROM orders GROUP BY category")
+	q := "SELECT category, MIN(amount), MAX(amount) FROM orders GROUP BY category"
+	result := run(t, exec, q)
 	require.Len(t, result.Rows, 2)
 
 	type minMax struct{ min, max int64 }
@@ -1537,6 +1547,8 @@ func TestGroupByIndexWithMinMax(t *testing.T) {
 	assert.Equal(t, int64(300), mm[1].max)
 	assert.Equal(t, int64(200), mm[2].min)
 	assert.Equal(t, int64(400), mm[2].max)
+
+	assertExplain(t, exec, q, []planRow{{Type: "index scan", Key: "idx_category", Extra: "Using index for GROUP BY"}})
 }
 
 func TestGroupByIndexWithCountCol(t *testing.T) {
@@ -1672,7 +1684,7 @@ func TestGroupByNoIndex(t *testing.T) {
 	assert.Equal(t, int64(2), counts[1])
 	assert.Equal(t, int64(1), counts[2])
 
-	assertExplain(t, exec, q, []planRow{{Type: "full scan"}})
+	assertExplain(t, exec, q, []planRow{{Type: "full scan", Extra: "Using group by"}})
 }
 
 func TestGroupByWithHaving(t *testing.T) {

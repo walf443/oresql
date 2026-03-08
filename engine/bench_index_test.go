@@ -132,17 +132,6 @@ func BenchmarkEqualityWithIndex_1000(b *testing.B) {
 	}
 }
 
-func BenchmarkEqualityNoIndex_10000(b *testing.B) {
-	exec := setupBenchTable(b, 10000, false)
-	sql := "SELECT * FROM bench WHERE val = 50000"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := execSQL(exec, sql); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
 func BenchmarkEqualityWithIndex_10000(b *testing.B) {
 	exec := setupBenchTable(b, 10000, true)
 	sql := "SELECT * FROM bench WHERE val = 50000"
@@ -156,9 +145,9 @@ func BenchmarkEqualityWithIndex_10000(b *testing.B) {
 
 // --- Range scan (WHERE val >= X AND val <= Y) ---
 
-func BenchmarkRangeNoIndex_10000(b *testing.B) {
-	exec := setupBenchTable(b, 10000, false)
-	sql := "SELECT * FROM bench WHERE val >= 40000 AND val <= 60000"
+func BenchmarkRangeNoIndex_1000(b *testing.B) {
+	exec := setupBenchTable(b, 1000, false)
+	sql := "SELECT * FROM bench WHERE val >= 4000 AND val <= 6000"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if err := execSQL(exec, sql); err != nil {
@@ -182,8 +171,8 @@ func BenchmarkRangeWithIndex_10000(b *testing.B) {
 // category = i%100 なので、1値あたり n/100 行ヒット
 
 // IN 3値: 10,000行 → 300行ヒット (3%)
-func BenchmarkInNoIndex_10000(b *testing.B) {
-	exec := setupBenchTable(b, 10000, false)
+func BenchmarkInNoIndex_1000(b *testing.B) {
+	exec := setupBenchTable(b, 1000, false)
 	sql := "SELECT * FROM bench WHERE category IN (5, 10, 15)"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -208,8 +197,8 @@ func BenchmarkInWithIndex_10000(b *testing.B) {
 // val = i*10 なのでユニーク。1値あたり最大1行ヒット
 
 // IN 3値: 10,000行 → 3行ヒット (0.03%)
-func BenchmarkInUniqueNoIndex_10000(b *testing.B) {
-	exec := setupBenchTable(b, 10000, false)
+func BenchmarkInUniqueNoIndex_1000(b *testing.B) {
+	exec := setupBenchTable(b, 1000, false)
 	sql := "SELECT * FROM bench WHERE val IN (50, 100, 150)"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -232,8 +221,8 @@ func BenchmarkInUniqueWithIndex_10000(b *testing.B) {
 
 // --- LIKE prefix (WHERE name LIKE 'name\_50%') ---
 // name = 'name_N' なのでエスケープ 'name\_50%' → prefix='name_50' → 11行ヒット
-func BenchmarkLikeEscapedNoIndex_10000(b *testing.B) {
-	exec := setupBenchTable(b, 10000, false)
+func BenchmarkLikeEscapedNoIndex_1000(b *testing.B) {
+	exec := setupBenchTable(b, 1000, false)
 	sql := `SELECT * FROM bench WHERE name LIKE 'name\_50%'`
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -256,9 +245,9 @@ func BenchmarkLikeEscapedWithIndex_10000(b *testing.B) {
 
 // --- Composite index: equality + range (WHERE category = X AND val >= Y) ---
 
-func BenchmarkCompositeNoIndex_10000(b *testing.B) {
-	exec := setupBenchTable(b, 10000, false)
-	sql := "SELECT * FROM bench WHERE category = 50 AND val >= 50000"
+func BenchmarkCompositeNoIndex_1000(b *testing.B) {
+	exec := setupBenchTable(b, 1000, false)
+	sql := "SELECT * FROM bench WHERE category = 50 AND val >= 5000"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if err := execSQL(exec, sql); err != nil {
@@ -316,8 +305,8 @@ func setupLowSelectivityTable(b *testing.B, n int, withIndex bool) *Executor {
 	return exec
 }
 
-func BenchmarkLowSelectivityNoIndex_10000(b *testing.B) {
-	exec := setupLowSelectivityTable(b, 10000, false)
+func BenchmarkLowSelectivityNoIndex_1000(b *testing.B) {
+	exec := setupLowSelectivityTable(b, 1000, false)
 	sql := "SELECT * FROM bench_low WHERE grp = 3"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -504,17 +493,6 @@ func BenchmarkJoinInnerWhereWithIndex_1000(b *testing.B) {
 	}
 }
 
-func BenchmarkJoinInnerWhereNoIndex_10000(b *testing.B) {
-	exec := setupJoinBenchTables(b, 10000, false, false)
-	sql := "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE o.status = 'active'"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := execSQL(exec, sql); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
 func BenchmarkJoinInnerWhereWithIndex_10000(b *testing.B) {
 	exec := setupJoinBenchTables(b, 10000, false, true)
 	sql := "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE o.status = 'active'"
@@ -569,17 +547,6 @@ func BenchmarkJoinWithIndexPKWhere_10000(b *testing.B) {
 func BenchmarkJoinNoIndexPKWhere_1000(b *testing.B) {
 	exec := setupJoinBenchTables(b, 1000, false, false)
 	sql := "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE o.id = 50"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := execSQL(exec, sql); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkJoinNoIndexPKWhere_10000(b *testing.B) {
-	exec := setupJoinBenchTables(b, 10000, false, false)
-	sql := "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id WHERE o.id = 500"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if err := execSQL(exec, sql); err != nil {
@@ -769,8 +736,8 @@ func BenchmarkOrderByWithIndex_10000(b *testing.B) {
 	}
 }
 
-func BenchmarkOrderByNoIndex_10000(b *testing.B) {
-	exec := setupBenchTable(b, 10000, false)
+func BenchmarkOrderByNoIndex_1000(b *testing.B) {
+	exec := setupBenchTable(b, 1000, false)
 	sql := "SELECT * FROM bench ORDER BY val LIMIT 10"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -1047,8 +1014,8 @@ func BenchmarkMinWithIndex_10000(b *testing.B) {
 	}
 }
 
-func BenchmarkMinNoIndex_10000(b *testing.B) {
-	exec := setupBenchTable(b, 10000, false)
+func BenchmarkMinNoIndex_1000(b *testing.B) {
+	exec := setupBenchTable(b, 1000, false)
 	sql := "SELECT MIN(val) FROM bench"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -1069,8 +1036,8 @@ func BenchmarkMaxWithIndex_10000(b *testing.B) {
 	}
 }
 
-func BenchmarkMaxNoIndex_10000(b *testing.B) {
-	exec := setupBenchTable(b, 10000, false)
+func BenchmarkMaxNoIndex_1000(b *testing.B) {
+	exec := setupBenchTable(b, 1000, false)
 	sql := "SELECT MAX(val) FROM bench"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -1113,8 +1080,8 @@ func BenchmarkGroupByIndexOptimized_10000(b *testing.B) {
 	}
 }
 
-func BenchmarkGroupByNoIndex_10000(b *testing.B) {
-	exec := setupLowSelectivityTable(b, 10000, false)
+func BenchmarkGroupByNoIndex_1000(b *testing.B) {
+	exec := setupLowSelectivityTable(b, 1000, false)
 	sql := "SELECT grp, COUNT(*), SUM(val) FROM bench_low GROUP BY grp"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

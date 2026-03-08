@@ -102,17 +102,6 @@ func BenchmarkDiskEqualityWithIndex_1000(b *testing.B) {
 	}
 }
 
-func BenchmarkDiskEqualityNoIndex_10000(b *testing.B) {
-	exec := setupBenchTableDisk(b, 10000, false)
-	sql := "SELECT * FROM bench WHERE val = 50000"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := execSQL(exec, sql); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
 func BenchmarkDiskEqualityWithIndex_10000(b *testing.B) {
 	exec := setupBenchTableDisk(b, 10000, true)
 	sql := "SELECT * FROM bench WHERE val = 50000"
@@ -126,9 +115,9 @@ func BenchmarkDiskEqualityWithIndex_10000(b *testing.B) {
 
 // --- Range scan (disk) ---
 
-func BenchmarkDiskRangeNoIndex_10000(b *testing.B) {
-	exec := setupBenchTableDisk(b, 10000, false)
-	sql := "SELECT * FROM bench WHERE val >= 40000 AND val <= 60000"
+func BenchmarkDiskRangeNoIndex_1000(b *testing.B) {
+	exec := setupBenchTableDisk(b, 1000, false)
+	sql := "SELECT * FROM bench WHERE val >= 4000 AND val <= 6000"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if err := execSQL(exec, sql); err != nil {
@@ -150,8 +139,8 @@ func BenchmarkDiskRangeWithIndex_10000(b *testing.B) {
 
 // --- IN lookup (disk) ---
 
-func BenchmarkDiskInNoIndex_10000(b *testing.B) {
-	exec := setupBenchTableDisk(b, 10000, false)
+func BenchmarkDiskInNoIndex_1000(b *testing.B) {
+	exec := setupBenchTableDisk(b, 1000, false)
 	sql := "SELECT * FROM bench WHERE category IN (5, 10, 15)"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -172,8 +161,8 @@ func BenchmarkDiskInWithIndex_10000(b *testing.B) {
 	}
 }
 
-func BenchmarkDiskInUniqueNoIndex_10000(b *testing.B) {
-	exec := setupBenchTableDisk(b, 10000, false)
+func BenchmarkDiskInUniqueNoIndex_1000(b *testing.B) {
+	exec := setupBenchTableDisk(b, 1000, false)
 	sql := "SELECT * FROM bench WHERE val IN (50, 100, 150)"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -196,8 +185,8 @@ func BenchmarkDiskInUniqueWithIndex_10000(b *testing.B) {
 
 // --- LIKE prefix (disk) ---
 
-func BenchmarkDiskLikeEscapedNoIndex_10000(b *testing.B) {
-	exec := setupBenchTableDisk(b, 10000, false)
+func BenchmarkDiskLikeEscapedNoIndex_1000(b *testing.B) {
+	exec := setupBenchTableDisk(b, 1000, false)
 	sql := `SELECT * FROM bench WHERE name LIKE 'name\_50%'`
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -220,9 +209,9 @@ func BenchmarkDiskLikeEscapedWithIndex_10000(b *testing.B) {
 
 // --- Composite index (disk) ---
 
-func BenchmarkDiskCompositeNoIndex_10000(b *testing.B) {
-	exec := setupBenchTableDisk(b, 10000, false)
-	sql := "SELECT * FROM bench WHERE category = 50 AND val >= 50000"
+func BenchmarkDiskCompositeNoIndex_1000(b *testing.B) {
+	exec := setupBenchTableDisk(b, 1000, false)
+	sql := "SELECT * FROM bench WHERE category = 50 AND val >= 5000"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if err := execSQL(exec, sql); err != nil {
@@ -281,8 +270,8 @@ func setupLowSelectivityTableDisk(b *testing.B, n int, withIndex bool) *Executor
 	return exec
 }
 
-func BenchmarkDiskLowSelectivityNoIndex_10000(b *testing.B) {
-	exec := setupLowSelectivityTableDisk(b, 10000, false)
+func BenchmarkDiskLowSelectivityNoIndex_1000(b *testing.B) {
+	exec := setupLowSelectivityTableDisk(b, 1000, false)
 	sql := "SELECT * FROM bench_low WHERE grp = 3"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

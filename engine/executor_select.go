@@ -1604,6 +1604,7 @@ func buildAggAccumulator(fn string, call *ast.CallExpr, info *TableInfo) (*aggAc
 				return &aggAccumulator{kind: "COUNT_COL", colIdx: col.Index}, "INT", nil
 			}
 		}
+
 		return nil, "", fmt.Errorf("COUNT requires exactly 1 argument")
 	case "SUM", "AVG", "MIN", "MAX":
 		if len(call.Args) != 1 {

@@ -73,14 +73,14 @@ func BenchmarkIntersectPostingLists(b *testing.B) {
 		{
 			// Both small, overlapping — baseline
 			"Small_100x100",
-			generatePostingList(100, 1, 2),  // 1,3,5,...,199
-			generatePostingList(100, 1, 3),  // 1,4,7,...,298
+			generatePostingList(100, 1, 2), // 1,3,5,...,199
+			generatePostingList(100, 1, 3), // 1,4,7,...,298
 		},
 		{
 			// Large lists, overlapping ranges
 			"Large_100Kx100K_Overlap",
-			generatePostingList(100000, 1, 2),  // 1,3,5,...,199999
-			generatePostingList(100000, 1, 3),  // 1,4,7,...,299999
+			generatePostingList(100000, 1, 2), // 1,3,5,...,199999
+			generatePostingList(100000, 1, 3), // 1,4,7,...,299999
 		},
 		{
 			// Large vs small, overlapping
@@ -91,14 +91,14 @@ func BenchmarkIntersectPostingLists(b *testing.B) {
 		{
 			// Non-overlapping ranges — blocks should be skipped entirely
 			"Large_100Kx100K_NoOverlap",
-			generatePostingList(100000, 1, 2),          // 1..199999
-			generatePostingList(100000, 300000, 2),      // 300000..499998
+			generatePostingList(100000, 1, 2),      // 1..199999
+			generatePostingList(100000, 300000, 2), // 300000..499998
 		},
 		{
 			// Partial overlap — first half of A overlaps with B
 			"Large_100Kx100K_PartialOverlap",
-			generatePostingList(100000, 1, 2),           // 1..199999
-			generatePostingList(100000, 100000, 2),      // 100000..299998
+			generatePostingList(100000, 1, 2),      // 1..199999
+			generatePostingList(100000, 100000, 2), // 100000..299998
 		},
 	}
 

@@ -379,7 +379,32 @@ func (e *Executor) planWhereIndex(plan *SelectPlan, where ast.Expr, info *TableI
 // tryGinIndexLookup checks if the WHERE clause is a @@ (full-text match)
 // expression on a column that has a GIN index, and if so returns the matching row keys.
 // It also handles LIKE '%word%' patterns by using the GIN index's MatchSubstring.
+// For AND conditions, it recursively extracts GIN-usable conditions and intersects results.
 func (e *Executor) tryGinIndexLookup(where ast.Expr, info *TableInfo) ([]int64, string, bool) {
+	// Handle AND: extract GIN conditions from both sides and intersect
+	if logExpr, ok := where.(*ast.LogicalExpr); ok && logExpr.Op == "AND" {
+		leftKeys, leftIdx, leftOk := e.tryGinIndexLookup(logExpr.Left, info)
+		rightKeys, rightIdx, rightOk := e.tryGinIndexLookup(logExpr.Right, info)
+
+		if leftOk && rightOk {
+			// Both sides use GIN — intersect the results
+			result := intersectSortedKeys(leftKeys, rightKeys)
+			// Use the first index name found
+			indexName := leftIdx
+			if indexName == "" {
+				indexName = rightIdx
+			}
+			return result, indexName, true
+		}
+		if leftOk {
+			return leftKeys, leftIdx, true
+		}
+		if rightOk {
+			return rightKeys, rightIdx, true
+		}
+		return nil, "", false
+	}
+
 	// Handle @@ operator
 	if matchExpr, ok := where.(*ast.MatchExpr); ok {
 		ident, ok := matchExpr.Expr.(*ast.IdentExpr)
@@ -512,6 +537,24 @@ func (e *Executor) tryGinIndexLookup(where ast.Expr, info *TableInfo) ([]int64, 
 	}
 
 	return nil, "", false
+}
+
+// intersectSortedKeys returns the intersection of two sorted int64 slices.
+func intersectSortedKeys(a, b []int64) []int64 {
+	var result []int64
+	i, j := 0, 0
+	for i < len(a) && j < len(b) {
+		if a[i] == b[j] {
+			result = append(result, a[i])
+			i++
+			j++
+		} else if a[i] < b[j] {
+			i++
+		} else {
+			j++
+		}
+	}
+	return result
 }
 
 // longestLiteralSegment extracts the longest contiguous run of non-wildcard

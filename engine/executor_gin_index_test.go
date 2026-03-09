@@ -553,6 +553,63 @@ func TestGinIndexBigramEquality(t *testing.T) {
 	}
 }
 
+func TestGinIndexAndCondition(t *testing.T) {
+	for _, st := range []string{"memory", "disk"} {
+		t.Run(st, func(t *testing.T) {
+			exec := setupGinTestExecutor(t, st)
+			run(t, exec, "CREATE TABLE articles (id INT PRIMARY KEY, body TEXT)")
+			run(t, exec, "INSERT INTO articles VALUES (1, '東京都は日本の首都です')")
+			run(t, exec, "INSERT INTO articles VALUES (2, '京都は古い都市です')")
+			run(t, exec, "INSERT INTO articles VALUES (3, '大阪は楽しい街です')")
+			run(t, exec, "INSERT INTO articles VALUES (4, '東京の大阪料理店')")
+			run(t, exec, "CREATE INDEX idx_body_gin ON articles(body) USING GIN WITH (tokenizer = 'bigram')")
+
+			// AND of two @@ conditions: should use GIN index and return intersection
+			result := run(t, exec, "SELECT id FROM articles WHERE body @@ '東京' AND body @@ '日本'")
+			require.Len(t, result.Rows, 1)
+			assert.Equal(t, int64(1), result.Rows[0][0])
+
+			// EXPLAIN should show GIN index usage
+			assertExplain(t, exec, "SELECT id FROM articles WHERE body @@ '東京' AND body @@ '日本'", []planRow{
+				{Table: "articles", Type: "fulltext", Key: "idx_body_gin"},
+			})
+
+			// AND with non-GIN condition: GIN narrows candidates, id > 1 post-filters
+			result = run(t, exec, "SELECT id FROM articles WHERE body @@ '東京' AND id > 1")
+			require.Len(t, result.Rows, 1)
+			assert.Equal(t, int64(4), result.Rows[0][0])
+
+			// EXPLAIN should still show GIN usage for partial GIN condition
+			assertExplain(t, exec, "SELECT id FROM articles WHERE body @@ '東京' AND id > 1", []planRow{
+				{Table: "articles", Type: "fulltext", Key: "idx_body_gin"},
+			})
+		})
+	}
+}
+
+func TestGinIndexAndConditionWord(t *testing.T) {
+	for _, st := range []string{"memory", "disk"} {
+		t.Run(st, func(t *testing.T) {
+			exec := setupGinTestExecutor(t, st)
+			run(t, exec, "CREATE TABLE docs (id INT PRIMARY KEY, body TEXT)")
+			run(t, exec, "INSERT INTO docs VALUES (1, 'hello world test')")
+			run(t, exec, "INSERT INTO docs VALUES (2, 'hello everyone')")
+			run(t, exec, "INSERT INTO docs VALUES (3, 'world peace test')")
+			run(t, exec, "CREATE INDEX idx_gin ON docs(body) USING GIN")
+
+			// AND of two @@ with word tokenizer
+			result := run(t, exec, "SELECT id FROM docs WHERE body @@ 'hello' AND body @@ 'test'")
+			require.Len(t, result.Rows, 1)
+			assert.Equal(t, int64(1), result.Rows[0][0])
+
+			// EXPLAIN shows GIN usage
+			assertExplain(t, exec, "SELECT id FROM docs WHERE body @@ 'hello' AND body @@ 'test'", []planRow{
+				{Table: "docs", Type: "fulltext", Key: "idx_gin"},
+			})
+		})
+	}
+}
+
 func TestGinIndexBigramIN(t *testing.T) {
 	for _, st := range []string{"memory", "disk"} {
 		t.Run(st, func(t *testing.T) {

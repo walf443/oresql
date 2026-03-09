@@ -372,25 +372,59 @@ func (e *Executor) planWhereIndex(plan *SelectPlan, where ast.Expr, info *TableI
 
 // tryGinIndexLookup checks if the WHERE clause is a @@ (full-text match)
 // expression on a column that has a GIN index, and if so returns the matching row keys.
+// It also handles LIKE '%word%' patterns by using the GIN index's MatchSubstring.
 func (e *Executor) tryGinIndexLookup(where ast.Expr, info *TableInfo) ([]int64, string, bool) {
-	matchExpr, ok := where.(*ast.MatchExpr)
-	if !ok {
-		return nil, "", false
+	// Handle @@ operator
+	if matchExpr, ok := where.(*ast.MatchExpr); ok {
+		ident, ok := matchExpr.Expr.(*ast.IdentExpr)
+		if !ok {
+			return nil, "", false
+		}
+		col, err := info.FindColumn(ident.Name)
+		if err != nil {
+			return nil, "", false
+		}
+		ginIdx := e.db.storage.LookupGinIndex(info.Name, col.Index)
+		if ginIdx == nil {
+			return nil, "", false
+		}
+		keys := ginIdx.MatchToken(matchExpr.Pattern)
+		return keys, ginIdx.GetInfo().Name, true
 	}
-	ident, ok := matchExpr.Expr.(*ast.IdentExpr)
-	if !ok {
-		return nil, "", false
+
+	// Handle LIKE 'word%' prefix pattern
+	if likeExpr, ok := where.(*ast.LikeExpr); ok && !likeExpr.Not {
+		ident, ok := likeExpr.Left.(*ast.IdentExpr)
+		if !ok {
+			return nil, "", false
+		}
+		patLit, ok := likeExpr.Pattern.(*ast.StringLitExpr)
+		if !ok {
+			return nil, "", false
+		}
+		// Check for word% pattern (prefix search)
+		pat := patLit.Value
+		if len(pat) < 2 || pat[0] == '%' || pat[len(pat)-1] != '%' {
+			return nil, "", false
+		}
+		prefix := pat[:len(pat)-1]
+		// Ensure the prefix part has no wildcards
+		if strings.ContainsAny(prefix, "%_") {
+			return nil, "", false
+		}
+		col, err := info.FindColumn(ident.Name)
+		if err != nil {
+			return nil, "", false
+		}
+		ginIdx := e.db.storage.LookupGinIndex(info.Name, col.Index)
+		if ginIdx == nil {
+			return nil, "", false
+		}
+		keys := ginIdx.MatchPrefix(prefix)
+		return keys, ginIdx.GetInfo().Name, true
 	}
-	col, err := info.FindColumn(ident.Name)
-	if err != nil {
-		return nil, "", false
-	}
-	ginIdx := e.db.storage.LookupGinIndex(info.Name, col.Index)
-	if ginIdx == nil {
-		return nil, "", false
-	}
-	keys := ginIdx.MatchToken(matchExpr.Pattern)
-	return keys, ginIdx.GetInfo().Name, true
+
+	return nil, "", false
 }
 
 // planCoveringIndex checks if the query can be satisfied entirely from an index

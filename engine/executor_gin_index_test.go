@@ -164,6 +164,61 @@ func TestGinIndexExplain(t *testing.T) {
 	}
 }
 
+func TestGinIndexLikePrefix(t *testing.T) {
+	for _, st := range []string{"memory", "disk"} {
+		t.Run(st, func(t *testing.T) {
+			exec := setupGinTestExecutor(t, st)
+			run(t, exec, "CREATE TABLE articles (id INT PRIMARY KEY, body TEXT)")
+			run(t, exec, "INSERT INTO articles VALUES (1, 'testing the system')")
+			run(t, exec, "INSERT INTO articles VALUES (2, 'a simple test case')")
+			run(t, exec, "INSERT INTO articles VALUES (3, 'contest winner')")
+			run(t, exec, "INSERT INTO articles VALUES (4, 'no match here')")
+			run(t, exec, "CREATE INDEX idx_body_gin ON articles(body) USING GIN")
+
+			// LIKE 'test%' matches row 1 ("testing the system") — starts with "test"
+			// GIN narrows candidates via token prefix, then LIKE filters exactly
+			result := run(t, exec, "SELECT id FROM articles WHERE body LIKE 'test%'")
+			require.Len(t, result.Rows, 1)
+			assert.Equal(t, int64(1), result.Rows[0][0])
+
+			// EXPLAIN should show GIN index usage
+			assertExplain(t, exec, "SELECT id FROM articles WHERE body LIKE 'test%'", []planRow{
+				{Table: "articles", Type: "fulltext", Key: "idx_body_gin"},
+			})
+		})
+	}
+}
+
+func TestGinIndexLikePrefixNoMatch(t *testing.T) {
+	for _, st := range []string{"memory", "disk"} {
+		t.Run(st, func(t *testing.T) {
+			exec := setupGinTestExecutor(t, st)
+			run(t, exec, "CREATE TABLE docs (id INT PRIMARY KEY, content TEXT)")
+			run(t, exec, "INSERT INTO docs VALUES (1, 'hello world')")
+			run(t, exec, "CREATE INDEX idx_gin ON docs(content) USING GIN")
+
+			result := run(t, exec, "SELECT id FROM docs WHERE content LIKE 'xyz%'")
+			require.Len(t, result.Rows, 0)
+		})
+	}
+}
+
+func TestGinIndexLikeContainsNotUsesGin(t *testing.T) {
+	// LIKE '%word%' (contains) should NOT use GIN
+	for _, st := range []string{"memory", "disk"} {
+		t.Run(st, func(t *testing.T) {
+			exec := setupGinTestExecutor(t, st)
+			run(t, exec, "CREATE TABLE docs (id INT PRIMARY KEY, content TEXT)")
+			run(t, exec, "INSERT INTO docs VALUES (1, 'hello world')")
+			run(t, exec, "CREATE INDEX idx_gin ON docs(content) USING GIN")
+
+			assertExplain(t, exec, "SELECT id FROM docs WHERE content LIKE '%hello%'", []planRow{
+				{Table: "docs", Type: "full scan"},
+			})
+		})
+	}
+}
+
 func TestGinIndexPersistence(t *testing.T) {
 	tmpDir := t.TempDir()
 

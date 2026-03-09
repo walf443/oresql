@@ -173,6 +173,9 @@ type GinIndexReader interface {
 	GetInfo() *IndexInfo
 	// MatchToken returns row keys whose indexed TEXT column contains the given token.
 	MatchToken(token string) []int64
+	// MatchPrefix returns row keys whose indexed TEXT column contains a token
+	// that starts with the given prefix. This supports LIKE 'prefix%' acceleration.
+	MatchPrefix(prefix string) []int64
 }
 
 // MetadataProvider is an optional interface that storage engines can implement

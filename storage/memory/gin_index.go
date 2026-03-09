@@ -45,6 +45,26 @@ func (gi *GinIndex) MatchToken(token string) []int64 {
 	return keys
 }
 
+// MatchPrefix returns sorted row keys whose indexed column contains a token
+// that starts with the given prefix.
+func (gi *GinIndex) MatchPrefix(prefix string) []int64 {
+	lower := strings.ToLower(prefix)
+	keyMap := make(map[int64]struct{})
+	for tok, keySet := range gi.tokens {
+		if strings.HasPrefix(tok, lower) {
+			for k := range keySet {
+				keyMap[k] = struct{}{}
+			}
+		}
+	}
+	keys := make([]int64, 0, len(keyMap))
+	for k := range keyMap {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+	return keys
+}
+
 // AddRow indexes all tokens from the TEXT value in the specified column.
 func (gi *GinIndex) AddRow(key int64, row storage.Row) {
 	colIdx := gi.Info.ColumnIdxs[0]

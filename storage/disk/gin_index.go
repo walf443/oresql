@@ -42,6 +42,41 @@ func (dgi *DiskGinIndex) MatchToken(token string) []int64 {
 	return keys
 }
 
+// MatchPrefix returns sorted row keys whose indexed column contains a token
+// that starts with the given prefix. Uses PrefixScan for efficient lookup.
+func (dgi *DiskGinIndex) MatchPrefix(prefix string) []int64 {
+	lower := strings.ToLower(prefix)
+	// TEXT encoding uses 0x03 + raw bytes; we scan by the prefix bytes without
+	// the null terminator so that all tokens starting with `lower` are matched.
+	scanPrefix := append([]byte{0x03}, []byte(lower)...)
+
+	keyMap := make(map[int64]struct{})
+	dgi.tree.PrefixScan(scanPrefix, func(compositeKey []byte) bool {
+		// Extract the full token prefix (including null terminator) to find posting list data
+		tokenEnd := -1
+		for i := 1; i < len(compositeKey); i++ {
+			if compositeKey[i] == 0x00 {
+				tokenEnd = i
+				break
+			}
+		}
+		if tokenEnd < 0 {
+			return true
+		}
+		postingData := compositeKey[tokenEnd+1:]
+		for _, k := range decodePostingList(postingData) {
+			keyMap[k] = struct{}{}
+		}
+		return true // continue scanning
+	})
+	keys := make([]int64, 0, len(keyMap))
+	for k := range keyMap {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+	return keys
+}
+
 // AddRow indexes all tokens from the TEXT value in the specified column.
 func (dgi *DiskGinIndex) AddRow(key int64, row storage.Row) {
 	colIdx := dgi.info.ColumnIdxs[0]

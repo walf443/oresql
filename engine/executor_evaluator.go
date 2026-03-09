@@ -379,6 +379,19 @@ func evalExprGeneric(expr ast.Expr, row Row, eval ExprEvaluator) (Value, error) 
 			return !result, nil
 		}
 		return result, nil
+	case *ast.MatchExpr:
+		val, err := eval.Eval(e.Expr, row)
+		if err != nil {
+			return nil, err
+		}
+		if val == nil {
+			return false, nil
+		}
+		text, ok := val.(string)
+		if !ok {
+			return nil, fmt.Errorf("@@ requires TEXT operand, got %T", val)
+		}
+		return matchFullText(text, e.Pattern), nil
 	case *ast.ArithmeticExpr:
 		left, err := eval.Eval(e.Left, row)
 		if err != nil {
@@ -627,6 +640,8 @@ func hasOuterReferences(stmt *ast.SelectStmt, outerEval ExprEvaluator) bool {
 		case *ast.LikeExpr:
 			walk(e.Left)
 			walk(e.Pattern)
+		case *ast.MatchExpr:
+			walk(e.Expr)
 		case *ast.ArithmeticExpr:
 			walk(e.Left)
 			walk(e.Right)

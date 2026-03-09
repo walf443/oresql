@@ -105,12 +105,26 @@ func (e *Executor) executeCreateIndex(stmt *ast.CreateIndexStmt) (*Result, error
 		columnNames[i] = col.Name
 		columnIdxs[i] = col.Index
 	}
+	indexType := "BTREE"
+	if stmt.IndexMethod == "GIN" {
+		indexType = "GIN"
+		// GIN indexes only support TEXT columns
+		for _, name := range stmt.ColumnNames {
+			col, _ := info.FindColumn(name)
+			if col.DataType != "TEXT" {
+				return nil, fmt.Errorf("GIN index only supports TEXT columns, column %q is %s", name, col.DataType)
+			}
+		}
+		if len(stmt.ColumnNames) != 1 {
+			return nil, fmt.Errorf("GIN index supports only single column")
+		}
+	}
 	idxInfo := &IndexInfo{
 		Name:        stmt.IndexName,
 		TableName:   info.Name,
 		ColumnNames: columnNames,
 		ColumnIdxs:  columnIdxs,
-		Type:        "BTREE",
+		Type:        indexType,
 		Unique:      stmt.Unique,
 	}
 	if err := db.storage.CreateIndex(idxInfo); err != nil {

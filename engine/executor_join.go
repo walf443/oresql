@@ -240,6 +240,19 @@ func evalExprJoin(expr ast.Expr, row Row, jc *JoinContext) (Value, error) {
 			return !result, nil
 		}
 		return result, nil
+	case *ast.MatchExpr:
+		val, err := evalExprJoin(e.Expr, row, jc)
+		if err != nil {
+			return nil, err
+		}
+		if val == nil {
+			return false, nil
+		}
+		text, ok := val.(string)
+		if !ok {
+			return nil, fmt.Errorf("@@ requires TEXT operand, got %T", val)
+		}
+		return matchFullText(text, e.Pattern), nil
 	case *ast.ArithmeticExpr:
 		left, err := evalExprJoin(e.Left, row, jc)
 		if err != nil {

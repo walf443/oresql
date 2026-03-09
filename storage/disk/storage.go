@@ -394,14 +394,15 @@ func (dsi *DiskSecondaryIndex) RemoveRow(key int64, row storage.Row) {
 }
 
 type diskTable struct {
-	mu        sync.RWMutex
-	info      *storage.TableInfo
-	pager     *pager.Pager
-	pool      *pager.BufferPool
-	btree     *DiskBTree
-	nextRowID int64
-	indexes   map[string]*DiskSecondaryIndex
-	indexInfo []*storage.IndexInfo
+	mu         sync.RWMutex
+	info       *storage.TableInfo
+	pager      *pager.Pager
+	pool       *pager.BufferPool
+	btree      *DiskBTree
+	nextRowID  int64
+	indexes    map[string]*DiskSecondaryIndex
+	ginIndexes map[string]*DiskGinIndex
+	indexInfo  []*storage.IndexInfo
 }
 
 // DiskStorage is a disk-based storage engine.
@@ -457,15 +458,17 @@ func writeHeader(tbl *diskTable) error {
 
 	for _, idxInfo := range tbl.indexInfo {
 		lowerName := strings.ToLower(idxInfo.Name)
-		dsi, ok := tbl.indexes[lowerName]
 
 		storage.PutString(&secMeta, idxInfo.Name)
 
 		var rootBuf [4]byte
 		var countBuf [4]byte
-		if ok && dsi.tree != nil {
+		if dsi, ok := tbl.indexes[lowerName]; ok && dsi.tree != nil {
 			binary.BigEndian.PutUint32(rootBuf[:], dsi.tree.RootPageID())
 			binary.BigEndian.PutUint32(countBuf[:], uint32(dsi.tree.Len()))
+		} else if dgi, ok := tbl.ginIndexes[lowerName]; ok && dgi.tree != nil {
+			binary.BigEndian.PutUint32(rootBuf[:], dgi.tree.RootPageID())
+			binary.BigEndian.PutUint32(countBuf[:], uint32(dgi.tree.Len()))
 		} else {
 			binary.BigEndian.PutUint32(rootBuf[:], uint32(pager.InvalidPageID))
 			binary.BigEndian.PutUint32(countBuf[:], 0)
@@ -587,12 +590,13 @@ func (ds *DiskStorage) CreateTable(info *storage.TableInfo) {
 	}
 
 	tbl := &diskTable{
-		info:      info,
-		pager:     p,
-		pool:      pool,
-		btree:     bt,
-		nextRowID: 1,
-		indexes:   make(map[string]*DiskSecondaryIndex),
+		info:       info,
+		pager:      p,
+		pool:       pool,
+		btree:      bt,
+		nextRowID:  1,
+		indexes:    make(map[string]*DiskSecondaryIndex),
+		ginIndexes: make(map[string]*DiskGinIndex),
 	}
 
 	if err := writeHeader(tbl); err != nil {
@@ -617,6 +621,9 @@ func (ds *DiskStorage) DropTable(name string) {
 
 	// Clean up index registry
 	for idxName := range tbl.indexes {
+		delete(ds.indexTable, strings.ToLower(idxName))
+	}
+	for idxName := range tbl.ginIndexes {
 		delete(ds.indexTable, strings.ToLower(idxName))
 	}
 
@@ -674,6 +681,16 @@ func (ds *DiskStorage) TruncateTable(name string) {
 			tree: newTree,
 		}
 	}
+	for lowerName, idx := range tbl.ginIndexes {
+		newTree, err := NewDiskSecondaryBTree(pool)
+		if err != nil {
+			continue
+		}
+		tbl.ginIndexes[lowerName] = &DiskGinIndex{
+			info: idx.info,
+			tree: newTree,
+		}
+	}
 
 	writeHeader(tbl)
 	pool.FlushAll()
@@ -722,6 +739,9 @@ func (ds *DiskStorage) Insert(tableName string, row storage.Row) error {
 	for _, idx := range tbl.indexes {
 		idx.AddRow(key, row)
 	}
+	for _, idx := range tbl.ginIndexes {
+		idx.AddRow(key, row)
+	}
 
 	// Persist
 	if err := writeHeader(tbl); err != nil {
@@ -740,10 +760,13 @@ func (ds *DiskStorage) DeleteByKeys(tableName string, keys []int64) error {
 	defer tbl.mu.Unlock()
 
 	for _, key := range keys {
-		if len(tbl.indexes) > 0 {
+		if len(tbl.indexes) > 0 || len(tbl.ginIndexes) > 0 {
 			row, found := tbl.btree.Get(key)
 			if found {
 				for _, idx := range tbl.indexes {
+					idx.RemoveRow(key, row)
+				}
+				for _, idx := range tbl.ginIndexes {
 					idx.RemoveRow(key, row)
 				}
 			}
@@ -768,10 +791,13 @@ func (ds *DiskStorage) UpdateRow(tableName string, key int64, row storage.Row) e
 
 	// Remove old index entries
 	var oldRow storage.Row
-	if len(tbl.indexes) > 0 {
+	if len(tbl.indexes) > 0 || len(tbl.ginIndexes) > 0 {
 		oldRow, _ = tbl.btree.Get(key)
 		if oldRow != nil {
 			for _, idx := range tbl.indexes {
+				idx.RemoveRow(key, oldRow)
+			}
+			for _, idx := range tbl.ginIndexes {
 				idx.RemoveRow(key, oldRow)
 			}
 		}
@@ -784,6 +810,9 @@ func (ds *DiskStorage) UpdateRow(tableName string, key int64, row storage.Row) e
 				for _, idx2 := range tbl.indexes {
 					idx2.AddRow(key, oldRow)
 				}
+				for _, idx2 := range tbl.ginIndexes {
+					idx2.AddRow(key, oldRow)
+				}
 			}
 			return err
 		}
@@ -792,6 +821,9 @@ func (ds *DiskStorage) UpdateRow(tableName string, key int64, row storage.Row) e
 	tbl.btree.Put(key, row)
 
 	for _, idx := range tbl.indexes {
+		idx.AddRow(key, row)
+	}
+	for _, idx := range tbl.ginIndexes {
 		idx.AddRow(key, row)
 	}
 
@@ -939,6 +971,10 @@ func (ds *DiskStorage) CreateIndex(info *storage.IndexInfo) error {
 		return fmt.Errorf("table %q does not exist", info.TableName)
 	}
 
+	if info.Type == "GIN" {
+		return ds.createGinIndex(tbl, info)
+	}
+
 	tree, err := NewDiskSecondaryBTree(tbl.pool)
 	if err != nil {
 		return fmt.Errorf("create secondary btree: %w", err)
@@ -977,6 +1013,35 @@ func (ds *DiskStorage) CreateIndex(info *storage.IndexInfo) error {
 	return tbl.pool.FlushAll()
 }
 
+// createGinIndex creates a GIN (inverted) index and builds it from existing data.
+func (ds *DiskStorage) createGinIndex(tbl *diskTable, info *storage.IndexInfo) error {
+	tree, err := NewDiskSecondaryBTree(tbl.pool)
+	if err != nil {
+		return fmt.Errorf("create gin btree: %w", err)
+	}
+
+	idx := &DiskGinIndex{
+		info: info,
+		tree: tree,
+	}
+
+	tbl.btree.ForEach(func(key int64, row storage.Row) bool {
+		idx.AddRow(key, row)
+		return true
+	})
+
+	tbl.ginIndexes[strings.ToLower(info.Name)] = idx
+	tbl.indexInfo = append(tbl.indexInfo, info)
+	ds.mu.Lock()
+	ds.indexTable[strings.ToLower(info.Name)] = strings.ToLower(info.TableName)
+	ds.mu.Unlock()
+
+	if err := writeHeader(tbl); err != nil {
+		return err
+	}
+	return tbl.pool.FlushAll()
+}
+
 func (ds *DiskStorage) DropIndex(indexName string) error {
 	lowerIdx := strings.ToLower(indexName)
 	ds.mu.Lock()
@@ -987,6 +1052,7 @@ func (ds *DiskStorage) DropIndex(indexName string) error {
 	}
 	tbl := ds.tables[tableName]
 	delete(tbl.indexes, lowerIdx)
+	delete(tbl.ginIndexes, lowerIdx)
 	delete(ds.indexTable, lowerIdx)
 
 	// Remove from indexInfo
@@ -1047,6 +1113,22 @@ func (ds *DiskStorage) LookupSingleColumnIndex(tableName string, colIdx int) sto
 	for _, idx := range tbl.indexes {
 		info := idx.GetInfo()
 		if len(info.ColumnIdxs) == 1 && info.ColumnIdxs[0] == colIdx {
+			return idx
+		}
+	}
+	return nil
+}
+
+// LookupGinIndex finds a GIN index on the given table for the given column index.
+func (ds *DiskStorage) LookupGinIndex(tableName string, colIdx int) storage.GinIndexReader {
+	tbl, ok := ds.getTable(tableName)
+	if !ok {
+		return nil
+	}
+	tbl.mu.RLock()
+	defer tbl.mu.RUnlock()
+	for _, idx := range tbl.ginIndexes {
+		if len(idx.info.ColumnIdxs) == 1 && idx.info.ColumnIdxs[0] == colIdx {
 			return idx
 		}
 	}
@@ -1487,13 +1569,14 @@ func (ds *DiskStorage) loadTable(tableName string) error {
 	bt = LoadDiskBTree(pool, rootPageID, count, len(info.Columns))
 
 	tbl := &diskTable{
-		info:      info,
-		pager:     p,
-		pool:      pool,
-		btree:     bt,
-		nextRowID: nextRowID,
-		indexes:   make(map[string]*DiskSecondaryIndex),
-		indexInfo: indexes,
+		info:       info,
+		pager:      p,
+		pool:       pool,
+		btree:      bt,
+		nextRowID:  nextRowID,
+		indexes:    make(map[string]*DiskSecondaryIndex),
+		ginIndexes: make(map[string]*DiskGinIndex),
+		indexInfo:  indexes,
 	}
 
 	if version == dbVersionV11 && len(secMetas) > 0 {
@@ -1506,14 +1589,64 @@ func (ds *DiskStorage) loadTable(tableName string) error {
 		for _, idxInfo := range indexes {
 			lowerName := strings.ToLower(idxInfo.Name)
 			sm, ok := secMetaMap[lowerName]
-			if ok && sm.rootPageID != pager.InvalidPageID {
-				tree := LoadDiskSecondaryBTree(pool, sm.rootPageID, sm.entryCount)
-				tbl.indexes[lowerName] = &DiskSecondaryIndex{
-					info: idxInfo,
-					tree: tree,
+			if idxInfo.Type == "GIN" {
+				if ok && sm.rootPageID != pager.InvalidPageID {
+					tree := LoadDiskSecondaryBTree(pool, sm.rootPageID, sm.entryCount)
+					tbl.ginIndexes[lowerName] = &DiskGinIndex{info: idxInfo, tree: tree}
+				} else {
+					tree, treeErr := NewDiskSecondaryBTree(pool)
+					if treeErr != nil {
+						pool.Close()
+						return fmt.Errorf("create gin btree: %w", treeErr)
+					}
+					idx := &DiskGinIndex{info: idxInfo, tree: tree}
+					tbl.btree.ForEach(func(key int64, row storage.Row) bool {
+						idx.AddRow(key, row)
+						return true
+					})
+					tbl.ginIndexes[lowerName] = idx
 				}
 			} else {
-				// No persisted tree, rebuild
+				if ok && sm.rootPageID != pager.InvalidPageID {
+					tree := LoadDiskSecondaryBTree(pool, sm.rootPageID, sm.entryCount)
+					tbl.indexes[lowerName] = &DiskSecondaryIndex{
+						info: idxInfo,
+						tree: tree,
+					}
+				} else {
+					// No persisted tree, rebuild
+					tree, treeErr := NewDiskSecondaryBTree(pool)
+					if treeErr != nil {
+						pool.Close()
+						return fmt.Errorf("create sec btree: %w", treeErr)
+					}
+					idx := &DiskSecondaryIndex{info: idxInfo, tree: tree}
+					tbl.btree.ForEach(func(key int64, row storage.Row) bool {
+						idx.AddRow(key, row)
+						return true
+					})
+					tbl.indexes[lowerName] = idx
+				}
+			}
+			ds.indexTable[lowerName] = strings.ToLower(tableName)
+		}
+	} else {
+		// Legacy v0x10 format: rebuild secondary indexes from primary tree
+		for _, idxInfo := range indexes {
+			lowerName := strings.ToLower(idxInfo.Name)
+			if idxInfo.Type == "GIN" {
+				tree, treeErr := NewDiskSecondaryBTree(pool)
+				if treeErr != nil {
+					pool.Close()
+					return fmt.Errorf("create gin btree: %w", treeErr)
+				}
+				idx := &DiskGinIndex{info: idxInfo, tree: tree}
+				tbl.btree.ForEach(func(key int64, row storage.Row) bool {
+					idx.AddRow(key, row)
+					return true
+				})
+				tbl.ginIndexes[lowerName] = idx
+			} else {
 				tree, treeErr := NewDiskSecondaryBTree(pool)
 				if treeErr != nil {
 					pool.Close()
@@ -1527,23 +1660,6 @@ func (ds *DiskStorage) loadTable(tableName string) error {
 				tbl.indexes[lowerName] = idx
 			}
 			ds.indexTable[lowerName] = strings.ToLower(tableName)
-		}
-	} else {
-		// Legacy v0x10 format: rebuild secondary indexes from primary tree
-		for _, idxInfo := range indexes {
-			tree, treeErr := NewDiskSecondaryBTree(pool)
-			if treeErr != nil {
-				pool.Close()
-				return fmt.Errorf("create sec btree: %w", treeErr)
-			}
-			idx := &DiskSecondaryIndex{info: idxInfo, tree: tree}
-			tbl.btree.ForEach(func(key int64, row storage.Row) bool {
-				idx.AddRow(key, row)
-				return true
-			})
-
-			tbl.indexes[strings.ToLower(idxInfo.Name)] = idx
-			ds.indexTable[strings.ToLower(idxInfo.Name)] = strings.ToLower(tableName)
 		}
 
 		// Upgrade to v0x11 by writing new header

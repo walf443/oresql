@@ -157,6 +157,15 @@ func (l *Lexer) NextToken() token.Token {
 			tok = token.Token{Type: token.ILLEGAL, Literal: string(l.ch)}
 			l.readChar()
 		}
+	case '@':
+		if l.peekChar() == '@' {
+			l.readChar()
+			l.readChar()
+			tok = token.Token{Type: token.MATCH_OP, Literal: "@@"}
+		} else {
+			tok = token.Token{Type: token.ILLEGAL, Literal: string(l.ch)}
+			l.readChar()
+		}
 	case '\'':
 		str := l.readString('\'')
 		tok = token.Token{Type: token.STRING_LIT, Literal: str}

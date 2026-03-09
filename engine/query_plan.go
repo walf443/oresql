@@ -33,6 +33,7 @@ const (
 	WhereIndexIn                           // Index IN lookup
 	WhereRangeScan                         // Index range scan
 	WhereIndexMerge                        // Index merge union (OR conditions)
+	WhereGinMatch                          // GIN full-text match
 )
 
 // SelectPlan describes the execution plan for a SELECT statement.
@@ -117,6 +118,8 @@ func (p *SelectPlan) whereAccessType() string {
 		return "range"
 	case WhereIndexMerge:
 		return "index merge"
+	case WhereGinMatch:
+		return "fulltext"
 	default:
 		return "full scan"
 	}
@@ -359,6 +362,35 @@ func (e *Executor) planWhereIndex(plan *SelectPlan, where ast.Expr, info *TableI
 		plan.batchKeys = keys
 		return
 	}
+	if keys, indexName, ok := e.tryGinIndexLookup(where, info); ok {
+		plan.WhereIndex = WhereGinMatch
+		plan.WhereIndexName = indexName
+		plan.batchKeys = keys
+		return
+	}
+}
+
+// tryGinIndexLookup checks if the WHERE clause is a @@ (full-text match)
+// expression on a column that has a GIN index, and if so returns the matching row keys.
+func (e *Executor) tryGinIndexLookup(where ast.Expr, info *TableInfo) ([]int64, string, bool) {
+	matchExpr, ok := where.(*ast.MatchExpr)
+	if !ok {
+		return nil, "", false
+	}
+	ident, ok := matchExpr.Expr.(*ast.IdentExpr)
+	if !ok {
+		return nil, "", false
+	}
+	col, err := info.FindColumn(ident.Name)
+	if err != nil {
+		return nil, "", false
+	}
+	ginIdx := e.db.storage.LookupGinIndex(info.Name, col.Index)
+	if ginIdx == nil {
+		return nil, "", false
+	}
+	keys := ginIdx.MatchToken(matchExpr.Pattern)
+	return keys, ginIdx.GetInfo().Name, true
 }
 
 // planCoveringIndex checks if the query can be satisfied entirely from an index

@@ -32,6 +32,7 @@ const (
 	GT        // >
 	LT_EQ     // <=
 	GT_EQ     // >=
+	MATCH_OP  // @@
 
 	// Keywords
 	CREATE
@@ -134,6 +135,7 @@ const (
 	WITH      // WITH keyword
 	RECURSIVE // RECURSIVE keyword
 	EXPLAIN   // EXPLAIN keyword
+	GIN       // GIN keyword
 )
 
 var tokenNames = map[TokenType]string{
@@ -159,6 +161,7 @@ var tokenNames = map[TokenType]string{
 	GT:           "GT",
 	LT_EQ:        "LT_EQ",
 	GT_EQ:        "GT_EQ",
+	MATCH_OP:     "MATCH_OP",
 	CREATE:       "CREATE",
 	TABLE:        "TABLE",
 	INSERT:       "INSERT",
@@ -255,6 +258,7 @@ var tokenNames = map[TokenType]string{
 	WITH:         "WITH",
 	RECURSIVE:    "RECURSIVE",
 	EXPLAIN:      "EXPLAIN",
+	GIN:          "GIN",
 }
 
 func (t TokenType) String() string {
@@ -366,6 +370,7 @@ var keywords = map[string]TokenType{
 	"WITH":       WITH,
 	"RECURSIVE":  RECURSIVE,
 	"EXPLAIN":    EXPLAIN,
+	"GIN":        GIN,
 }
 
 // IsKeyword returns true if the given token type is a SQL keyword.

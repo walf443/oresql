@@ -55,7 +55,7 @@ type IndexInfo struct {
 	TableName   string
 	ColumnNames []string
 	ColumnIdxs  []int
-	Type        string // "BTREE" or "HASH"
+	Type        string // "BTREE", "HASH", or "GIN"
 	Unique      bool
 }
 
@@ -110,6 +110,9 @@ type Engine interface {
 	LookupSingleColumnIndex(tableName string, colIdx int) IndexReader
 	GetIndexes(tableName string) []IndexReader
 
+	// GIN index management
+	LookupGinIndex(tableName string, colIdx int) GinIndexReader
+
 	// Query
 	Scan(tableName string) ([]Row, error)
 	ScanOrdered(tableName string, reverse bool, limit int) ([]Row, error)
@@ -163,6 +166,13 @@ type CoveringIndexReader interface {
 		reverse bool, tableNumCols int, pkColIdx int,
 		fn func(rowKey int64, row Row) bool,
 	)
+}
+
+// GinIndexReader is the interface for reading GIN (inverted) index data.
+type GinIndexReader interface {
+	GetInfo() *IndexInfo
+	// MatchToken returns row keys whose indexed TEXT column contains the given token.
+	MatchToken(token string) []int64
 }
 
 // MetadataProvider is an optional interface that storage engines can implement

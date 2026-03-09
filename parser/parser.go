@@ -1607,6 +1607,17 @@ func (p *Parser) parseComparison() (ast.Expr, error) {
 		return &ast.LikeExpr{Left: left, Pattern: pattern, Not: true}, nil
 	}
 
+	// Handle @@ (full-text match)
+	if p.curToken.Type == token.MATCH_OP {
+		p.nextToken() // skip @@
+		if p.curToken.Type != token.STRING_LIT {
+			return nil, fmt.Errorf("expected string literal after @@, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+		}
+		pattern := p.curToken.Literal
+		p.nextToken()
+		return &ast.MatchExpr{Expr: left, Pattern: pattern}, nil
+	}
+
 	// Handle IS [NOT] NULL
 	if p.curToken.Type == token.IS {
 		p.nextToken() // skip IS
@@ -1955,12 +1966,28 @@ func (p *Parser) parseCreateIndex() (ast.Statement, error) {
 		return nil, err
 	}
 
+	// Optional: USING GIN | USING BTREE
+	indexMethod := ""
+	if p.curToken.Type == token.USING {
+		p.nextToken() // skip USING
+		if p.curToken.Type == token.GIN {
+			indexMethod = "GIN"
+			p.nextToken()
+		} else if p.isIdent() && strings.ToUpper(p.curToken.Literal) == "BTREE" {
+			indexMethod = "BTREE"
+			p.nextToken()
+		} else {
+			return nil, fmt.Errorf("expected GIN or BTREE after USING, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+		}
+	}
+
 	return &ast.CreateIndexStmt{
 		DatabaseName: dbName,
 		IndexName:    indexName,
 		TableName:    tableName,
 		ColumnNames:  columnNames,
 		Unique:       unique,
+		IndexMethod:  indexMethod,
 	}, nil
 }
 

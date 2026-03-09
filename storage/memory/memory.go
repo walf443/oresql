@@ -268,11 +268,12 @@ func (si *SecondaryIndex) RemoveRow(key int64, row storage.Row) {
 
 // table stores rows for a single table using a BTree.
 type table struct {
-	mu        sync.RWMutex // table-level lock
-	Info      *storage.TableInfo
-	tree      *btree.BTree[int64]
-	nextRowID int64 // auto-increment for non-PK tables
-	indexes   map[string]*SecondaryIndex
+	mu         sync.RWMutex // table-level lock
+	Info       *storage.TableInfo
+	tree       *btree.BTree[int64]
+	nextRowID  int64 // auto-increment for non-PK tables
+	indexes    map[string]*SecondaryIndex
+	ginIndexes map[string]*GinIndex
 }
 
 // MemoryStorage holds all table data in memory.
@@ -301,10 +302,11 @@ func (s *MemoryStorage) getTable(tableName string) (*table, bool) {
 func (s *MemoryStorage) CreateTable(info *storage.TableInfo) {
 	s.mu.Lock()
 	s.tables[info.Name] = &table{
-		Info:      info,
-		tree:      btree.New[int64](32),
-		nextRowID: 1,
-		indexes:   make(map[string]*SecondaryIndex),
+		Info:       info,
+		tree:       btree.New[int64](32),
+		nextRowID:  1,
+		indexes:    make(map[string]*SecondaryIndex),
+		ginIndexes: make(map[string]*GinIndex),
 	}
 	s.mu.Unlock()
 }
@@ -344,6 +346,9 @@ func (s *MemoryStorage) Insert(tableName string, row storage.Row) error {
 	for _, idx := range tbl.indexes {
 		idx.AddRow(key, row)
 	}
+	for _, idx := range tbl.ginIndexes {
+		idx.AddRow(key, row)
+	}
 
 	return nil
 }
@@ -360,11 +365,14 @@ func (s *MemoryStorage) DeleteByKeys(tableName string, keys []int64) error {
 
 	for _, key := range keys {
 		// Remove from indexes before deleting
-		if len(tbl.indexes) > 0 {
+		if len(tbl.indexes) > 0 || len(tbl.ginIndexes) > 0 {
 			val, found := tbl.tree.Get(key)
 			if found {
 				row := val.(storage.Row)
 				for _, idx := range tbl.indexes {
+					idx.RemoveRow(key, row)
+				}
+				for _, idx := range tbl.ginIndexes {
 					idx.RemoveRow(key, row)
 				}
 			}
@@ -386,11 +394,14 @@ func (s *MemoryStorage) UpdateRow(tableName string, key int64, row storage.Row) 
 
 	// Remove old index entries
 	var oldRow storage.Row
-	if len(tbl.indexes) > 0 {
+	if len(tbl.indexes) > 0 || len(tbl.ginIndexes) > 0 {
 		oldVal, found := tbl.tree.Get(key)
 		if found {
 			oldRow = oldVal.(storage.Row)
 			for _, idx := range tbl.indexes {
+				idx.RemoveRow(key, oldRow)
+			}
+			for _, idx := range tbl.ginIndexes {
 				idx.RemoveRow(key, oldRow)
 			}
 		}
@@ -404,6 +415,9 @@ func (s *MemoryStorage) UpdateRow(tableName string, key int64, row storage.Row) 
 				for _, idx2 := range tbl.indexes {
 					idx2.AddRow(key, oldRow)
 				}
+				for _, idx2 := range tbl.ginIndexes {
+					idx2.AddRow(key, oldRow)
+				}
 			}
 			return err
 		}
@@ -413,6 +427,9 @@ func (s *MemoryStorage) UpdateRow(tableName string, key int64, row storage.Row) 
 
 	// Add new index entries
 	for _, idx := range tbl.indexes {
+		idx.AddRow(key, row)
+	}
+	for _, idx := range tbl.ginIndexes {
 		idx.AddRow(key, row)
 	}
 
@@ -433,6 +450,9 @@ func (s *MemoryStorage) TruncateTable(name string) {
 		for _, idx := range tbl.indexes {
 			idx.tree = btree.New[storage.KeyEncoding](32)
 		}
+		for _, idx := range tbl.ginIndexes {
+			idx.Clear()
+		}
 	}
 }
 
@@ -442,6 +462,9 @@ func (s *MemoryStorage) DropTable(name string) {
 	if tbl, ok := s.tables[lower]; ok {
 		// Clean up index registry
 		for idxName := range tbl.indexes {
+			delete(s.indexTable, strings.ToLower(idxName))
+		}
+		for idxName := range tbl.ginIndexes {
 			delete(s.indexTable, strings.ToLower(idxName))
 		}
 		delete(s.tables, lower)
@@ -556,6 +579,10 @@ func (s *MemoryStorage) CreateIndex(info *storage.IndexInfo) error {
 		return fmt.Errorf("table %q does not exist in storage", info.TableName)
 	}
 
+	if info.Type == "GIN" {
+		return s.createGinIndex(tbl, info, lower)
+	}
+
 	idx := &SecondaryIndex{
 		Info: info,
 		tree: btree.New[storage.KeyEncoding](32),
@@ -585,6 +612,23 @@ func (s *MemoryStorage) CreateIndex(info *storage.IndexInfo) error {
 	return nil
 }
 
+// createGinIndex creates a GIN (inverted) index and builds it from existing data.
+func (s *MemoryStorage) createGinIndex(tbl *table, info *storage.IndexInfo, tableLower string) error {
+	idx := NewGinIndex(info)
+
+	tbl.tree.ForEach(func(key int64, value any) bool {
+		row := value.(storage.Row)
+		idx.AddRow(key, row)
+		return true
+	})
+
+	tbl.ginIndexes[strings.ToLower(info.Name)] = idx
+	s.mu.Lock()
+	s.indexTable[strings.ToLower(info.Name)] = tableLower
+	s.mu.Unlock()
+	return nil
+}
+
 // DropIndex removes a secondary index.
 // tbl.mu must be held by the caller (via WithTableLocks) for table data access.
 func (s *MemoryStorage) DropIndex(indexName string) error {
@@ -597,6 +641,7 @@ func (s *MemoryStorage) DropIndex(indexName string) error {
 	}
 	tbl := s.tables[tableName]
 	delete(tbl.indexes, lowerIdx)
+	delete(tbl.ginIndexes, lowerIdx)
 	delete(s.indexTable, lowerIdx)
 	s.mu.Unlock()
 	return nil
@@ -657,6 +702,22 @@ func (s *MemoryStorage) GetIndexes(tableName string) []storage.IndexReader {
 		indexes = append(indexes, idx)
 	}
 	return indexes
+}
+
+// LookupGinIndex finds a GIN index on the given table for the given column index.
+func (s *MemoryStorage) LookupGinIndex(tableName string, colIdx int) storage.GinIndexReader {
+	tbl, ok := s.getTable(tableName)
+	if !ok {
+		return nil
+	}
+	tbl.mu.RLock()
+	defer tbl.mu.RUnlock()
+	for _, idx := range tbl.ginIndexes {
+		if len(idx.Info.ColumnIdxs) == 1 && idx.Info.ColumnIdxs[0] == colIdx {
+			return idx
+		}
+	}
+	return nil
 }
 
 // ResolveIndexTable returns the table name that owns the given index.

@@ -238,6 +238,19 @@ func evalExpr(expr ast.Expr, row Row, info *TableInfo) (Value, error) {
 			return !result, nil
 		}
 		return result, nil
+	case *ast.MatchExpr:
+		val, err := evalExpr(e.Expr, row, info)
+		if err != nil {
+			return nil, err
+		}
+		if val == nil {
+			return false, nil
+		}
+		text, ok := val.(string)
+		if !ok {
+			return nil, fmt.Errorf("@@ requires TEXT operand, got %T", val)
+		}
+		return matchFullText(text, e.Pattern), nil
 	case *ast.ArithmeticExpr:
 		left, err := evalExpr(e.Left, row, info)
 		if err != nil {
@@ -1110,4 +1123,22 @@ func evalCast(cast *ast.CastExpr, row Row, eval ExprEvaluator) (Value, error) {
 	default:
 		return nil, fmt.Errorf("unsupported CAST target type: %s", cast.TargetType)
 	}
+}
+
+// matchFullText checks if text contains the given search term as a token.
+func matchFullText(text, searchTerm string) bool {
+	lower := strings.ToLower(searchTerm)
+	words := strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+		return !isLetterOrDigit(r)
+	})
+	for _, w := range words {
+		if w == lower {
+			return true
+		}
+	}
+	return false
+}
+
+func isLetterOrDigit(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r >= 0x80
 }

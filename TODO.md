@@ -50,6 +50,7 @@ oresql 独自の拡張や実装上の項目は末尾にまとめる。
 ### インデックス
 
 - [x] CREATE INDEX / DROP INDEX（複合インデックス対応）
+- [x] CREATE INDEX ... USING GIN（TEXT 全文検索用転置インデックス）
 - [ ] CREATE UNIQUE INDEX
 - [ ] 部分インデックス（WHERE 付き）
 - [ ] 式インデックス（関数インデックス）

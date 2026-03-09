@@ -303,13 +303,23 @@ type LikeExpr struct {
 func (e *LikeExpr) NodeType() string { return "Like" }
 func (e *LikeExpr) exprNode()        {}
 
-// CreateIndexStmt represents CREATE INDEX <name> ON <table>(<column>, ...).
+// MatchExpr represents <column> @@ <pattern> for full-text search.
+type MatchExpr struct {
+	Expr    Expr   // column expression
+	Pattern string // search term
+}
+
+func (e *MatchExpr) NodeType() string { return "Match" }
+func (e *MatchExpr) exprNode()        {}
+
+// CreateIndexStmt represents CREATE INDEX <name> ON <table>(<column>, ...) [USING method].
 type CreateIndexStmt struct {
 	DatabaseName string // empty = current database
 	IndexName    string
 	TableName    string
 	ColumnNames  []string
 	Unique       bool
+	IndexMethod  string // "BTREE" (default) or "GIN"
 }
 
 func (s *CreateIndexStmt) NodeType() string { return "CreateIndex" }

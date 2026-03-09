@@ -381,26 +381,34 @@ func (e *Executor) planWhereIndex(plan *SelectPlan, where ast.Expr, info *TableI
 // It also handles LIKE '%word%' patterns by using the GIN index's MatchSubstring.
 // For AND conditions, it recursively extracts GIN-usable conditions and intersects results.
 func (e *Executor) tryGinIndexLookup(where ast.Expr, info *TableInfo) ([]int64, string, bool) {
-	// Handle AND: extract GIN conditions from both sides and intersect
-	if logExpr, ok := where.(*ast.LogicalExpr); ok && logExpr.Op == "AND" {
+	// Handle AND/OR: extract GIN conditions from both sides
+	if logExpr, ok := where.(*ast.LogicalExpr); ok {
 		leftKeys, leftIdx, leftOk := e.tryGinIndexLookup(logExpr.Left, info)
 		rightKeys, rightIdx, rightOk := e.tryGinIndexLookup(logExpr.Right, info)
 
-		if leftOk && rightOk {
-			// Both sides use GIN — intersect the results
-			result := intersectSortedKeys(leftKeys, rightKeys)
-			// Use the first index name found
-			indexName := leftIdx
-			if indexName == "" {
-				indexName = rightIdx
+		indexName := leftIdx
+		if indexName == "" {
+			indexName = rightIdx
+		}
+
+		switch logExpr.Op {
+		case "AND":
+			if leftOk && rightOk {
+				// Both sides use GIN — intersect the results
+				return intersectSortedKeys(leftKeys, rightKeys), indexName, true
 			}
-			return result, indexName, true
-		}
-		if leftOk {
-			return leftKeys, leftIdx, true
-		}
-		if rightOk {
-			return rightKeys, rightIdx, true
+			if leftOk {
+				return leftKeys, leftIdx, true
+			}
+			if rightOk {
+				return rightKeys, rightIdx, true
+			}
+		case "OR":
+			if leftOk && rightOk {
+				// Both sides use GIN — union the results
+				return unionSortedKeys(leftKeys, rightKeys), indexName, true
+			}
+			// OR requires both sides to be GIN-resolved; otherwise fall back to full scan
 		}
 		return nil, "", false
 	}
@@ -537,6 +545,32 @@ func (e *Executor) tryGinIndexLookup(where ast.Expr, info *TableInfo) ([]int64, 
 	}
 
 	return nil, "", false
+}
+
+// unionSortedKeys returns the union of two sorted int64 slices (deduplicated).
+func unionSortedKeys(a, b []int64) []int64 {
+	result := make([]int64, 0, len(a)+len(b))
+	i, j := 0, 0
+	for i < len(a) && j < len(b) {
+		if a[i] == b[j] {
+			result = append(result, a[i])
+			i++
+			j++
+		} else if a[i] < b[j] {
+			result = append(result, a[i])
+			i++
+		} else {
+			result = append(result, b[j])
+			j++
+		}
+	}
+	for ; i < len(a); i++ {
+		result = append(result, a[i])
+	}
+	for ; j < len(b); j++ {
+		result = append(result, b[j])
+	}
+	return result
 }
 
 // intersectSortedKeys returns the intersection of two sorted int64 slices.

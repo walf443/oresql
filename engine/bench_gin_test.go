@@ -129,3 +129,99 @@ func BenchmarkGinLikeSuffixWithIndex_10000(b *testing.B) {
 		}
 	}
 }
+
+// --- GIN AND intersection (body @@ X AND body @@ Y) ---
+
+func BenchmarkGinAndNoIndex_10000(b *testing.B) {
+	exec := setupGinBenchTable(b, 10000, false)
+	sql := "SELECT id FROM articles WHERE body LIKE '%東京%' AND body LIKE '%名所%'"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkGinAndWithIndex_10000(b *testing.B) {
+	exec := setupGinBenchTable(b, 10000, true)
+	sql := "SELECT id FROM articles WHERE body @@ '東京' AND body @@ '名所'"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// --- GIN OR union (body @@ X OR body @@ Y) ---
+
+func BenchmarkGinOrNoIndex_10000(b *testing.B) {
+	exec := setupGinBenchTable(b, 10000, false)
+	sql := "SELECT id FROM articles WHERE body LIKE '%東京%' OR body LIKE '%大阪%'"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkGinOrWithIndex_10000(b *testing.B) {
+	exec := setupGinBenchTable(b, 10000, true)
+	sql := "SELECT id FROM articles WHERE body @@ '東京' OR body @@ '大阪'"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// --- GIN OR with many terms ---
+
+func BenchmarkGinOrManyTermsNoIndex_10000(b *testing.B) {
+	exec := setupGinBenchTable(b, 10000, false)
+	sql := "SELECT id FROM articles WHERE body LIKE '%東京%' OR body LIKE '%大阪%' OR body LIKE '%福岡%' OR body LIKE '%札幌%'"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkGinOrManyTermsWithIndex_10000(b *testing.B) {
+	exec := setupGinBenchTable(b, 10000, true)
+	sql := "SELECT id FROM articles WHERE body @@ '東京' OR body @@ '大阪' OR body @@ '福岡' OR body @@ '札幌'"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// --- GIN AND+OR combined ---
+
+func BenchmarkGinAndOrNoIndex_10000(b *testing.B) {
+	exec := setupGinBenchTable(b, 10000, false)
+	sql := "SELECT id FROM articles WHERE (body LIKE '%東京%' OR body LIKE '%大阪%') AND body LIKE '%名所%'"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkGinAndOrWithIndex_10000(b *testing.B) {
+	exec := setupGinBenchTable(b, 10000, true)
+	sql := "SELECT id FROM articles WHERE (body @@ '東京' OR body @@ '大阪') AND body @@ '名所'"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

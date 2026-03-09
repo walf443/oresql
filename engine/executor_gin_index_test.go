@@ -610,6 +610,109 @@ func TestGinIndexAndConditionWord(t *testing.T) {
 	}
 }
 
+func TestGinIndexOrCondition(t *testing.T) {
+	for _, st := range []string{"memory", "disk"} {
+		t.Run(st, func(t *testing.T) {
+			exec := setupGinTestExecutor(t, st)
+			run(t, exec, "CREATE TABLE articles (id INT PRIMARY KEY, body TEXT)")
+			run(t, exec, "INSERT INTO articles VALUES (1, '東京都は日本の首都です')")
+			run(t, exec, "INSERT INTO articles VALUES (2, '京都は古い都市です')")
+			run(t, exec, "INSERT INTO articles VALUES (3, '大阪は楽しい街です')")
+			run(t, exec, "INSERT INTO articles VALUES (4, '福岡は美味しい街です')")
+			run(t, exec, "CREATE INDEX idx_body_gin ON articles(body) USING GIN WITH (tokenizer = 'bigram')")
+
+			// OR of two @@ conditions: should use GIN index and return union
+			result := run(t, exec, "SELECT id FROM articles WHERE body @@ '東京' OR body @@ '大阪'")
+			require.Len(t, result.Rows, 2)
+			assert.Equal(t, int64(1), result.Rows[0][0])
+			assert.Equal(t, int64(3), result.Rows[1][0])
+
+			// EXPLAIN should show GIN index usage
+			assertExplain(t, exec, "SELECT id FROM articles WHERE body @@ '東京' OR body @@ '大阪'", []planRow{
+				{Table: "articles", Type: "fulltext", Key: "idx_body_gin"},
+			})
+
+			// OR with no overlap
+			result = run(t, exec, "SELECT id FROM articles WHERE body @@ '東京' OR body @@ '福岡'")
+			require.Len(t, result.Rows, 2)
+			assert.Equal(t, int64(1), result.Rows[0][0])
+			assert.Equal(t, int64(4), result.Rows[1][0])
+
+			// OR where one side matches nothing
+			result = run(t, exec, "SELECT id FROM articles WHERE body @@ '東京' OR body @@ '札幌'")
+			require.Len(t, result.Rows, 1)
+			assert.Equal(t, int64(1), result.Rows[0][0])
+		})
+	}
+}
+
+func TestGinIndexOrConditionWord(t *testing.T) {
+	for _, st := range []string{"memory", "disk"} {
+		t.Run(st, func(t *testing.T) {
+			exec := setupGinTestExecutor(t, st)
+			run(t, exec, "CREATE TABLE docs (id INT PRIMARY KEY, body TEXT)")
+			run(t, exec, "INSERT INTO docs VALUES (1, 'hello world test')")
+			run(t, exec, "INSERT INTO docs VALUES (2, 'hello everyone')")
+			run(t, exec, "INSERT INTO docs VALUES (3, 'world peace test')")
+			run(t, exec, "INSERT INTO docs VALUES (4, 'goodbye world')")
+			run(t, exec, "CREATE INDEX idx_gin ON docs(body) USING GIN")
+
+			// OR of two @@ with word tokenizer
+			result := run(t, exec, "SELECT id FROM docs WHERE body @@ 'hello' OR body @@ 'peace'")
+			require.Len(t, result.Rows, 3)
+			assert.Equal(t, int64(1), result.Rows[0][0])
+			assert.Equal(t, int64(2), result.Rows[1][0])
+			assert.Equal(t, int64(3), result.Rows[2][0])
+
+			// EXPLAIN shows GIN usage
+			assertExplain(t, exec, "SELECT id FROM docs WHERE body @@ 'hello' OR body @@ 'peace'", []planRow{
+				{Table: "docs", Type: "fulltext", Key: "idx_gin"},
+			})
+		})
+	}
+}
+
+func TestGinIndexAndOrCombined(t *testing.T) {
+	for _, st := range []string{"memory", "disk"} {
+		t.Run(st, func(t *testing.T) {
+			exec := setupGinTestExecutor(t, st)
+			run(t, exec, "CREATE TABLE docs (id INT PRIMARY KEY, body TEXT)")
+			run(t, exec, "INSERT INTO docs VALUES (1, 'hello world test')")
+			run(t, exec, "INSERT INTO docs VALUES (2, 'hello everyone')")
+			run(t, exec, "INSERT INTO docs VALUES (3, 'world peace test')")
+			run(t, exec, "INSERT INTO docs VALUES (4, 'goodbye world')")
+			run(t, exec, "CREATE INDEX idx_gin ON docs(body) USING GIN")
+
+			// (body @@ 'hello' OR body @@ 'peace') AND body @@ 'world'
+			// hello: {1,2}, peace: {3} → union: {1,2,3}
+			// world: {1,3,4} → intersect: {1,3}
+			result := run(t, exec, "SELECT id FROM docs WHERE (body @@ 'hello' OR body @@ 'peace') AND body @@ 'world'")
+			require.Len(t, result.Rows, 2)
+			assert.Equal(t, int64(1), result.Rows[0][0])
+			assert.Equal(t, int64(3), result.Rows[1][0])
+		})
+	}
+}
+
+func TestGinIndexOrWithNonGinFallsBack(t *testing.T) {
+	for _, st := range []string{"memory", "disk"} {
+		t.Run(st, func(t *testing.T) {
+			exec := setupGinTestExecutor(t, st)
+			run(t, exec, "CREATE TABLE docs (id INT PRIMARY KEY, body TEXT)")
+			run(t, exec, "INSERT INTO docs VALUES (1, 'hello world')")
+			run(t, exec, "INSERT INTO docs VALUES (2, 'goodbye world')")
+			run(t, exec, "INSERT INTO docs VALUES (3, 'hello everyone')")
+			run(t, exec, "CREATE INDEX idx_gin ON docs(body) USING GIN")
+
+			// OR with non-GIN condition: cannot use GIN (would need full scan for id=1 side)
+			// Should fall back to full scan
+			assertExplain(t, exec, "SELECT id FROM docs WHERE body @@ 'hello' OR id = 1", []planRow{
+				{Table: "docs", Type: "full scan"},
+			})
+		})
+	}
+}
+
 func TestGinIndexBigramIN(t *testing.T) {
 	for _, st := range []string{"memory", "disk"} {
 		t.Run(st, func(t *testing.T) {

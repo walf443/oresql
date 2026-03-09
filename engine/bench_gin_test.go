@@ -131,10 +131,11 @@ func BenchmarkGinLikeSuffixWithIndex_10000(b *testing.B) {
 }
 
 // --- GIN AND intersection (body @@ X AND body @@ Y) ---
+// 'タワー' AND '名所': 10% hit (1,000/10,000行)
 
 func BenchmarkGinAndNoIndex_10000(b *testing.B) {
 	exec := setupGinBenchTable(b, 10000, false)
-	sql := "SELECT id FROM articles WHERE body LIKE '%東京%' AND body LIKE '%名所%'"
+	sql := "SELECT id FROM articles WHERE body LIKE '%タワー%' AND body LIKE '%名所%'"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if err := execSQL(exec, sql); err != nil {
@@ -145,7 +146,7 @@ func BenchmarkGinAndNoIndex_10000(b *testing.B) {
 
 func BenchmarkGinAndWithIndex_10000(b *testing.B) {
 	exec := setupGinBenchTable(b, 10000, true)
-	sql := "SELECT id FROM articles WHERE body @@ '東京' AND body @@ '名所'"
+	sql := "SELECT id FROM articles WHERE body @@ 'タワー' AND body @@ '名所'"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if err := execSQL(exec, sql); err != nil {
@@ -155,10 +156,11 @@ func BenchmarkGinAndWithIndex_10000(b *testing.B) {
 }
 
 // --- GIN OR union (body @@ X OR body @@ Y) ---
+// 'タワー' OR 'スカイツリー': 20% hit (2,000/10,000行)
 
 func BenchmarkGinOrNoIndex_10000(b *testing.B) {
 	exec := setupGinBenchTable(b, 10000, false)
-	sql := "SELECT id FROM articles WHERE body LIKE '%東京%' OR body LIKE '%大阪%'"
+	sql := "SELECT id FROM articles WHERE body LIKE '%タワー%' OR body LIKE '%スカイツリー%'"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if err := execSQL(exec, sql); err != nil {
@@ -169,31 +171,7 @@ func BenchmarkGinOrNoIndex_10000(b *testing.B) {
 
 func BenchmarkGinOrWithIndex_10000(b *testing.B) {
 	exec := setupGinBenchTable(b, 10000, true)
-	sql := "SELECT id FROM articles WHERE body @@ '東京' OR body @@ '大阪'"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := execSQL(exec, sql); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-// --- GIN OR with many terms ---
-
-func BenchmarkGinOrManyTermsNoIndex_10000(b *testing.B) {
-	exec := setupGinBenchTable(b, 10000, false)
-	sql := "SELECT id FROM articles WHERE body LIKE '%東京%' OR body LIKE '%大阪%' OR body LIKE '%福岡%' OR body LIKE '%札幌%'"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := execSQL(exec, sql); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkGinOrManyTermsWithIndex_10000(b *testing.B) {
-	exec := setupGinBenchTable(b, 10000, true)
-	sql := "SELECT id FROM articles WHERE body @@ '東京' OR body @@ '大阪' OR body @@ '福岡' OR body @@ '札幌'"
+	sql := "SELECT id FROM articles WHERE body @@ 'タワー' OR body @@ 'スカイツリー'"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if err := execSQL(exec, sql); err != nil {
@@ -203,10 +181,11 @@ func BenchmarkGinOrManyTermsWithIndex_10000(b *testing.B) {
 }
 
 // --- GIN AND+OR combined ---
+// ('タワー' OR 'スカイツリー') AND '名所': 20% hit (2,000/10,000行)
 
 func BenchmarkGinAndOrNoIndex_10000(b *testing.B) {
 	exec := setupGinBenchTable(b, 10000, false)
-	sql := "SELECT id FROM articles WHERE (body LIKE '%東京%' OR body LIKE '%大阪%') AND body LIKE '%名所%'"
+	sql := "SELECT id FROM articles WHERE (body LIKE '%タワー%' OR body LIKE '%スカイツリー%') AND body LIKE '%名所%'"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if err := execSQL(exec, sql); err != nil {
@@ -217,7 +196,7 @@ func BenchmarkGinAndOrNoIndex_10000(b *testing.B) {
 
 func BenchmarkGinAndOrWithIndex_10000(b *testing.B) {
 	exec := setupGinBenchTable(b, 10000, true)
-	sql := "SELECT id FROM articles WHERE (body @@ '東京' OR body @@ '大阪') AND body @@ '名所'"
+	sql := "SELECT id FROM articles WHERE (body @@ 'タワー' OR body @@ 'スカイツリー') AND body @@ '名所'"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if err := execSQL(exec, sql); err != nil {

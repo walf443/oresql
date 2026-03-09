@@ -305,14 +305,15 @@ func (e *LikeExpr) exprNode()        {}
 
 // MatchExpr represents <column> @@ <pattern> for full-text search.
 type MatchExpr struct {
-	Expr    Expr   // column expression
-	Pattern string // search term
+	Expr      Expr   // column expression
+	Pattern   string // search term
+	Tokenizer string // tokenizer type resolved at plan time (e.g. "word", "bigram")
 }
 
 func (e *MatchExpr) NodeType() string { return "Match" }
 func (e *MatchExpr) exprNode()        {}
 
-// CreateIndexStmt represents CREATE INDEX <name> ON <table>(<column>, ...) [USING method].
+// CreateIndexStmt represents CREATE INDEX <name> ON <table>(<column>, ...) [USING method] [WITH (...)].
 type CreateIndexStmt struct {
 	DatabaseName string // empty = current database
 	IndexName    string
@@ -320,6 +321,7 @@ type CreateIndexStmt struct {
 	ColumnNames  []string
 	Unique       bool
 	IndexMethod  string // "BTREE" (default) or "GIN"
+	Tokenizer    string // "word" (default), "bigram", etc. Only for GIN indexes
 }
 
 func (s *CreateIndexStmt) NodeType() string { return "CreateIndex" }

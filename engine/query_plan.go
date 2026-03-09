@@ -388,6 +388,8 @@ func (e *Executor) tryGinIndexLookup(where ast.Expr, info *TableInfo) ([]int64, 
 		if ginIdx == nil {
 			return nil, "", false
 		}
+		// Resolve tokenizer for use during row evaluation
+		matchExpr.Tokenizer = ginIdx.GetInfo().Tokenizer
 		keys := ginIdx.MatchToken(matchExpr.Pattern)
 		return keys, ginIdx.GetInfo().Name, true
 	}

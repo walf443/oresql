@@ -119,6 +119,10 @@ func (e *Executor) executeCreateIndex(stmt *ast.CreateIndexStmt) (*Result, error
 			return nil, fmt.Errorf("GIN index supports only single column")
 		}
 	}
+	tokenizer := stmt.Tokenizer
+	if indexType == "GIN" && tokenizer == "" {
+		tokenizer = "word"
+	}
 	idxInfo := &IndexInfo{
 		Name:        stmt.IndexName,
 		TableName:   info.Name,
@@ -126,6 +130,7 @@ func (e *Executor) executeCreateIndex(stmt *ast.CreateIndexStmt) (*Result, error
 		ColumnIdxs:  columnIdxs,
 		Type:        indexType,
 		Unique:      stmt.Unique,
+		Tokenizer:   tokenizer,
 	}
 	if err := db.storage.CreateIndex(idxInfo); err != nil {
 		return nil, err

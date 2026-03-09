@@ -391,7 +391,7 @@ func evalExprGeneric(expr ast.Expr, row Row, eval ExprEvaluator) (Value, error) 
 		if !ok {
 			return nil, fmt.Errorf("@@ requires TEXT operand, got %T", val)
 		}
-		return matchFullText(text, e.Pattern), nil
+		return matchFullText(text, e.Pattern, e.Tokenizer), nil
 	case *ast.ArithmeticExpr:
 		left, err := eval.Eval(e.Left, row)
 		if err != nil {

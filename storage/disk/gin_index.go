@@ -29,7 +29,12 @@ func (dgi *DiskGinIndex) GetInfo() *storage.IndexInfo {
 }
 
 // MatchToken returns sorted row keys whose indexed column contains the given token.
+// For bigram tokenizer, the search term is split into bigrams and the intersection
+// of all posting lists is returned.
 func (dgi *DiskGinIndex) MatchToken(token string) []int64 {
+	if dgi.info.Tokenizer == "bigram" {
+		return dgi.matchBigram(token)
+	}
 	lower := strings.ToLower(token)
 	prefix := ginEncodeToken(lower)
 
@@ -38,6 +43,56 @@ func (dgi *DiskGinIndex) MatchToken(token string) []int64 {
 		postingData := compositeKey[len(prefix):]
 		keys = decodePostingList(postingData)
 		return false // only one entry per token
+	})
+	return keys
+}
+
+// matchBigram splits the search term into bigrams and returns the intersection
+// of all posting lists.
+func (dgi *DiskGinIndex) matchBigram(token string) []int64 {
+	bigrams := ginBigramTokenize(token)
+	if len(bigrams) == 0 {
+		return nil
+	}
+
+	// Look up the first bigram
+	result := dgi.lookupSingleToken(bigrams[0])
+	if len(result) == 0 {
+		return nil
+	}
+
+	// Intersect with remaining bigrams
+	for _, bg := range bigrams[1:] {
+		other := dgi.lookupSingleToken(bg)
+		if len(other) == 0 {
+			return nil
+		}
+		otherSet := make(map[int64]struct{}, len(other))
+		for _, k := range other {
+			otherSet[k] = struct{}{}
+		}
+		filtered := result[:0]
+		for _, k := range result {
+			if _, exists := otherSet[k]; exists {
+				filtered = append(filtered, k)
+			}
+		}
+		result = filtered
+		if len(result) == 0 {
+			return nil
+		}
+	}
+	return result
+}
+
+// lookupSingleToken returns the posting list for a single token.
+func (dgi *DiskGinIndex) lookupSingleToken(token string) []int64 {
+	prefix := ginEncodeToken(token)
+	var keys []int64
+	dgi.tree.PrefixScan(prefix, func(compositeKey []byte) bool {
+		postingData := compositeKey[len(prefix):]
+		keys = decodePostingList(postingData)
+		return false
 	})
 	return keys
 }
@@ -85,7 +140,7 @@ func (dgi *DiskGinIndex) AddRow(key int64, row storage.Row) {
 	if !ok {
 		return // NULL or non-string values are not indexed
 	}
-	for _, tok := range ginTokenize(text) {
+	for _, tok := range dgi.tokenizeText(text) {
 		dgi.addToPostingList(tok, key)
 	}
 }
@@ -98,8 +153,18 @@ func (dgi *DiskGinIndex) RemoveRow(key int64, row storage.Row) {
 	if !ok {
 		return
 	}
-	for _, tok := range ginTokenize(text) {
+	for _, tok := range dgi.tokenizeText(text) {
 		dgi.removeFromPostingList(tok, key)
+	}
+}
+
+// tokenizeText dispatches to the appropriate tokenizer based on the index configuration.
+func (dgi *DiskGinIndex) tokenizeText(text string) []string {
+	switch dgi.info.Tokenizer {
+	case "bigram":
+		return ginBigramTokenize(text)
+	default:
+		return ginTokenize(text)
 	}
 }
 
@@ -247,6 +312,28 @@ func ginTokenize(text string) []string {
 	tokens := make([]string, len(words))
 	for i, w := range words {
 		tokens[i] = strings.ToLower(w)
+	}
+	return tokens
+}
+
+// ginBigramTokenize splits text into 2-character overlapping tokens (bigrams).
+func ginBigramTokenize(text string) []string {
+	lower := strings.ToLower(text)
+	runes := []rune(lower)
+	if len(runes) < 2 {
+		if len(runes) == 1 {
+			return []string{string(runes)}
+		}
+		return nil
+	}
+	seen := make(map[string]struct{})
+	tokens := make([]string, 0, len(runes)-1)
+	for i := 0; i < len(runes)-1; i++ {
+		bigram := string(runes[i : i+2])
+		if _, ok := seen[bigram]; !ok {
+			seen[bigram] = struct{}{}
+			tokens = append(tokens, bigram)
+		}
 	}
 	return tokens
 }

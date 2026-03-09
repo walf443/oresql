@@ -57,6 +57,7 @@ type IndexInfo struct {
 	ColumnIdxs  []int
 	Type        string // "BTREE", "HASH", or "GIN"
 	Unique      bool
+	Tokenizer   string // "word" (default), "bigram", etc. Only for GIN indexes
 }
 
 // KeyEncoding is a binary-encoded index key.
@@ -672,6 +673,9 @@ func EncodeMeta(info *TableInfo, indexes []*IndexInfo) []byte {
 		} else {
 			buf = append(buf, 0x00)
 		}
+
+		// Tokenizer (for GIN indexes)
+		PutString(&buf, idx.Tokenizer)
 	}
 
 	return buf
@@ -827,6 +831,14 @@ func DecodeMeta(data []byte) (*TableInfo, []*IndexInfo, error) {
 		}
 		idx.Unique = data[pos] != 0
 		pos++
+
+		// Tokenizer (for GIN indexes)
+		if pos < len(data) {
+			idx.Tokenizer, pos, err = GetString(data, pos)
+			if err != nil {
+				return nil, nil, fmt.Errorf("reading index tokenizer: %w", err)
+			}
+		}
 
 		indexes = append(indexes, idx)
 	}

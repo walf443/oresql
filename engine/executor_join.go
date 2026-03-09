@@ -252,7 +252,7 @@ func evalExprJoin(expr ast.Expr, row Row, jc *JoinContext) (Value, error) {
 		if !ok {
 			return nil, fmt.Errorf("@@ requires TEXT operand, got %T", val)
 		}
-		return matchFullText(text, e.Pattern), nil
+		return matchFullText(text, e.Pattern, e.Tokenizer), nil
 	case *ast.ArithmeticExpr:
 		left, err := evalExprJoin(e.Left, row, jc)
 		if err != nil {

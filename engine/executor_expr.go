@@ -250,7 +250,7 @@ func evalExpr(expr ast.Expr, row Row, info *TableInfo) (Value, error) {
 		if !ok {
 			return nil, fmt.Errorf("@@ requires TEXT operand, got %T", val)
 		}
-		return matchFullText(text, e.Pattern), nil
+		return matchFullText(text, e.Pattern, e.Tokenizer), nil
 	case *ast.ArithmeticExpr:
 		left, err := evalExpr(e.Left, row, info)
 		if err != nil {
@@ -1125,18 +1125,26 @@ func evalCast(cast *ast.CastExpr, row Row, eval ExprEvaluator) (Value, error) {
 	}
 }
 
-// matchFullText checks if text contains the given search term as a token.
-func matchFullText(text, searchTerm string) bool {
+// matchFullText checks if text contains the given search term using the specified tokenizer.
+// For "word" (or empty) tokenizer, it checks exact word-token matching.
+// For "bigram" tokenizer, it checks substring containment.
+func matchFullText(text, searchTerm, tokenizer string) bool {
+	lowerText := strings.ToLower(text)
 	lower := strings.ToLower(searchTerm)
-	words := strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
-		return !isLetterOrDigit(r)
-	})
-	for _, w := range words {
-		if w == lower {
-			return true
+	switch tokenizer {
+	case "bigram":
+		return strings.Contains(lowerText, lower)
+	default: // "word" or empty
+		words := strings.FieldsFunc(lowerText, func(r rune) bool {
+			return !isLetterOrDigit(r)
+		})
+		for _, w := range words {
+			if w == lower {
+				return true
+			}
 		}
+		return false
 	}
-	return false
 }
 
 func isLetterOrDigit(r rune) bool {

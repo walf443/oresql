@@ -219,6 +219,107 @@ func TestGinIndexLikeContainsNotUsesGin(t *testing.T) {
 	}
 }
 
+func TestGinIndexBigramTokenizer(t *testing.T) {
+	for _, st := range []string{"memory", "disk"} {
+		t.Run(st, func(t *testing.T) {
+			exec := setupGinTestExecutor(t, st)
+			run(t, exec, "CREATE TABLE articles (id INT PRIMARY KEY, body TEXT)")
+			run(t, exec, "INSERT INTO articles VALUES (1, '東京都は日本の首都です')")
+			run(t, exec, "INSERT INTO articles VALUES (2, '京都は古い都市です')")
+			run(t, exec, "INSERT INTO articles VALUES (3, '大阪は楽しい街です')")
+			run(t, exec, "CREATE INDEX idx_body_gin ON articles(body) USING GIN WITH (tokenizer = 'bigram')")
+
+			// @@ '東京' should match row 1 (contains bigram "東京")
+			result := run(t, exec, "SELECT id FROM articles WHERE body @@ '東京'")
+			require.Len(t, result.Rows, 1)
+			assert.Equal(t, int64(1), result.Rows[0][0])
+
+			// @@ '京都' should match rows 1 ("東京都" contains "京都") and 2 ("京都")
+			result = run(t, exec, "SELECT id FROM articles WHERE body @@ '京都'")
+			require.Len(t, result.Rows, 2)
+			assert.Equal(t, int64(1), result.Rows[0][0])
+			assert.Equal(t, int64(2), result.Rows[1][0])
+
+			// @@ '大阪' should match row 3 only
+			result = run(t, exec, "SELECT id FROM articles WHERE body @@ '大阪'")
+			require.Len(t, result.Rows, 1)
+			assert.Equal(t, int64(3), result.Rows[0][0])
+
+			// @@ '東京都' (3 chars) should be split into bigrams ["東京","京都"]
+			// and intersect: row 1 has both, row 2 has "京都" but not "東京"
+			result = run(t, exec, "SELECT id FROM articles WHERE body @@ '東京都'")
+			require.Len(t, result.Rows, 1)
+			assert.Equal(t, int64(1), result.Rows[0][0])
+
+			// @@ '日本の首都' (5 chars) → bigrams ["日本","本の","の首","首都"]
+			// only row 1 has all of them
+			result = run(t, exec, "SELECT id FROM articles WHERE body @@ '日本の首都'")
+			require.Len(t, result.Rows, 1)
+			assert.Equal(t, int64(1), result.Rows[0][0])
+
+			// @@ '古い都市' → bigrams ["古い","い都","都市"]
+			// only row 2 has all of them
+			result = run(t, exec, "SELECT id FROM articles WHERE body @@ '古い都市'")
+			require.Len(t, result.Rows, 1)
+			assert.Equal(t, int64(2), result.Rows[0][0])
+
+			// @@ '福岡' should match nothing
+			result = run(t, exec, "SELECT id FROM articles WHERE body @@ '福岡'")
+			require.Len(t, result.Rows, 0)
+		})
+	}
+}
+
+func TestGinIndexBigramLikePrefix(t *testing.T) {
+	for _, st := range []string{"memory", "disk"} {
+		t.Run(st, func(t *testing.T) {
+			exec := setupGinTestExecutor(t, st)
+			run(t, exec, "CREATE TABLE docs (id INT PRIMARY KEY, content TEXT)")
+			run(t, exec, "INSERT INTO docs VALUES (1, '東京タワー')")
+			run(t, exec, "INSERT INTO docs VALUES (2, '東京スカイツリー')")
+			run(t, exec, "INSERT INTO docs VALUES (3, '大阪城')")
+			run(t, exec, "CREATE INDEX idx_gin ON docs(content) USING GIN WITH (tokenizer = 'bigram')")
+
+			// LIKE '東京%' should use GIN and match rows 1, 2
+			result := run(t, exec, "SELECT id FROM docs WHERE content LIKE '東京%'")
+			require.Len(t, result.Rows, 2)
+			assert.Equal(t, int64(1), result.Rows[0][0])
+			assert.Equal(t, int64(2), result.Rows[1][0])
+
+			assertExplain(t, exec, "SELECT id FROM docs WHERE content LIKE '東京%'", []planRow{
+				{Table: "docs", Type: "fulltext", Key: "idx_gin"},
+			})
+		})
+	}
+}
+
+func TestGinIndexBigramPersistence(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	db := NewDatabase("test", WithDataDir(tmpDir), WithStorageType("disk"))
+	exec := NewExecutor(db)
+	run(t, exec, "CREATE TABLE articles (id INT PRIMARY KEY, body TEXT)")
+	run(t, exec, "INSERT INTO articles VALUES (1, '東京都')")
+	run(t, exec, "INSERT INTO articles VALUES (2, '京都市')")
+	run(t, exec, "CREATE INDEX idx_gin ON articles(body) USING GIN WITH (tokenizer = 'bigram')")
+
+	result := run(t, exec, "SELECT id FROM articles WHERE body @@ '東京'")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, int64(1), result.Rows[0][0])
+
+	// Reopen database
+	db2 := NewDatabase("test", WithDataDir(tmpDir), WithStorageType("disk"))
+	exec2 := NewExecutor(db2)
+
+	// Verify bigram GIN index still works after reopening
+	result2 := run(t, exec2, "SELECT id FROM articles WHERE body @@ '東京'")
+	require.Len(t, result2.Rows, 1)
+	assert.Equal(t, int64(1), result2.Rows[0][0])
+
+	result3 := run(t, exec2, "SELECT id FROM articles WHERE body @@ '京都'")
+	require.Len(t, result3.Rows, 2)
+}
+
 func TestGinIndexPersistence(t *testing.T) {
 	tmpDir := t.TempDir()
 

@@ -1981,6 +1981,30 @@ func (p *Parser) parseCreateIndex() (ast.Statement, error) {
 		}
 	}
 
+	// Optional: WITH (tokenizer = 'bigram')
+	tokenizer := ""
+	if p.curToken.Type == token.WITH {
+		p.nextToken() // skip WITH
+		if err := p.expectToken(token.LPAREN); err != nil {
+			return nil, err
+		}
+		if !p.isIdent() || strings.ToUpper(p.curToken.Literal) != "TOKENIZER" {
+			return nil, fmt.Errorf("expected TOKENIZER in WITH clause, got %q", p.curToken.Literal)
+		}
+		p.nextToken() // skip TOKENIZER
+		if err := p.expectToken(token.EQ); err != nil {
+			return nil, err
+		}
+		if p.curToken.Type != token.STRING_LIT {
+			return nil, fmt.Errorf("expected string value for tokenizer, got %s", p.curToken.Type)
+		}
+		tokenizer = p.curToken.Literal
+		p.nextToken() // skip value
+		if err := p.expectToken(token.RPAREN); err != nil {
+			return nil, err
+		}
+	}
+
 	return &ast.CreateIndexStmt{
 		DatabaseName: dbName,
 		IndexName:    indexName,
@@ -1988,6 +2012,7 @@ func (p *Parser) parseCreateIndex() (ast.Statement, error) {
 		ColumnNames:  columnNames,
 		Unique:       unique,
 		IndexMethod:  indexMethod,
+		Tokenizer:    tokenizer,
 	}, nil
 }
 

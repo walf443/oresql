@@ -293,6 +293,51 @@ func TestGinIndexBigramLikePrefix(t *testing.T) {
 	}
 }
 
+func TestGinIndexBigramLikeAllPatterns(t *testing.T) {
+	for _, st := range []string{"memory", "disk"} {
+		t.Run(st, func(t *testing.T) {
+			exec := setupGinTestExecutor(t, st)
+			run(t, exec, "CREATE TABLE docs (id INT PRIMARY KEY, content TEXT)")
+			run(t, exec, "INSERT INTO docs VALUES (1, '東京タワー')")
+			run(t, exec, "INSERT INTO docs VALUES (2, '東京スカイツリー')")
+			run(t, exec, "INSERT INTO docs VALUES (3, '大阪城')")
+			run(t, exec, "INSERT INTO docs VALUES (4, '京都タワー')")
+			run(t, exec, "CREATE INDEX idx_gin ON docs(content) USING GIN WITH (tokenizer = 'bigram')")
+
+			// LIKE '%タワー' (suffix) should use GIN, match rows 1, 4
+			result := run(t, exec, "SELECT id FROM docs WHERE content LIKE '%タワー'")
+			require.Len(t, result.Rows, 2)
+			assert.Equal(t, int64(1), result.Rows[0][0])
+			assert.Equal(t, int64(4), result.Rows[1][0])
+			assertExplain(t, exec, "SELECT id FROM docs WHERE content LIKE '%タワー'", []planRow{
+				{Table: "docs", Type: "fulltext", Key: "idx_gin"},
+			})
+
+			// LIKE '%東京%' (contains) should use GIN, match rows 1, 2
+			result = run(t, exec, "SELECT id FROM docs WHERE content LIKE '%東京%'")
+			require.Len(t, result.Rows, 2)
+			assert.Equal(t, int64(1), result.Rows[0][0])
+			assert.Equal(t, int64(2), result.Rows[1][0])
+			assertExplain(t, exec, "SELECT id FROM docs WHERE content LIKE '%東京%'", []planRow{
+				{Table: "docs", Type: "fulltext", Key: "idx_gin"},
+			})
+
+			// LIKE '大阪城' (exact) should use GIN, match row 3
+			result = run(t, exec, "SELECT id FROM docs WHERE content LIKE '大阪城'")
+			require.Len(t, result.Rows, 1)
+			assert.Equal(t, int64(3), result.Rows[0][0])
+			assertExplain(t, exec, "SELECT id FROM docs WHERE content LIKE '大阪城'", []planRow{
+				{Table: "docs", Type: "fulltext", Key: "idx_gin"},
+			})
+
+			// LIKE '%京%' (single char) should NOT use GIN (< 2 chars literal)
+			assertExplain(t, exec, "SELECT id FROM docs WHERE content LIKE '%京%'", []planRow{
+				{Table: "docs", Type: "full scan"},
+			})
+		})
+	}
+}
+
 func TestGinIndexBigramPersistence(t *testing.T) {
 	tmpDir := t.TempDir()
 

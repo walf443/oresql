@@ -394,7 +394,7 @@ func (e *Executor) tryGinIndexLookup(where ast.Expr, info *TableInfo) ([]int64, 
 		return keys, ginIdx.GetInfo().Name, true
 	}
 
-	// Handle LIKE 'word%' prefix pattern
+	// Handle LIKE patterns
 	if likeExpr, ok := where.(*ast.LikeExpr); ok && !likeExpr.Not {
 		ident, ok := likeExpr.Left.(*ast.IdentExpr)
 		if !ok {
@@ -402,16 +402,6 @@ func (e *Executor) tryGinIndexLookup(where ast.Expr, info *TableInfo) ([]int64, 
 		}
 		patLit, ok := likeExpr.Pattern.(*ast.StringLitExpr)
 		if !ok {
-			return nil, "", false
-		}
-		// Check for word% pattern (prefix search)
-		pat := patLit.Value
-		if len(pat) < 2 || pat[0] == '%' || pat[len(pat)-1] != '%' {
-			return nil, "", false
-		}
-		prefix := pat[:len(pat)-1]
-		// Ensure the prefix part has no wildcards
-		if strings.ContainsAny(prefix, "%_") {
 			return nil, "", false
 		}
 		col, err := info.FindColumn(ident.Name)
@@ -422,11 +412,55 @@ func (e *Executor) tryGinIndexLookup(where ast.Expr, info *TableInfo) ([]int64, 
 		if ginIdx == nil {
 			return nil, "", false
 		}
+
+		pat := patLit.Value
+		tokenizer := ginIdx.GetInfo().Tokenizer
+
+		if tokenizer == "bigram" {
+			// For bigram tokenizer, extract contiguous literal segments from the
+			// LIKE pattern and use MatchToken (bigram intersection) to narrow candidates.
+			longest := longestLiteralSegment(pat)
+			if len([]rune(longest)) < 2 {
+				return nil, "", false
+			}
+			keys := ginIdx.MatchToken(longest)
+			return keys, ginIdx.GetInfo().Name, true
+		}
+
+		// Word tokenizer: only 'word%' prefix pattern
+		if len(pat) < 2 || pat[0] == '%' || pat[len(pat)-1] != '%' {
+			return nil, "", false
+		}
+		prefix := pat[:len(pat)-1]
+		if strings.ContainsAny(prefix, "%_") {
+			return nil, "", false
+		}
 		keys := ginIdx.MatchPrefix(prefix)
 		return keys, ginIdx.GetInfo().Name, true
 	}
 
 	return nil, "", false
+}
+
+// longestLiteralSegment extracts the longest contiguous run of non-wildcard
+// characters from a LIKE pattern. Wildcards are '%' and '_'.
+func longestLiteralSegment(pattern string) string {
+	best := ""
+	current := []rune{}
+	for _, r := range pattern {
+		if r == '%' || r == '_' {
+			if len(current) > len([]rune(best)) {
+				best = string(current)
+			}
+			current = current[:0]
+		} else {
+			current = append(current, r)
+		}
+	}
+	if len(current) > len([]rune(best)) {
+		best = string(current)
+	}
+	return best
 }
 
 // planCoveringIndex checks if the query can be satisfied entirely from an index

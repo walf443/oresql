@@ -489,11 +489,15 @@ func TestGinIndexBTreePriority(t *testing.T) {
 
 			// IN: B-tree should be used (access type "range"), not GIN ("fulltext")
 			explain2 := run(t, exec, "EXPLAIN SELECT id FROM articles WHERE body IN ('東京都は日本の首都です', '大阪は楽しい街です')")
+			btreeUsed = false
 			ginUsed = false
 			hasRange := false
 			for _, row := range explain2.Rows {
 				for _, col := range row {
 					if s, ok := col.(string); ok {
+						if s == "idx_body_btree" {
+							btreeUsed = true
+						}
 						if s == "idx_body_gin" {
 							ginUsed = true
 						}
@@ -504,6 +508,7 @@ func TestGinIndexBTreePriority(t *testing.T) {
 				}
 			}
 			assert.True(t, hasRange, "B-tree index should be used for IN (access type 'range')")
+			assert.True(t, btreeUsed, "B-tree index name should appear in EXPLAIN for IN")
 			assert.False(t, ginUsed, "GIN index should not be used for IN when B-tree is available")
 
 			// Result correctness

@@ -244,6 +244,23 @@ func findUsedIndexName(where ast.Expr, info *TableInfo, db *Database) string {
 	return ""
 }
 
+// findUsedInIndexName finds the name of the index used for IN conditions.
+func findUsedInIndexName(where ast.Expr, info *TableInfo, db *Database) string {
+	inConds := extractInConditions(where)
+	indexes := db.storage.GetIndexes(info.Name)
+	for _, idx := range indexes {
+		idxInfo := idx.GetInfo()
+		if len(idxInfo.ColumnIdxs) != 1 {
+			continue
+		}
+		colName := strings.ToLower(idxInfo.ColumnNames[0])
+		if _, ok := inConds[colName]; ok {
+			return idxInfo.Name
+		}
+	}
+	return ""
+}
+
 // findUsedRangeIndexName finds the name of the index used for range conditions.
 func findUsedRangeIndexName(where ast.Expr, info *TableInfo, db *Database) string {
 	rangeConds := extractRangeConditions(where)

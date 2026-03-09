@@ -293,8 +293,13 @@ func (e *Executor) enrichPlanForExplain(plan *SelectPlan, stmt *ast.SelectStmt) 
 	// Enrich WhereIndexName if not already set
 	if plan.WhereIndex != WhereNoIndex && plan.WhereIndexName == "" && plan.WhereIndex != WherePKLookup {
 		switch plan.WhereIndex {
-		case WhereIndexLookup, WhereIndexIn:
+		case WhereIndexLookup:
 			plan.WhereIndexName = findUsedIndexName(stmt.Where, plan.info, plan.db)
+		case WhereIndexIn:
+			plan.WhereIndexName = findUsedIndexName(stmt.Where, plan.info, plan.db)
+			if plan.WhereIndexName == "" {
+				plan.WhereIndexName = findUsedInIndexName(stmt.Where, plan.info, plan.db)
+			}
 		case WhereRangeScan:
 			plan.WhereIndexName = findUsedRangeIndexName(stmt.Where, plan.info, plan.db)
 		case WhereIndexMerge:

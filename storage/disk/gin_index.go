@@ -49,7 +49,8 @@ func (dgi *DiskGinIndex) MatchToken(token string) []int64 {
 
 // matchBigram splits the search term into bigrams and returns the intersection
 // of all posting lists. Bigrams are processed in ascending order of posting list
-// size to minimize intermediate result sizes.
+// size to minimize intermediate result sizes. Uses block-level skipping to avoid
+// fully decoding posting lists whose block ranges don't overlap.
 func (dgi *DiskGinIndex) matchBigram(token string) []int64 {
 	bigrams := ginBigramTokenize(token)
 	if len(bigrams) == 0 {
@@ -57,50 +58,43 @@ func (dgi *DiskGinIndex) matchBigram(token string) []int64 {
 	}
 
 	// Get posting list sizes for all bigrams (read only the count varint)
-	type bigramCount struct {
+	type bigramInfo struct {
 		token string
 		count uint64
 	}
-	counts := make([]bigramCount, 0, len(bigrams))
+	infos := make([]bigramInfo, 0, len(bigrams))
 	for _, bg := range bigrams {
 		c := dgi.postingListCount(bg)
 		if c == 0 {
 			return nil // any empty posting list means no results
 		}
-		counts = append(counts, bigramCount{bg, c})
+		infos = append(infos, bigramInfo{bg, c})
 	}
 
 	// Sort by posting list size (smallest first)
-	sort.Slice(counts, func(i, j int) bool { return counts[i].count < counts[j].count })
+	sort.Slice(infos, func(i, j int) bool { return infos[i].count < infos[j].count })
 
-	// Start with the smallest posting list
-	result := dgi.lookupSingleToken(counts[0].token)
-	if len(result) == 0 {
+	// Start with the smallest posting list (decode fully)
+	resultData := dgi.lookupRawPostingList(infos[0].token)
+	if resultData == nil {
 		return nil
 	}
 
-	// Intersect with remaining bigrams in ascending size order
-	for _, bc := range counts[1:] {
-		other := dgi.lookupSingleToken(bc.token)
-		if len(other) == 0 {
+	// Intersect with remaining bigrams using block-level skipping
+	for _, info := range infos[1:] {
+		otherData := dgi.lookupRawPostingList(info.token)
+		if otherData == nil {
 			return nil
 		}
-		otherSet := make(map[int64]struct{}, len(other))
-		for _, k := range other {
-			otherSet[k] = struct{}{}
-		}
-		filtered := result[:0]
-		for _, k := range result {
-			if _, exists := otherSet[k]; exists {
-				filtered = append(filtered, k)
-			}
-		}
-		result = filtered
-		if len(result) == 0 {
+		intersected := intersectBlockedPostingLists(resultData, otherData)
+		if len(intersected) == 0 {
 			return nil
 		}
+		// Re-encode for the next intersection round
+		resultData = encodePostingList(intersected)
 	}
-	return result
+
+	return decodePostingList(resultData)
 }
 
 // postingListCount returns the number of entries in the posting list for a token
@@ -128,6 +122,20 @@ func (dgi *DiskGinIndex) lookupSingleToken(token string) []int64 {
 		return false
 	})
 	return keys
+}
+
+// lookupRawPostingList returns the raw encoded posting list bytes for a single token.
+// This avoids decoding when the caller needs to use block-level operations.
+func (dgi *DiskGinIndex) lookupRawPostingList(token string) []byte {
+	prefix := ginEncodeToken(token)
+	var raw []byte
+	dgi.tree.PrefixScan(prefix, func(compositeKey []byte) bool {
+		postingData := compositeKey[len(prefix):]
+		raw = make([]byte, len(postingData))
+		copy(raw, postingData)
+		return false
+	})
+	return raw
 }
 
 // MatchPrefix returns sorted row keys whose indexed column contains a token
@@ -263,42 +271,223 @@ func (dgi *DiskGinIndex) removeFromPostingList(token string, rowKey int64) {
 	}
 }
 
-// encodePostingList encodes a sorted list of row keys using delta + varint encoding.
-//
-// Format: varint(count) || varint(keys[0]) || varint(keys[1]-keys[0]) || ...
-func encodePostingList(keys []int64) []byte {
-	if len(keys) == 0 {
-		return []byte{0}
-	}
-	// Pre-allocate: worst case ~10 bytes per varint
-	buf := make([]byte, 0, len(keys)*5+10)
-	buf = appendVarint(buf, uint64(len(keys)))
-	buf = appendVarint(buf, uint64(keys[0]))
-	for i := 1; i < len(keys); i++ {
-		delta := uint64(keys[i] - keys[i-1])
-		buf = appendVarint(buf, delta)
-	}
-	return buf
+// postingBlockSize is the number of keys per block in a blocked posting list.
+const postingBlockSize = 128
+
+// postingBlockHeader holds metadata for a single block in a blocked posting list.
+type postingBlockHeader struct {
+	base         int64 // first (minimum) key in the block
+	last         int64 // last (maximum) key in the block
+	count        int   // number of keys in this block
+	dataByteSize int   // byte length of the delta data for this block
 }
 
-// decodePostingList decodes a delta + varint encoded posting list.
-func decodePostingList(data []byte) []int64 {
+// blockedPostingList provides block-level access to a posting list.
+// The headers are parsed eagerly (small), while block data is decoded on demand.
+type blockedPostingList struct {
+	totalCount int
+	headers    []postingBlockHeader
+	dataStart  int    // byte offset where block data begins
+	data       []byte // the full encoded posting list bytes
+}
+
+// parseBlockedPostingList parses the headers of a blocked posting list without
+// decoding the block data. This allows binary search on block bases.
+func parseBlockedPostingList(data []byte) *blockedPostingList {
 	if len(data) == 0 {
+		return &blockedPostingList{}
+	}
+	totalCount, pos := readVarint(data, 0)
+	if totalCount == 0 {
+		return &blockedPostingList{}
+	}
+	numBlocks, pos := readVarint(data, pos)
+	headers := make([]postingBlockHeader, numBlocks)
+	for i := uint64(0); i < numBlocks; i++ {
+		baseVal, pos2 := readVarint(data, pos)
+		lastDelta, pos3 := readVarint(data, pos2)
+		count, pos4 := readVarint(data, pos3)
+		dataByteSize, pos5 := readVarint(data, pos4)
+		headers[i] = postingBlockHeader{
+			base:         int64(baseVal),
+			last:         int64(baseVal) + int64(lastDelta),
+			count:        int(count),
+			dataByteSize: int(dataByteSize),
+		}
+		pos = pos5
+	}
+	return &blockedPostingList{
+		totalCount: int(totalCount),
+		headers:    headers,
+		dataStart:  pos,
+		data:       data,
+	}
+}
+
+// decodeBlock decodes the keys in a single block by index.
+func (bpl *blockedPostingList) decodeBlock(blockIdx int) []int64 {
+	if blockIdx >= len(bpl.headers) {
 		return nil
 	}
-	count, pos := readVarint(data, 0)
-	if count == 0 {
+	hdr := bpl.headers[blockIdx]
+	if hdr.count == 0 {
 		return nil
 	}
-	keys := make([]int64, count)
-	val, pos := readVarint(data, pos)
-	keys[0] = int64(val)
-	for i := uint64(1); i < count; i++ {
-		delta, newPos := readVarint(data, pos)
+
+	// Compute byte offset for this block's data
+	offset := bpl.dataStart
+	for i := 0; i < blockIdx; i++ {
+		offset += bpl.headers[i].dataByteSize
+	}
+
+	keys := make([]int64, hdr.count)
+	keys[0] = hdr.base
+	pos := offset
+	for i := 1; i < hdr.count; i++ {
+		delta, newPos := readVarint(bpl.data, pos)
 		pos = newPos
 		keys[i] = keys[i-1] + int64(delta)
 	}
 	return keys
+}
+
+// encodePostingList encodes a sorted list of row keys using blocked delta + varint encoding.
+//
+// Format:
+//
+//	varint(totalCount) || varint(numBlocks) ||
+//	[varint(base) || varint(lastDelta) || varint(count) || varint(dataByteSize)] * numBlocks ||
+//	[varint(delta1) || varint(delta2) || ...] * numBlocks
+//
+// Each block contains up to postingBlockSize keys. The header stores the base
+// (absolute first value), last-base delta, count, and byte size of the delta data,
+// enabling binary search on block ranges and skipping to any block.
+func encodePostingList(keys []int64) []byte {
+	if len(keys) == 0 {
+		return []byte{0}
+	}
+
+	numBlocks := (len(keys) + postingBlockSize - 1) / postingBlockSize
+
+	// First pass: encode each block's delta data to get byte sizes
+	blockData := make([][]byte, numBlocks)
+	type blockMeta struct {
+		base  int64
+		last  int64
+		count int
+	}
+	metas := make([]blockMeta, numBlocks)
+
+	for b := 0; b < numBlocks; b++ {
+		start := b * postingBlockSize
+		end := start + postingBlockSize
+		if end > len(keys) {
+			end = len(keys)
+		}
+		blockKeys := keys[start:end]
+		metas[b] = blockMeta{
+			base:  blockKeys[0],
+			last:  blockKeys[len(blockKeys)-1],
+			count: len(blockKeys),
+		}
+		// Encode deltas (count-1 deltas, since base is stored in header)
+		var bd []byte
+		for i := 1; i < len(blockKeys); i++ {
+			delta := uint64(blockKeys[i] - blockKeys[i-1])
+			bd = appendVarint(bd, delta)
+		}
+		blockData[b] = bd
+	}
+
+	// Second pass: build the full encoded output
+	buf := make([]byte, 0, len(keys)*5+numBlocks*20+10)
+	buf = appendVarint(buf, uint64(len(keys)))
+	buf = appendVarint(buf, uint64(numBlocks))
+
+	// Block headers
+	for b := 0; b < numBlocks; b++ {
+		buf = appendVarint(buf, uint64(metas[b].base))
+		buf = appendVarint(buf, uint64(metas[b].last-metas[b].base))
+		buf = appendVarint(buf, uint64(metas[b].count))
+		buf = appendVarint(buf, uint64(len(blockData[b])))
+	}
+
+	// Block data
+	for b := 0; b < numBlocks; b++ {
+		buf = append(buf, blockData[b]...)
+	}
+
+	return buf
+}
+
+// decodePostingList decodes a blocked delta + varint encoded posting list.
+func decodePostingList(data []byte) []int64 {
+	bpl := parseBlockedPostingList(data)
+	if bpl.totalCount == 0 {
+		return nil
+	}
+	keys := make([]int64, 0, bpl.totalCount)
+	for i := range bpl.headers {
+		keys = append(keys, bpl.decodeBlock(i)...)
+	}
+	return keys
+}
+
+// intersectBlockedPostingLists intersects two encoded posting lists using
+// block-level skipping. Blocks whose ranges don't overlap are skipped entirely.
+func intersectBlockedPostingLists(dataA, dataB []byte) []int64 {
+	a := parseBlockedPostingList(dataA)
+	b := parseBlockedPostingList(dataB)
+	if a.totalCount == 0 || b.totalCount == 0 {
+		return nil
+	}
+
+	var result []int64
+	bi := 0 // current block index in b
+
+	for ai := 0; ai < len(a.headers); ai++ {
+		aHdr := a.headers[ai]
+
+		// Advance b until we find a block that could overlap with a's current block
+		for bi < len(b.headers) && b.headers[bi].last < aHdr.base {
+			bi++
+		}
+		if bi >= len(b.headers) {
+			break
+		}
+
+		// Skip a's block if it ends before b's current block starts
+		if aHdr.last < b.headers[bi].base {
+			continue
+		}
+
+		// Blocks potentially overlap — decode a's block
+		aKeys := a.decodeBlock(ai)
+
+		// Check against all b blocks that could overlap with a's range
+		for bj := bi; bj < len(b.headers); bj++ {
+			bHdr := b.headers[bj]
+			if bHdr.base > aHdr.last {
+				break // no more b blocks can overlap
+			}
+			bKeys := b.decodeBlock(bj)
+
+			// Merge-intersect two sorted slices
+			i, j := 0, 0
+			for i < len(aKeys) && j < len(bKeys) {
+				if aKeys[i] == bKeys[j] {
+					result = append(result, aKeys[i])
+					i++
+					j++
+				} else if aKeys[i] < bKeys[j] {
+					i++
+				} else {
+					j++
+				}
+			}
+		}
+	}
+	return result
 }
 
 // appendVarint appends a varint-encoded uint64 to buf.

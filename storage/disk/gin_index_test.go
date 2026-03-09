@@ -136,15 +136,9 @@ func TestRoaringPostingListIntersect(t *testing.T) {
 	b := []int64{3, 5, 15, 22, 25, 40}
 	expected := []int64{5, 15, 25}
 
-	rbA := NewRoaringBitmap()
-	for _, k := range a {
-		rbA.Add(uint32(k))
-	}
-	rbB := NewRoaringBitmap()
-	for _, k := range b {
-		rbB.Add(uint32(k))
-	}
-	result := roaringToInt64(rbA.And(rbB))
+	rbA := storage.RoaringFromInt64Slice(a)
+	rbB := storage.RoaringFromInt64Slice(b)
+	result := rbA.And(rbB).ToInt64Slice()
 	assert.Equal(t, expected, result)
 }
 
@@ -153,14 +147,8 @@ func TestRoaringPostingListUnion(t *testing.T) {
 	b := []int64{3, 5, 20}
 	expected := []int64{1, 3, 5, 10, 20}
 
-	rbA := NewRoaringBitmap()
-	for _, k := range a {
-		rbA.Add(uint32(k))
-	}
-	rbB := NewRoaringBitmap()
-	for _, k := range b {
-		rbB.Add(uint32(k))
-	}
-	result := roaringToInt64(rbA.Or(rbB))
+	rbA := storage.RoaringFromInt64Slice(a)
+	rbB := storage.RoaringFromInt64Slice(b)
+	result := rbA.Or(rbB).ToInt64Slice()
 	assert.Equal(t, expected, result)
 }

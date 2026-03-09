@@ -98,6 +98,12 @@ func (gi *GinIndex) matchBigram(token string) []int64 {
 	return keys
 }
 
+// MatchTokenBitmap returns a RoaringBitmap of row keys for the given token.
+func (gi *GinIndex) MatchTokenBitmap(token string) *storage.RoaringBitmap {
+	keys := gi.MatchToken(token)
+	return storage.RoaringFromInt64Slice(keys)
+}
+
 // MatchPrefix returns sorted row keys whose indexed column contains a token
 // that starts with the given prefix.
 func (gi *GinIndex) MatchPrefix(prefix string) []int64 {

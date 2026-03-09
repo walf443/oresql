@@ -1,10 +1,10 @@
 package engine
 
 import (
-	"sort"
 	"strings"
 
 	"github.com/walf443/oresql/ast"
+	"github.com/walf443/oresql/storage"
 )
 
 // SelectPlanType enumerates the top-level execution strategies for SELECT.
@@ -368,23 +368,23 @@ func (e *Executor) planWhereIndex(plan *SelectPlan, where ast.Expr, info *TableI
 		plan.batchKeys = keys
 		return
 	}
-	if keys, indexName, ok := e.tryGinIndexLookup(where, info); ok {
+	if rb, indexName, ok := e.tryGinBitmapLookup(where, info); ok {
 		plan.WhereIndex = WhereGinMatch
 		plan.WhereIndexName = indexName
-		plan.batchKeys = keys
+		plan.batchKeys = rb.ToInt64Slice()
 		return
 	}
 }
 
-// tryGinIndexLookup checks if the WHERE clause is a @@ (full-text match)
-// expression on a column that has a GIN index, and if so returns the matching row keys.
-// It also handles LIKE '%word%' patterns by using the GIN index's MatchSubstring.
-// For AND conditions, it recursively extracts GIN-usable conditions and intersects results.
-func (e *Executor) tryGinIndexLookup(where ast.Expr, info *TableInfo) ([]int64, string, bool) {
-	// Handle AND/OR: extract GIN conditions from both sides
+// tryGinBitmapLookup checks if the WHERE clause can use a GIN index and returns
+// a RoaringBitmap of matching row keys. Using RoaringBitmap enables efficient
+// And/Or operations without intermediate []int64 conversion.
+// enabling efficient And/Or operations without intermediate []int64 conversion.
+func (e *Executor) tryGinBitmapLookup(where ast.Expr, info *TableInfo) (*storage.RoaringBitmap, string, bool) {
+	// Handle AND/OR: use RoaringBitmap And/Or directly
 	if logExpr, ok := where.(*ast.LogicalExpr); ok {
-		leftKeys, leftIdx, leftOk := e.tryGinIndexLookup(logExpr.Left, info)
-		rightKeys, rightIdx, rightOk := e.tryGinIndexLookup(logExpr.Right, info)
+		leftBM, leftIdx, leftOk := e.tryGinBitmapLookup(logExpr.Left, info)
+		rightBM, rightIdx, rightOk := e.tryGinBitmapLookup(logExpr.Right, info)
 
 		indexName := leftIdx
 		if indexName == "" {
@@ -394,21 +394,18 @@ func (e *Executor) tryGinIndexLookup(where ast.Expr, info *TableInfo) ([]int64, 
 		switch logExpr.Op {
 		case "AND":
 			if leftOk && rightOk {
-				// Both sides use GIN — intersect the results
-				return intersectSortedKeys(leftKeys, rightKeys), indexName, true
+				return leftBM.And(rightBM), indexName, true
 			}
 			if leftOk {
-				return leftKeys, leftIdx, true
+				return leftBM, leftIdx, true
 			}
 			if rightOk {
-				return rightKeys, rightIdx, true
+				return rightBM, rightIdx, true
 			}
 		case "OR":
 			if leftOk && rightOk {
-				// Both sides use GIN — union the results
-				return unionSortedKeys(leftKeys, rightKeys), indexName, true
+				return leftBM.Or(rightBM), indexName, true
 			}
-			// OR requires both sides to be GIN-resolved; otherwise fall back to full scan
 		}
 		return nil, "", false
 	}
@@ -427,10 +424,12 @@ func (e *Executor) tryGinIndexLookup(where ast.Expr, info *TableInfo) ([]int64, 
 		if ginIdx == nil {
 			return nil, "", false
 		}
-		// Resolve tokenizer for use during row evaluation
 		matchExpr.Tokenizer = ginIdx.GetInfo().Tokenizer
-		keys := ginIdx.MatchToken(matchExpr.Pattern)
-		return keys, ginIdx.GetInfo().Name, true
+		rb := ginIdx.MatchTokenBitmap(matchExpr.Pattern)
+		if rb == nil {
+			rb = storage.NewRoaringBitmap()
+		}
+		return rb, ginIdx.GetInfo().Name, true
 	}
 
 	// Handle LIKE patterns
@@ -456,14 +455,15 @@ func (e *Executor) tryGinIndexLookup(where ast.Expr, info *TableInfo) ([]int64, 
 		tokenizer := ginIdx.GetInfo().Tokenizer
 
 		if tokenizer == "bigram" {
-			// For bigram tokenizer, extract contiguous literal segments from the
-			// LIKE pattern and use MatchToken (bigram intersection) to narrow candidates.
 			longest := longestLiteralSegment(pat)
 			if len([]rune(longest)) < 2 {
 				return nil, "", false
 			}
-			keys := ginIdx.MatchToken(longest)
-			return keys, ginIdx.GetInfo().Name, true
+			rb := ginIdx.MatchTokenBitmap(longest)
+			if rb == nil {
+				rb = storage.NewRoaringBitmap()
+			}
+			return rb, ginIdx.GetInfo().Name, true
 		}
 
 		// Word tokenizer: only 'word%' prefix pattern
@@ -475,7 +475,7 @@ func (e *Executor) tryGinIndexLookup(where ast.Expr, info *TableInfo) ([]int64, 
 			return nil, "", false
 		}
 		keys := ginIdx.MatchPrefix(prefix)
-		return keys, ginIdx.GetInfo().Name, true
+		return storage.RoaringFromInt64Slice(keys), ginIdx.GetInfo().Name, true
 	}
 
 	// Handle equality (col = 'value') with bigram GIN index
@@ -503,8 +503,11 @@ func (e *Executor) tryGinIndexLookup(where ast.Expr, info *TableInfo) ([]int64, 
 			if len([]rune(val)) < 2 {
 				return nil, "", false
 			}
-			keys := ginIdx.MatchToken(val)
-			return keys, ginIdx.GetInfo().Name, true
+			rb := ginIdx.MatchTokenBitmap(val)
+			if rb == nil {
+				rb = storage.NewRoaringBitmap()
+			}
+			return rb, ginIdx.GetInfo().Name, true
 		}
 	}
 
@@ -522,73 +525,24 @@ func (e *Executor) tryGinIndexLookup(where ast.Expr, info *TableInfo) ([]int64, 
 		if ginIdx == nil || ginIdx.GetInfo().Tokenizer != "bigram" {
 			return nil, "", false
 		}
-		// Collect candidates from all IN values
-		keySet := make(map[int64]struct{})
+		result := storage.NewRoaringBitmap()
 		for _, valExpr := range inExpr.Values {
 			strLit, ok := valExpr.(*ast.StringLitExpr)
 			if !ok {
 				return nil, "", false
 			}
 			if len([]rune(strLit.Value)) < 2 {
-				return nil, "", false // value too short for bigram, fall back to full scan
+				return nil, "", false
 			}
-			for _, k := range ginIdx.MatchToken(strLit.Value) {
-				keySet[k] = struct{}{}
+			rb := ginIdx.MatchTokenBitmap(strLit.Value)
+			if rb != nil {
+				result = result.Or(rb)
 			}
 		}
-		keys := make([]int64, 0, len(keySet))
-		for k := range keySet {
-			keys = append(keys, k)
-		}
-		sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
-		return keys, ginIdx.GetInfo().Name, true
+		return result, ginIdx.GetInfo().Name, true
 	}
 
 	return nil, "", false
-}
-
-// unionSortedKeys returns the union of two sorted int64 slices (deduplicated).
-func unionSortedKeys(a, b []int64) []int64 {
-	result := make([]int64, 0, len(a)+len(b))
-	i, j := 0, 0
-	for i < len(a) && j < len(b) {
-		if a[i] == b[j] {
-			result = append(result, a[i])
-			i++
-			j++
-		} else if a[i] < b[j] {
-			result = append(result, a[i])
-			i++
-		} else {
-			result = append(result, b[j])
-			j++
-		}
-	}
-	for ; i < len(a); i++ {
-		result = append(result, a[i])
-	}
-	for ; j < len(b); j++ {
-		result = append(result, b[j])
-	}
-	return result
-}
-
-// intersectSortedKeys returns the intersection of two sorted int64 slices.
-func intersectSortedKeys(a, b []int64) []int64 {
-	var result []int64
-	i, j := 0, 0
-	for i < len(a) && j < len(b) {
-		if a[i] == b[j] {
-			result = append(result, a[i])
-			i++
-			j++
-		} else if a[i] < b[j] {
-			i++
-		} else {
-			j++
-		}
-	}
-	return result
 }
 
 // longestLiteralSegment extracts the longest contiguous run of non-wildcard

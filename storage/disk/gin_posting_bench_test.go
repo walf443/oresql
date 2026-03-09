@@ -2,6 +2,8 @@ package disk
 
 import (
 	"testing"
+
+	"github.com/walf443/oresql/storage"
 )
 
 // generatePostingList creates a sorted posting list with n keys, starting at
@@ -85,11 +87,11 @@ func BenchmarkRoaringIntersect(b *testing.B) {
 	}
 
 	for _, bm := range benchmarks {
-		rbA := NewRoaringBitmap()
+		rbA := storage.NewRoaringBitmap()
 		for _, k := range bm.a {
 			rbA.Add(uint32(k))
 		}
-		rbB := NewRoaringBitmap()
+		rbB := storage.NewRoaringBitmap()
 		for _, k := range bm.bk {
 			rbB.Add(uint32(k))
 		}
@@ -122,11 +124,11 @@ func BenchmarkRoaringUnion(b *testing.B) {
 	}
 
 	for _, bm := range benchmarks {
-		rbA := NewRoaringBitmap()
+		rbA := storage.NewRoaringBitmap()
 		for _, k := range bm.a {
 			rbA.Add(uint32(k))
 		}
-		rbB := NewRoaringBitmap()
+		rbB := storage.NewRoaringBitmap()
 		for _, k := range bm.bk {
 			rbB.Add(uint32(k))
 		}

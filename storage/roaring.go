@@ -1,4 +1,4 @@
-package disk
+package storage
 
 import (
 	"encoding/binary"
@@ -165,7 +165,7 @@ func (c *arrayContainer) orArray(o *arrayContainer) roaringContainer {
 
 func (c *arrayContainer) encode(buf []byte) []byte {
 	buf = append(buf, 0) // type: array
-	buf = appendVarint(buf, uint64(len(c.values)))
+	buf = roaringAppendVarint(buf, uint64(len(c.values)))
 	for _, v := range c.values {
 		buf = append(buf, byte(v), byte(v>>8))
 	}
@@ -287,7 +287,7 @@ func (c *bitmapContainer) orBitmap(o *bitmapContainer) roaringContainer {
 
 func (c *bitmapContainer) encode(buf []byte) []byte {
 	buf = append(buf, 1) // type: bitmap
-	buf = appendVarint(buf, uint64(c.card))
+	buf = roaringAppendVarint(buf, uint64(c.card))
 	var tmp [8]byte
 	for i := 0; i < 1024; i++ {
 		binary.LittleEndian.PutUint64(tmp[:], c.bitmap[i])
@@ -433,6 +433,19 @@ func (rb *RoaringBitmap) Or(other *RoaringBitmap) *RoaringBitmap {
 	return result
 }
 
+// ToInt64Slice converts the RoaringBitmap to a sorted []int64 slice.
+func (rb *RoaringBitmap) ToInt64Slice() []int64 {
+	vals := rb.ToSortedSlice()
+	if len(vals) == 0 {
+		return nil
+	}
+	result := make([]int64, len(vals))
+	for i, v := range vals {
+		result[i] = int64(v)
+	}
+	return result
+}
+
 // Encode serializes the RoaringBitmap to bytes.
 //
 // Format:
@@ -441,7 +454,7 @@ func (rb *RoaringBitmap) Or(other *RoaringBitmap) *RoaringBitmap {
 //	[uint16(key) || byte(containerType) || varint(cardinality) || containerData] * numContainers
 func (rb *RoaringBitmap) Encode() []byte {
 	buf := make([]byte, 0, 64)
-	buf = appendVarint(buf, uint64(len(rb.keys)))
+	buf = roaringAppendVarint(buf, uint64(len(rb.keys)))
 	for i, key := range rb.keys {
 		buf = append(buf, byte(key), byte(key>>8))
 		buf = rb.containers[i].encode(buf)
@@ -454,7 +467,7 @@ func DecodeRoaringBitmap(data []byte) *RoaringBitmap {
 	if len(data) == 0 {
 		return NewRoaringBitmap()
 	}
-	numContainers, pos := readVarint(data, 0)
+	numContainers, pos := roaringReadVarint(data, 0)
 	rb := &RoaringBitmap{
 		keys:       make([]uint16, 0, numContainers),
 		containers: make([]roaringContainer, 0, numContainers),
@@ -467,7 +480,7 @@ func DecodeRoaringBitmap(data []byte) *RoaringBitmap {
 		pos += 2
 		containerType := data[pos]
 		pos++
-		card, newPos := readVarint(data, pos)
+		card, newPos := roaringReadVarint(data, pos)
 		pos = newPos
 
 		switch containerType {
@@ -490,4 +503,38 @@ func DecodeRoaringBitmap(data []byte) *RoaringBitmap {
 		}
 	}
 	return rb
+}
+
+// RoaringFromInt64Slice creates a RoaringBitmap from a sorted int64 slice.
+func RoaringFromInt64Slice(keys []int64) *RoaringBitmap {
+	rb := NewRoaringBitmap()
+	for _, k := range keys {
+		rb.Add(uint32(k))
+	}
+	return rb
+}
+
+// --- varint helpers (self-contained for the storage package) ---
+
+func roaringAppendVarint(buf []byte, v uint64) []byte {
+	for v >= 0x80 {
+		buf = append(buf, byte(v)|0x80)
+		v >>= 7
+	}
+	return append(buf, byte(v))
+}
+
+func roaringReadVarint(data []byte, pos int) (uint64, int) {
+	var v uint64
+	var shift uint
+	for pos < len(data) {
+		b := data[pos]
+		pos++
+		v |= uint64(b&0x7F) << shift
+		if b < 0x80 {
+			return v, pos
+		}
+		shift += 7
+	}
+	return v, pos
 }

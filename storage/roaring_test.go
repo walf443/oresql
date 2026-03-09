@@ -1,4 +1,4 @@
-package disk
+package storage
 
 import (
 	"math/rand"
@@ -311,4 +311,20 @@ func TestRoaringLargeRandom(t *testing.T) {
 	}
 	sort.Slice(expectedOr, func(i, j int) bool { return expectedOr[i] < expectedOr[j] })
 	assert.Equal(t, expectedOr, orResult.ToSortedSlice())
+}
+
+func TestRoaringToInt64Slice(t *testing.T) {
+	rb := NewRoaringBitmap()
+	rb.Add(1)
+	rb.Add(100)
+	rb.Add(70000)
+	result := rb.ToInt64Slice()
+	assert.Equal(t, []int64{1, 100, 70000}, result)
+}
+
+func TestRoaringFromInt64Slice(t *testing.T) {
+	keys := []int64{1, 5, 10, 100}
+	rb := RoaringFromInt64Slice(keys)
+	assert.Equal(t, 4, rb.Cardinality())
+	assert.Equal(t, keys, rb.ToInt64Slice())
 }

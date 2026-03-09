@@ -92,7 +92,7 @@ func (dgi *DiskGinIndex) matchBigram(token string) []int64 {
 		}
 	}
 
-	return roaringToInt64(result)
+	return result.ToInt64Slice()
 }
 
 // postingListCount returns the number of entries in the posting list for a token
@@ -106,27 +106,65 @@ func (dgi *DiskGinIndex) postingListCount(token string) uint64 {
 }
 
 // lookupRoaringBitmap returns the Roaring Bitmap for a single token.
-func (dgi *DiskGinIndex) lookupRoaringBitmap(token string) *RoaringBitmap {
+func (dgi *DiskGinIndex) lookupRoaringBitmap(token string) *storage.RoaringBitmap {
 	prefix := ginEncodeToken(token)
-	var rb *RoaringBitmap
+	var rb *storage.RoaringBitmap
 	dgi.tree.PrefixScan(prefix, func(compositeKey []byte) bool {
 		postingData := compositeKey[len(prefix):]
-		rb = DecodeRoaringBitmap(postingData)
+		rb = storage.DecodeRoaringBitmap(postingData)
 		return false
 	})
 	return rb
 }
 
-// roaringToInt64 converts a RoaringBitmap to a sorted []int64 slice.
-func roaringToInt64(rb *RoaringBitmap) []int64 {
-	vals := rb.ToSortedSlice()
-	if len(vals) == 0 {
+// MatchTokenBitmap returns a RoaringBitmap of row keys for the given token.
+// For bigram tokenizer, returns the intersection of all bigram posting lists.
+func (dgi *DiskGinIndex) MatchTokenBitmap(token string) *storage.RoaringBitmap {
+	if dgi.info.Tokenizer == "bigram" {
+		return dgi.matchBigramBitmap(token)
+	}
+	lower := strings.ToLower(token)
+	return dgi.lookupRoaringBitmap(lower)
+}
+
+// matchBigramBitmap is the bitmap-returning variant of matchBigram.
+func (dgi *DiskGinIndex) matchBigramBitmap(token string) *storage.RoaringBitmap {
+	bigrams := ginBigramTokenize(token)
+	if len(bigrams) == 0 {
 		return nil
 	}
-	result := make([]int64, len(vals))
-	for i, v := range vals {
-		result[i] = int64(v)
+
+	type bigramInfo struct {
+		token string
+		count uint64
 	}
+	infos := make([]bigramInfo, 0, len(bigrams))
+	for _, bg := range bigrams {
+		c := dgi.postingListCount(bg)
+		if c == 0 {
+			return nil
+		}
+		infos = append(infos, bigramInfo{bg, c})
+	}
+
+	sort.Slice(infos, func(i, j int) bool { return infos[i].count < infos[j].count })
+
+	result := dgi.lookupRoaringBitmap(infos[0].token)
+	if result == nil || result.Cardinality() == 0 {
+		return nil
+	}
+
+	for _, info := range infos[1:] {
+		other := dgi.lookupRoaringBitmap(info.token)
+		if other == nil || other.Cardinality() == 0 {
+			return nil
+		}
+		result = result.And(other)
+		if result.Cardinality() == 0 {
+			return nil
+		}
+	}
+
 	return result
 }
 
@@ -265,17 +303,14 @@ func (dgi *DiskGinIndex) removeFromPostingList(token string, rowKey int64) {
 
 // encodePostingList encodes a sorted list of row keys as a Roaring Bitmap.
 func encodePostingList(keys []int64) []byte {
-	rb := NewRoaringBitmap()
-	for _, k := range keys {
-		rb.Add(uint32(k))
-	}
+	rb := storage.RoaringFromInt64Slice(keys)
 	return rb.Encode()
 }
 
 // decodePostingList decodes a Roaring Bitmap encoded posting list to sorted int64 keys.
 func decodePostingList(data []byte) []int64 {
-	rb := DecodeRoaringBitmap(data)
-	return roaringToInt64(rb)
+	rb := storage.DecodeRoaringBitmap(data)
+	return rb.ToInt64Slice()
 }
 
 // appendVarint appends a varint-encoded uint64 to buf.

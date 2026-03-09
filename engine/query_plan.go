@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/walf443/oresql/ast"
@@ -436,6 +437,72 @@ func (e *Executor) tryGinIndexLookup(where ast.Expr, info *TableInfo) ([]int64, 
 			return nil, "", false
 		}
 		keys := ginIdx.MatchPrefix(prefix)
+		return keys, ginIdx.GetInfo().Name, true
+	}
+
+	// Handle equality (col = 'value') with bigram GIN index
+	if binExpr, ok := where.(*ast.BinaryExpr); ok && binExpr.Op == "=" {
+		var ident *ast.IdentExpr
+		var val string
+		if id, ok := binExpr.Left.(*ast.IdentExpr); ok {
+			if s, ok := binExpr.Right.(*ast.StringLitExpr); ok {
+				ident, val = id, s.Value
+			}
+		} else if id, ok := binExpr.Right.(*ast.IdentExpr); ok {
+			if s, ok := binExpr.Left.(*ast.StringLitExpr); ok {
+				ident, val = id, s.Value
+			}
+		}
+		if ident != nil && val != "" {
+			col, err := info.FindColumn(ident.Name)
+			if err != nil {
+				return nil, "", false
+			}
+			ginIdx := e.db.storage.LookupGinIndex(info.Name, col.Index)
+			if ginIdx == nil || ginIdx.GetInfo().Tokenizer != "bigram" {
+				return nil, "", false
+			}
+			if len([]rune(val)) < 2 {
+				return nil, "", false
+			}
+			keys := ginIdx.MatchToken(val)
+			return keys, ginIdx.GetInfo().Name, true
+		}
+	}
+
+	// Handle IN (col IN ('a', 'b', ...)) with bigram GIN index
+	if inExpr, ok := where.(*ast.InExpr); ok && !inExpr.Not {
+		ident, ok := inExpr.Left.(*ast.IdentExpr)
+		if !ok {
+			return nil, "", false
+		}
+		col, err := info.FindColumn(ident.Name)
+		if err != nil {
+			return nil, "", false
+		}
+		ginIdx := e.db.storage.LookupGinIndex(info.Name, col.Index)
+		if ginIdx == nil || ginIdx.GetInfo().Tokenizer != "bigram" {
+			return nil, "", false
+		}
+		// Collect candidates from all IN values
+		keySet := make(map[int64]struct{})
+		for _, valExpr := range inExpr.Values {
+			strLit, ok := valExpr.(*ast.StringLitExpr)
+			if !ok {
+				return nil, "", false
+			}
+			if len([]rune(strLit.Value)) < 2 {
+				return nil, "", false // value too short for bigram, fall back to full scan
+			}
+			for _, k := range ginIdx.MatchToken(strLit.Value) {
+				keySet[k] = struct{}{}
+			}
+		}
+		keys := make([]int64, 0, len(keySet))
+		for k := range keySet {
+			keys = append(keys, k)
+		}
+		sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
 		return keys, ginIdx.GetInfo().Name, true
 	}
 

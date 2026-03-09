@@ -129,4 +129,3 @@ func BenchmarkGinLikeSuffixWithIndex_10000(b *testing.B) {
 		}
 	}
 }
-

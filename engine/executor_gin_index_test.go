@@ -393,3 +393,188 @@ func TestGinIndexPersistence(t *testing.T) {
 	result3 := run(t, exec2, "SELECT id FROM articles WHERE body @@ 'world'")
 	require.Len(t, result3.Rows, 2)
 }
+
+func TestGinIndexWordEquality(t *testing.T) {
+	for _, st := range []string{"memory", "disk"} {
+		t.Run(st, func(t *testing.T) {
+			exec := setupGinTestExecutor(t, st)
+			run(t, exec, "CREATE TABLE docs (id INT PRIMARY KEY, content TEXT)")
+			run(t, exec, "INSERT INTO docs VALUES (1, 'the quick brown fox')")
+			run(t, exec, "INSERT INTO docs VALUES (2, 'lazy dog sleeping')")
+			run(t, exec, "INSERT INTO docs VALUES (3, 'the quick brown fox')")
+			run(t, exec, "CREATE INDEX idx_content_gin ON docs(content) USING GIN")
+
+			// Exact match with word tokenizer should NOT use GIN index
+			// (word tokenizer GIN is for full-text search, not exact match)
+			explain := run(t, exec, "EXPLAIN SELECT id FROM docs WHERE content = 'the quick brown fox'")
+			found := false
+			for _, row := range explain.Rows {
+				for _, col := range row {
+					if s, ok := col.(string); ok && s == "idx_content_gin" {
+						found = true
+					}
+				}
+			}
+			assert.False(t, found, "word tokenizer GIN should not be used for equality")
+
+			// But result should still be correct via full scan
+			result := run(t, exec, "SELECT id FROM docs WHERE content = 'the quick brown fox'")
+			require.Len(t, result.Rows, 2)
+			assert.Equal(t, int64(1), result.Rows[0][0])
+			assert.Equal(t, int64(3), result.Rows[1][0])
+		})
+	}
+}
+
+func TestGinIndexWordIN(t *testing.T) {
+	for _, st := range []string{"memory", "disk"} {
+		t.Run(st, func(t *testing.T) {
+			exec := setupGinTestExecutor(t, st)
+			run(t, exec, "CREATE TABLE docs (id INT PRIMARY KEY, content TEXT)")
+			run(t, exec, "INSERT INTO docs VALUES (1, 'the quick brown fox')")
+			run(t, exec, "INSERT INTO docs VALUES (2, 'lazy dog sleeping')")
+			run(t, exec, "INSERT INTO docs VALUES (3, 'hello world')")
+			run(t, exec, "CREATE INDEX idx_content_gin ON docs(content) USING GIN")
+
+			// IN with word tokenizer should NOT use GIN index
+			explain := run(t, exec, "EXPLAIN SELECT id FROM docs WHERE content IN ('the quick brown fox', 'hello world')")
+			found := false
+			for _, row := range explain.Rows {
+				for _, col := range row {
+					if s, ok := col.(string); ok && s == "idx_content_gin" {
+						found = true
+					}
+				}
+			}
+			assert.False(t, found, "word tokenizer GIN should not be used for IN")
+
+			// But result should still be correct via full scan
+			result := run(t, exec, "SELECT id FROM docs WHERE content IN ('the quick brown fox', 'hello world')")
+			require.Len(t, result.Rows, 2)
+			assert.Equal(t, int64(1), result.Rows[0][0])
+			assert.Equal(t, int64(3), result.Rows[1][0])
+		})
+	}
+}
+
+func TestGinIndexBTreePriority(t *testing.T) {
+	for _, st := range []string{"memory", "disk"} {
+		t.Run(st, func(t *testing.T) {
+			exec := setupGinTestExecutor(t, st)
+			run(t, exec, "CREATE TABLE articles (id INT PRIMARY KEY, body TEXT)")
+			run(t, exec, "INSERT INTO articles VALUES (1, '東京都は日本の首都です')")
+			run(t, exec, "INSERT INTO articles VALUES (2, '京都は古い都市です')")
+			run(t, exec, "INSERT INTO articles VALUES (3, '大阪は楽しい街です')")
+			run(t, exec, "CREATE INDEX idx_body_btree ON articles(body)")
+			run(t, exec, "CREATE INDEX idx_body_gin ON articles(body) USING GIN WITH (tokenizer = 'bigram')")
+
+			// Equality: B-tree should be used, not GIN
+			explain := run(t, exec, "EXPLAIN SELECT id FROM articles WHERE body = '東京都は日本の首都です'")
+			btreeUsed := false
+			ginUsed := false
+			for _, row := range explain.Rows {
+				for _, col := range row {
+					if s, ok := col.(string); ok {
+						if s == "idx_body_btree" {
+							btreeUsed = true
+						}
+						if s == "idx_body_gin" {
+							ginUsed = true
+						}
+					}
+				}
+			}
+			assert.True(t, btreeUsed, "B-tree index should be used for equality")
+			assert.False(t, ginUsed, "GIN index should not be used when B-tree is available")
+
+			// IN: B-tree should be used (access type "range"), not GIN ("fulltext")
+			explain2 := run(t, exec, "EXPLAIN SELECT id FROM articles WHERE body IN ('東京都は日本の首都です', '大阪は楽しい街です')")
+			ginUsed = false
+			hasRange := false
+			for _, row := range explain2.Rows {
+				for _, col := range row {
+					if s, ok := col.(string); ok {
+						if s == "idx_body_gin" {
+							ginUsed = true
+						}
+						if s == "range" {
+							hasRange = true
+						}
+					}
+				}
+			}
+			assert.True(t, hasRange, "B-tree index should be used for IN (access type 'range')")
+			assert.False(t, ginUsed, "GIN index should not be used for IN when B-tree is available")
+
+			// Result correctness
+			result := run(t, exec, "SELECT id FROM articles WHERE body = '東京都は日本の首都です'")
+			require.Len(t, result.Rows, 1)
+			assert.Equal(t, int64(1), result.Rows[0][0])
+		})
+	}
+}
+
+func TestGinIndexBigramEquality(t *testing.T) {
+	for _, st := range []string{"memory", "disk"} {
+		t.Run(st, func(t *testing.T) {
+			exec := setupGinTestExecutor(t, st)
+			run(t, exec, "CREATE TABLE articles (id INT PRIMARY KEY, body TEXT)")
+			run(t, exec, "INSERT INTO articles VALUES (1, '東京都は日本の首都です')")
+			run(t, exec, "INSERT INTO articles VALUES (2, '京都は古い都市です')")
+			run(t, exec, "INSERT INTO articles VALUES (3, '大阪は楽しい街です')")
+			run(t, exec, "CREATE INDEX idx_body_gin ON articles(body) USING GIN WITH (tokenizer = 'bigram')")
+
+			// Exact match using GIN index
+			result := run(t, exec, "SELECT id FROM articles WHERE body = '東京都は日本の首都です'")
+			require.Len(t, result.Rows, 1)
+			assert.Equal(t, int64(1), result.Rows[0][0])
+
+			// Verify GIN index is used via EXPLAIN
+			explain := run(t, exec, "EXPLAIN SELECT id FROM articles WHERE body = '東京都は日本の首都です'")
+			found := false
+			for _, row := range explain.Rows {
+				for _, col := range row {
+					if s, ok := col.(string); ok && s == "idx_body_gin" {
+						found = true
+					}
+				}
+			}
+			assert.True(t, found, "expected GIN index idx_body_gin to be used")
+
+			// No match
+			result2 := run(t, exec, "SELECT id FROM articles WHERE body = '存在しないテキスト'")
+			require.Len(t, result2.Rows, 0)
+		})
+	}
+}
+
+func TestGinIndexBigramIN(t *testing.T) {
+	for _, st := range []string{"memory", "disk"} {
+		t.Run(st, func(t *testing.T) {
+			exec := setupGinTestExecutor(t, st)
+			run(t, exec, "CREATE TABLE articles (id INT PRIMARY KEY, body TEXT)")
+			run(t, exec, "INSERT INTO articles VALUES (1, '東京都は日本の首都です')")
+			run(t, exec, "INSERT INTO articles VALUES (2, '京都は古い都市です')")
+			run(t, exec, "INSERT INTO articles VALUES (3, '大阪は楽しい街です')")
+			run(t, exec, "CREATE INDEX idx_body_gin ON articles(body) USING GIN WITH (tokenizer = 'bigram')")
+
+			// IN search using GIN index
+			result := run(t, exec, "SELECT id FROM articles WHERE body IN ('東京都は日本の首都です', '大阪は楽しい街です')")
+			require.Len(t, result.Rows, 2)
+			assert.Equal(t, int64(1), result.Rows[0][0])
+			assert.Equal(t, int64(3), result.Rows[1][0])
+
+			// Verify GIN index is used via EXPLAIN
+			explain := run(t, exec, "EXPLAIN SELECT id FROM articles WHERE body IN ('東京都は日本の首都です', '大阪は楽しい街です')")
+			found := false
+			for _, row := range explain.Rows {
+				for _, col := range row {
+					if s, ok := col.(string); ok && s == "idx_body_gin" {
+						found = true
+					}
+				}
+			}
+			assert.True(t, found, "expected GIN index idx_body_gin to be used")
+		})
+	}
+}

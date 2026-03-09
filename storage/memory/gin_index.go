@@ -51,16 +51,22 @@ func (gi *GinIndex) MatchToken(token string) []int64 {
 }
 
 // matchBigram splits the search term into bigrams and returns the intersection
-// of all posting lists.
+// of all posting lists. Bigrams are processed in ascending order of posting list
+// size to minimize intermediate result sizes.
 func (gi *GinIndex) matchBigram(token string) []int64 {
 	bigrams := bigramTokenize(token)
 	if len(bigrams) == 0 {
 		return nil
 	}
 
-	// Start with the first bigram's posting list
+	// Sort bigrams by posting list size (smallest first)
+	sort.Slice(bigrams, func(i, j int) bool {
+		return len(gi.tokens[bigrams[i]]) < len(gi.tokens[bigrams[j]])
+	})
+
+	// Start with the smallest posting list
 	first, ok := gi.tokens[bigrams[0]]
-	if !ok {
+	if !ok || len(first) == 0 {
 		return nil
 	}
 	result := make(map[int64]struct{}, len(first))
@@ -68,7 +74,7 @@ func (gi *GinIndex) matchBigram(token string) []int64 {
 		result[k] = struct{}{}
 	}
 
-	// Intersect with remaining bigrams
+	// Intersect with remaining bigrams in ascending size order
 	for _, bg := range bigrams[1:] {
 		keySet, ok := gi.tokens[bg]
 		if !ok {

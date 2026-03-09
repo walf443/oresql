@@ -48,22 +48,40 @@ func (dgi *DiskGinIndex) MatchToken(token string) []int64 {
 }
 
 // matchBigram splits the search term into bigrams and returns the intersection
-// of all posting lists.
+// of all posting lists. Bigrams are processed in ascending order of posting list
+// size to minimize intermediate result sizes.
 func (dgi *DiskGinIndex) matchBigram(token string) []int64 {
 	bigrams := ginBigramTokenize(token)
 	if len(bigrams) == 0 {
 		return nil
 	}
 
-	// Look up the first bigram
-	result := dgi.lookupSingleToken(bigrams[0])
+	// Get posting list sizes for all bigrams (read only the count varint)
+	type bigramCount struct {
+		token string
+		count uint64
+	}
+	counts := make([]bigramCount, 0, len(bigrams))
+	for _, bg := range bigrams {
+		c := dgi.postingListCount(bg)
+		if c == 0 {
+			return nil // any empty posting list means no results
+		}
+		counts = append(counts, bigramCount{bg, c})
+	}
+
+	// Sort by posting list size (smallest first)
+	sort.Slice(counts, func(i, j int) bool { return counts[i].count < counts[j].count })
+
+	// Start with the smallest posting list
+	result := dgi.lookupSingleToken(counts[0].token)
 	if len(result) == 0 {
 		return nil
 	}
 
-	// Intersect with remaining bigrams
-	for _, bg := range bigrams[1:] {
-		other := dgi.lookupSingleToken(bg)
+	// Intersect with remaining bigrams in ascending size order
+	for _, bc := range counts[1:] {
+		other := dgi.lookupSingleToken(bc.token)
 		if len(other) == 0 {
 			return nil
 		}
@@ -83,6 +101,21 @@ func (dgi *DiskGinIndex) matchBigram(token string) []int64 {
 		}
 	}
 	return result
+}
+
+// postingListCount returns the number of entries in the posting list for a token
+// by reading only the count varint, without decoding the full posting list.
+func (dgi *DiskGinIndex) postingListCount(token string) uint64 {
+	prefix := ginEncodeToken(token)
+	var count uint64
+	dgi.tree.PrefixScan(prefix, func(compositeKey []byte) bool {
+		postingData := compositeKey[len(prefix):]
+		if len(postingData) > 0 {
+			count, _ = readVarint(postingData, 0)
+		}
+		return false
+	})
+	return count
 }
 
 // lookupSingleToken returns the posting list for a single token.

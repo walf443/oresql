@@ -49,6 +49,7 @@ const (
 	INT       // INT type keyword
 	FLOAT     // FLOAT type keyword
 	TEXT      // TEXT type keyword
+	JSON      // JSON type keyword
 	COUNT     // COUNT aggregate function
 	SUM       // SUM aggregate function
 	AVG       // AVG aggregate function
@@ -176,6 +177,7 @@ var tokenNames = map[TokenType]string{
 	INT:          "INT",
 	FLOAT:        "FLOAT",
 	TEXT:         "TEXT",
+	JSON:         "JSON",
 	COUNT:        "COUNT",
 	SUM:          "SUM",
 	AVG:          "AVG",
@@ -288,6 +290,7 @@ var keywords = map[string]TokenType{
 	"INT":        INT,
 	"FLOAT":      FLOAT,
 	"TEXT":       TEXT,
+	"JSON":       JSON,
 	"COUNT":      COUNT,
 	"SUM":        SUM,
 	"AVG":        AVG,

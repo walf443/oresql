@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -34,6 +35,14 @@ func validateAndCoerceValue(val Value, col ColumnInfo) (Value, error) {
 	case "TEXT":
 		if _, ok := val.(string); !ok {
 			return nil, fmt.Errorf("column %q expects TEXT, got %T", col.Name, val)
+		}
+	case "JSON":
+		s, ok := val.(string)
+		if !ok {
+			return nil, fmt.Errorf("column %q expects JSON, got %T", col.Name, val)
+		}
+		if !json.Valid([]byte(s)) {
+			return nil, fmt.Errorf("column %q: invalid JSON value: %s", col.Name, s)
 		}
 	}
 	return val, nil
@@ -1119,6 +1128,16 @@ func evalCast(cast *ast.CastExpr, row Row, eval ExprEvaluator) (Value, error) {
 			return strconv.FormatFloat(v, 'f', -1, 64), nil
 		default:
 			return nil, fmt.Errorf("cannot cast %T to TEXT", val)
+		}
+	case "JSON":
+		switch v := val.(type) {
+		case string:
+			if !json.Valid([]byte(v)) {
+				return nil, fmt.Errorf("cannot cast %q to JSON: invalid JSON", v)
+			}
+			return v, nil
+		default:
+			return nil, fmt.Errorf("cannot cast %T to JSON", val)
 		}
 	default:
 		return nil, fmt.Errorf("unsupported CAST target type: %s", cast.TargetType)

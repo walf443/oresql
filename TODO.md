@@ -20,7 +20,7 @@ oresql 独自の拡張や実装上の項目は末尾にまとめる。
 - [ ] BLOB / BINARY LARGE OBJECT (E011)
 - [ ] CLOB / CHARACTER LARGE OBJECT (E011)
 - [ ] ARRAY 型 (S091) — `INTEGER ARRAY[10]`
-- [ ] JSON 型 (T801, SQL:2016+) — SQL/JSON パスサポート
+- [x] JSON 型 (T801, SQL:2016+) — SQL/JSON パスサポート
 
 ## Part 2: SQL/Foundation — スキーマ定義 DDL (E101–E153)
 
@@ -226,7 +226,7 @@ oresql 独自の拡張や実装上の項目は末尾にまとめる。
 
 ## SQL:2016+ — SQL/JSON (T801–T830)
 
-- [ ] JSON 型 (T801)
+- [x] JSON 型 (T801)
 - [ ] JSON_OBJECT / JSON_ARRAY — JSON 値の生成 (T802)
 - [ ] JSON_VALUE / JSON_QUERY — JSON からのスカラー/構造の抽出 (T803)
 - [ ] JSON_EXISTS — JSON パスの存在確認 (T804)

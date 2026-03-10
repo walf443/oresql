@@ -743,3 +743,31 @@ func TestGinIndexBigramIN(t *testing.T) {
 		})
 	}
 }
+
+func TestGinIndexStreamingLimit(t *testing.T) {
+	for _, st := range []string{"memory", "disk"} {
+		t.Run(st, func(t *testing.T) {
+			exec := setupGinTestExecutor(t, st)
+			run(t, exec, "CREATE TABLE articles (id INT PRIMARY KEY, body TEXT)")
+			run(t, exec, "CREATE INDEX idx_body_gin ON articles(body) USING GIN WITH (tokenizer = 'bigram')")
+			for i := 1; i <= 20; i++ {
+				run(t, exec, "INSERT INTO articles VALUES ("+itoa(i)+", '東京都の天気は晴れです')")
+			}
+
+			// GIN + LIMIT should use streaming limit (not full scan)
+			assertExplain(t, exec, "SELECT id FROM articles WHERE body LIKE '%東京%' LIMIT 5",
+				[]planRow{{Type: "fulltext", Key: "idx_body_gin", Extra: "Using streaming limit"}})
+
+			// Verify correct result count
+			result := run(t, exec, "SELECT id FROM articles WHERE body LIKE '%東京%' LIMIT 5")
+			require.Len(t, result.Rows, 5)
+
+			// @@ operator + LIMIT should also use streaming limit
+			assertExplain(t, exec, "SELECT id FROM articles WHERE body @@ '東京' LIMIT 3",
+				[]planRow{{Type: "fulltext", Key: "idx_body_gin", Extra: "Using streaming limit"}})
+
+			result = run(t, exec, "SELECT id FROM articles WHERE body @@ '東京' LIMIT 3")
+			require.Len(t, result.Rows, 3)
+		})
+	}
+}

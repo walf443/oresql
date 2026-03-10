@@ -255,7 +255,10 @@ func (e *Executor) planSelect(stmt *ast.SelectStmt) *SelectPlan {
 					return plan
 				}
 			}
-			if keys, indexUsed := e.tryIndexScan(stmt.Where, info); indexUsed {
+			if plan.batchKeys != nil {
+				// batchKeys already set by planWhereIndex (e.g., GIN lookup)
+				plan.Type = PlanStreamingBatch
+			} else if keys, indexUsed := e.tryIndexScan(stmt.Where, info); indexUsed {
 				plan.Type = PlanStreamingBatch
 				plan.batchKeys = keys
 			} else {

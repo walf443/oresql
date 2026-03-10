@@ -47,6 +47,11 @@ func FormatSQL(expr Expr) string {
 			return FormatSQL(e.Expr) + " IS NOT NULL"
 		}
 		return FormatSQL(e.Expr) + " IS NULL"
+	case *IsJSONExpr:
+		if e.Not {
+			return FormatSQL(e.Expr) + " IS NOT JSON"
+		}
+		return FormatSQL(e.Expr) + " IS JSON"
 	case *InExpr:
 		var buf strings.Builder
 		buf.WriteString(FormatSQL(e.Left))

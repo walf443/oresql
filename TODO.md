@@ -231,7 +231,7 @@ oresql 独自の拡張や実装上の項目は末尾にまとめる。
 - [x] JSON_VALUE / JSON_QUERY — JSON からのスカラー/構造の抽出 (T803)
 - [x] JSON_EXISTS — JSON パスの存在確認 (T804)
 - [ ] JSON_TABLE — JSON を関係テーブルに変換 (T805)
-- [ ] IS JSON 述語 (T801)
+- [x] IS JSON 述語 (T801)
 
 ## SQL:2023 新機能
 

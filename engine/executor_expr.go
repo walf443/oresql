@@ -209,6 +209,16 @@ func evalExpr(expr ast.Expr, row Row, info *TableInfo) (Value, error) {
 			return val != nil, nil
 		}
 		return val == nil, nil
+	case *ast.IsJSONExpr:
+		val, err := evalExpr(e.Expr, row, info)
+		if err != nil {
+			return nil, err
+		}
+		result := isValidJSON(val)
+		if e.Not {
+			return !result, nil
+		}
+		return result, nil
 	case *ast.InExpr:
 		left, err := evalExpr(e.Left, row, info)
 		if err != nil {
@@ -1466,6 +1476,16 @@ func evalFuncJSONExists(args []Value, compiledPath *json_path.Path) (Value, erro
 		return nil, err
 	}
 	return p.Exists(raw), nil
+}
+
+// isValidJSON returns true if val is a string containing valid JSON.
+// Non-string types and nil return false.
+func isValidJSON(val Value) bool {
+	s, ok := val.(string)
+	if !ok {
+		return false
+	}
+	return json.Valid([]byte(s))
 }
 
 // tryCompileJSONPath checks if the second argument of a JSON_VALUE/JSON_QUERY call

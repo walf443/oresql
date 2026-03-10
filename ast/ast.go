@@ -203,6 +203,15 @@ type IsNullExpr struct {
 func (e *IsNullExpr) NodeType() string { return "IsNull" }
 func (e *IsNullExpr) exprNode()        {}
 
+// IsJSONExpr represents <expr> IS [NOT] JSON.
+type IsJSONExpr struct {
+	Expr Expr
+	Not  bool // true for IS NOT JSON
+}
+
+func (e *IsJSONExpr) NodeType() string { return "IsJSON" }
+func (e *IsJSONExpr) exprNode()        {}
+
 // AliasExpr represents an expression with an alias (e.g. id AS user_id).
 type AliasExpr struct {
 	Expr  Expr

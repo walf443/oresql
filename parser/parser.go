@@ -1271,7 +1271,7 @@ func (p *Parser) parseSelectItem() (ast.Expr, error) {
 			}
 		}
 	} else {
-		expr, err = p.parseAdditive()
+		expr, err = p.parseComparison()
 	}
 	if err != nil {
 		return nil, err
@@ -1618,7 +1618,7 @@ func (p *Parser) parseComparison() (ast.Expr, error) {
 		return &ast.MatchExpr{Expr: left, Pattern: pattern}, nil
 	}
 
-	// Handle IS [NOT] NULL
+	// Handle IS [NOT] NULL / IS [NOT] JSON
 	if p.curToken.Type == token.IS {
 		p.nextToken() // skip IS
 		not := false
@@ -1626,8 +1626,12 @@ func (p *Parser) parseComparison() (ast.Expr, error) {
 			not = true
 			p.nextToken() // skip NOT
 		}
+		if p.curToken.Type == token.JSON {
+			p.nextToken() // skip JSON
+			return &ast.IsJSONExpr{Expr: left, Not: not}, nil
+		}
 		if p.curToken.Type != token.NULL {
-			return nil, fmt.Errorf("expected NULL after IS, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+			return nil, fmt.Errorf("expected NULL or JSON after IS, got %s (%q)", p.curToken.Type, p.curToken.Literal)
 		}
 		p.nextToken() // skip NULL
 		return &ast.IsNullExpr{Expr: left, Not: not}, nil

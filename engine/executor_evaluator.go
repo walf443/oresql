@@ -280,6 +280,16 @@ func evalExprGeneric(expr ast.Expr, row Row, eval ExprEvaluator) (Value, error) 
 			return val != nil, nil
 		}
 		return val == nil, nil
+	case *ast.IsJSONExpr:
+		val, err := eval.Eval(e.Expr, row)
+		if err != nil {
+			return nil, err
+		}
+		result := isValidJSON(val)
+		if e.Not {
+			return !result, nil
+		}
+		return result, nil
 	case *ast.InExpr:
 		left, err := eval.Eval(e.Left, row)
 		if err != nil {

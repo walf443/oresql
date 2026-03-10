@@ -581,6 +581,90 @@ func TestJSON_EXISTS_WithColumnRef(t *testing.T) {
 	assert.Equal(t, false, result.Rows[1][1])
 }
 
+func TestIS_JSON(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+
+	tests := []struct {
+		name     string
+		sql      string
+		expected interface{}
+	}{
+		// Valid JSON strings
+		{"json object", `SELECT '{"a": 1}' IS JSON`, true},
+		{"json array", `SELECT '[1, 2, 3]' IS JSON`, true},
+		{"json string", `SELECT '"hello"' IS JSON`, true},
+		{"json number", `SELECT '42' IS JSON`, true},
+		{"json true", `SELECT 'true' IS JSON`, true},
+		{"json false", `SELECT 'false' IS JSON`, true},
+		{"json null", `SELECT 'null' IS JSON`, true},
+		{"nested object", `SELECT '{"a": {"b": [1, 2]}}' IS JSON`, true},
+
+		// Invalid JSON strings
+		{"plain text", `SELECT 'hello' IS JSON`, false},
+		{"incomplete object", `SELECT '{"a":' IS JSON`, false},
+		{"single quotes", `SELECT '{''a'': 1}' IS JSON`, false},
+
+		// Non-string types
+		{"int value", `SELECT 42 IS JSON`, false},
+		{"float value", `SELECT 3.14 IS JSON`, false},
+		{"bool true", `SELECT TRUE IS JSON`, false},
+
+		// NULL
+		{"null input", `SELECT NULL IS JSON`, false},
+
+		// IS NOT JSON
+		{"is not json valid", `SELECT '{"a": 1}' IS NOT JSON`, false},
+		{"is not json invalid", `SELECT 'hello' IS NOT JSON`, true},
+		{"is not json null", `SELECT NULL IS NOT JSON`, true},
+		{"is not json int", `SELECT 42 IS NOT JSON`, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := run(t, exec, tt.sql)
+			require.Len(t, result.Rows, 1)
+			assert.Equal(t, tt.expected, result.Rows[0][0])
+		})
+	}
+}
+
+func TestIS_JSON_WithColumnRef(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE mixed (id INT, val TEXT)")
+	run(t, exec, `INSERT INTO mixed VALUES (1, '{"name": "alice"}')`)
+	run(t, exec, `INSERT INTO mixed VALUES (2, 'not json')`)
+	run(t, exec, `INSERT INTO mixed VALUES (3, '[1, 2, 3]')`)
+
+	// Filter rows with valid JSON
+	result := run(t, exec, "SELECT id FROM mixed WHERE val IS JSON ORDER BY id")
+	require.Len(t, result.Rows, 2)
+	assert.Equal(t, int64(1), result.Rows[0][0])
+	assert.Equal(t, int64(3), result.Rows[1][0])
+
+	// Filter rows without valid JSON
+	result = run(t, exec, "SELECT id FROM mixed WHERE val IS NOT JSON ORDER BY id")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, int64(2), result.Rows[0][0])
+
+	// SELECT IS JSON as column
+	result = run(t, exec, "SELECT id, val IS JSON FROM mixed ORDER BY id")
+	require.Len(t, result.Rows, 3)
+	assert.Equal(t, true, result.Rows[0][1])
+	assert.Equal(t, false, result.Rows[1][1])
+	assert.Equal(t, true, result.Rows[2][1])
+}
+
+func TestIS_JSON_WithJSONColumn(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE docs (id INT, data JSON)")
+	run(t, exec, `INSERT INTO docs VALUES (1, '{"a": 1}')`)
+
+	// JSON column values are always valid JSON
+	result := run(t, exec, "SELECT data IS JSON FROM docs")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, true, result.Rows[0][0])
+}
+
 func TestJSON_OBJECT_InsertIntoJSONColumn(t *testing.T) {
 	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE docs (id INT, data JSON)")

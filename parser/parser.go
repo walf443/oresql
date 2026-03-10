@@ -1754,7 +1754,7 @@ func (p *Parser) parsePrimary() (ast.Expr, error) {
 		return p.parsePrimary()
 	case token.ROW_NUMBER, token.RANK, token.DENSE_RANK:
 		return p.parseWindowExpr()
-	case token.COUNT, token.SUM, token.AVG, token.MIN, token.MAX, token.COALESCE, token.NULLIF, token.ABS, token.ROUND, token.MOD, token.CEIL, token.FLOOR, token.POWER, token.LENGTH, token.UPPER, token.LOWER, token.SUBSTRING, token.TRIM, token.CONCAT, token.JSON_OBJECT, token.JSON_ARRAY:
+	case token.COUNT, token.SUM, token.AVG, token.MIN, token.MAX, token.COALESCE, token.NULLIF, token.ABS, token.ROUND, token.MOD, token.CEIL, token.FLOOR, token.POWER, token.LENGTH, token.UPPER, token.LOWER, token.SUBSTRING, token.TRIM, token.CONCAT, token.JSON_OBJECT, token.JSON_ARRAY, token.JSON_VALUE, token.JSON_QUERY:
 		expr, err := p.parseCallExpr()
 		if err != nil {
 			return nil, err

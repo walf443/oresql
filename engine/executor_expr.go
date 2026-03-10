@@ -155,6 +155,19 @@ func evalScalarFuncLiteral(call *ast.CallExpr) (Value, error) {
 			args[i] = val
 		}
 		return evalFuncJSONArray(args)
+	case "JSON_VALUE", "JSON_QUERY":
+		args := make([]Value, len(call.Args))
+		for i, arg := range call.Args {
+			val, err := evalLiteral(arg)
+			if err != nil {
+				return nil, err
+			}
+			args[i] = val
+		}
+		if call.Name == "JSON_QUERY" {
+			return evalFuncJSONQuery(args)
+		}
+		return evalFuncJSONValue(args)
 	default:
 		return nil, fmt.Errorf("function %s not supported in literal context", call.Name)
 	}
@@ -467,6 +480,19 @@ func evalScalarFunc(call *ast.CallExpr, row Row, info *TableInfo) (Value, error)
 			args[i] = val
 		}
 		return evalFuncJSONArray(args)
+	case "JSON_VALUE", "JSON_QUERY":
+		args := make([]Value, len(call.Args))
+		for i, arg := range call.Args {
+			val, err := evalExpr(arg, row, info)
+			if err != nil {
+				return nil, err
+			}
+			args[i] = val
+		}
+		if call.Name == "JSON_QUERY" {
+			return evalFuncJSONQuery(args)
+		}
+		return evalFuncJSONValue(args)
 	default:
 		return nil, fmt.Errorf("aggregate function %s not allowed in this context", call.Name)
 	}
@@ -1282,4 +1308,166 @@ func evalFuncJSONArray(args []Value) (Value, error) {
 	}
 	buf.WriteByte(']')
 	return buf.String(), nil
+}
+
+// evalFuncJSONValue extracts a scalar value from a JSON string using a path expression.
+// Usage: JSON_VALUE(json_text, path)
+// Path syntax: $ for root, $.key for object member, $[n] for array index.
+// Returns NULL if path points to a non-scalar (object/array) or if the path doesn't exist.
+func evalFuncJSONValue(args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("JSON_VALUE requires exactly 2 arguments, got %d", len(args))
+	}
+	if args[0] == nil {
+		return nil, nil
+	}
+	jsonStr, ok := args[0].(string)
+	if !ok {
+		return nil, fmt.Errorf("JSON_VALUE first argument must be a string, got %T", args[0])
+	}
+	pathStr, ok := args[1].(string)
+	if !ok {
+		return nil, fmt.Errorf("JSON_VALUE second argument (path) must be a string, got %T", args[1])
+	}
+
+	// Parse the JSON
+	var raw interface{}
+	if err := json.Unmarshal([]byte(jsonStr), &raw); err != nil {
+		return nil, fmt.Errorf("JSON_VALUE: invalid JSON: %w", err)
+	}
+
+	// Parse and traverse the path
+	result, err := jsonPathTraverse(raw, pathStr)
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+
+	// JSON_VALUE returns only scalar values; object/array returns NULL
+	switch v := result.(type) {
+	case map[string]interface{}, []interface{}:
+		return nil, nil
+	case float64:
+		// Convert to int64 if it's a whole number
+		if v == float64(int64(v)) {
+			return int64(v), nil
+		}
+		return v, nil
+	case string:
+		return v, nil
+	case bool:
+		if v {
+			return "true", nil
+		}
+		return "false", nil
+	case nil:
+		return nil, nil
+	default:
+		return nil, fmt.Errorf("JSON_VALUE: unexpected type %T", result)
+	}
+}
+
+// evalFuncJSONQuery extracts a JSON object or array from a JSON string using a path expression.
+// Usage: JSON_QUERY(json_text, path)
+// Returns NULL if the path points to a scalar value or doesn't exist.
+func evalFuncJSONQuery(args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("JSON_QUERY requires exactly 2 arguments, got %d", len(args))
+	}
+	if args[0] == nil {
+		return nil, nil
+	}
+	jsonStr, ok := args[0].(string)
+	if !ok {
+		return nil, fmt.Errorf("JSON_QUERY first argument must be a string, got %T", args[0])
+	}
+	pathStr, ok := args[1].(string)
+	if !ok {
+		return nil, fmt.Errorf("JSON_QUERY second argument (path) must be a string, got %T", args[1])
+	}
+
+	var raw interface{}
+	if err := json.Unmarshal([]byte(jsonStr), &raw); err != nil {
+		return nil, fmt.Errorf("JSON_QUERY: invalid JSON: %w", err)
+	}
+
+	result, err := jsonPathTraverse(raw, pathStr)
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+
+	// JSON_QUERY returns only object/array; scalar returns NULL
+	switch result.(type) {
+	case map[string]interface{}, []interface{}:
+		b, err := json.Marshal(result)
+		if err != nil {
+			return nil, fmt.Errorf("JSON_QUERY: failed to serialize result: %w", err)
+		}
+		return string(b), nil
+	default:
+		return nil, nil
+	}
+}
+
+// jsonPathTraverse traverses a parsed JSON value using a path expression.
+// Path syntax: "$" (root), ".key" (object member), "[n]" (array index).
+// Returns nil if the path doesn't match.
+func jsonPathTraverse(val interface{}, path string) (interface{}, error) {
+	if len(path) == 0 || path[0] != '$' {
+		return nil, fmt.Errorf("JSON path must start with '$', got %q", path)
+	}
+	path = path[1:] // skip '$'
+	current := val
+
+	for len(path) > 0 {
+		if path[0] == '.' {
+			// Object member access: .key
+			path = path[1:] // skip '.'
+			obj, ok := current.(map[string]interface{})
+			if !ok {
+				return nil, nil // not an object, path doesn't match
+			}
+			// Read key name (until next '.', '[', or end)
+			end := 0
+			for end < len(path) && path[end] != '.' && path[end] != '[' {
+				end++
+			}
+			key := path[:end]
+			path = path[end:]
+			v, exists := obj[key]
+			if !exists {
+				return nil, nil
+			}
+			current = v
+		} else if path[0] == '[' {
+			// Array index access: [n]
+			closeBracket := strings.IndexByte(path, ']')
+			if closeBracket < 0 {
+				return nil, fmt.Errorf("JSON path: missing ']' in %q", path)
+			}
+			indexStr := path[1:closeBracket]
+			path = path[closeBracket+1:]
+			idx, err := strconv.Atoi(indexStr)
+			if err != nil {
+				return nil, fmt.Errorf("JSON path: invalid array index %q", indexStr)
+			}
+			arr, ok := current.([]interface{})
+			if !ok {
+				return nil, nil // not an array
+			}
+			if idx < 0 || idx >= len(arr) {
+				return nil, nil // out of bounds
+			}
+			current = arr[idx]
+		} else {
+			return nil, fmt.Errorf("JSON path: unexpected character %q in path", string(path[0]))
+		}
+	}
+
+	return current, nil
 }

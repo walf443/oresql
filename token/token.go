@@ -52,6 +52,8 @@ const (
 	JSON        // JSON type keyword
 	JSON_OBJECT // JSON_OBJECT function
 	JSON_ARRAY  // JSON_ARRAY function
+	JSON_VALUE  // JSON_VALUE function
+	JSON_QUERY  // JSON_QUERY function
 	COUNT       // COUNT aggregate function
 	SUM         // SUM aggregate function
 	AVG         // AVG aggregate function
@@ -182,6 +184,8 @@ var tokenNames = map[TokenType]string{
 	JSON:         "JSON",
 	JSON_OBJECT:  "JSON_OBJECT",
 	JSON_ARRAY:   "JSON_ARRAY",
+	JSON_VALUE:   "JSON_VALUE",
+	JSON_QUERY:   "JSON_QUERY",
 	COUNT:        "COUNT",
 	SUM:          "SUM",
 	AVG:          "AVG",
@@ -297,6 +301,8 @@ var keywords = map[string]TokenType{
 	"JSON":        JSON,
 	"JSON_OBJECT": JSON_OBJECT,
 	"JSON_ARRAY":  JSON_ARRAY,
+	"JSON_VALUE":  JSON_VALUE,
+	"JSON_QUERY":  JSON_QUERY,
 	"COUNT":       COUNT,
 	"SUM":         SUM,
 	"AVG":         AVG,

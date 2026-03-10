@@ -309,6 +309,197 @@ func TestJSON_ARRAY_WithColumnRef(t *testing.T) {
 	assert.Equal(t, `[3,4]`, result.Rows[1][0])
 }
 
+func TestJSON_VALUE(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+
+	tests := []struct {
+		name     string
+		sql      string
+		expected interface{}
+	}{
+		// Object member access
+		{"string member", "SELECT JSON_VALUE('{\"name\": \"alice\"}', '$.name')", "alice"},
+		{"int member", "SELECT JSON_VALUE('{\"age\": 30}', '$.age')", int64(30)},
+		{"float member", "SELECT JSON_VALUE('{\"price\": 9.99}', '$.price')", 9.99},
+		{"bool true member", "SELECT JSON_VALUE('{\"active\": true}', '$.active')", "true"},
+		{"bool false member", "SELECT JSON_VALUE('{\"active\": false}', '$.active')", "false"},
+		{"null member", "SELECT JSON_VALUE('{\"v\": null}', '$.v')", nil},
+
+		// Nested object access
+		{"nested member", "SELECT JSON_VALUE('{\"a\": {\"b\": \"deep\"}}', '$.a.b')", "deep"},
+		{"deeply nested", "SELECT JSON_VALUE('{\"a\": {\"b\": {\"c\": 42}}}', '$.a.b.c')", int64(42)},
+
+		// Array index access
+		{"array first", "SELECT JSON_VALUE('[10, 20, 30]', '$[0]')", int64(10)},
+		{"array second", "SELECT JSON_VALUE('[10, 20, 30]', '$[1]')", int64(20)},
+		{"array last", "SELECT JSON_VALUE('[10, 20, 30]', '$[2]')", int64(30)},
+
+		// Mixed object and array access
+		{"object then array", "SELECT JSON_VALUE('{\"items\": [1, 2, 3]}', '$.items[1]')", int64(2)},
+		{"array then object", "SELECT JSON_VALUE('[{\"id\": 1}, {\"id\": 2}]', '$[1].id')", int64(2)},
+
+		// Root reference
+		{"root string", "SELECT JSON_VALUE('\"hello\"', '$')", "hello"},
+		{"root int", "SELECT JSON_VALUE('42', '$')", int64(42)},
+
+		// Missing key returns NULL
+		{"missing key", "SELECT JSON_VALUE('{\"a\": 1}', '$.b')", nil},
+		{"missing nested", "SELECT JSON_VALUE('{\"a\": 1}', '$.a.b')", nil},
+		{"out of bounds", "SELECT JSON_VALUE('[1, 2]', '$[5]')", nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := run(t, exec, tt.sql)
+			require.Len(t, result.Rows, 1)
+			assert.Equal(t, tt.expected, result.Rows[0][0])
+		})
+	}
+}
+
+func TestJSON_VALUE_ErrorCases(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+
+	tests := []struct {
+		name string
+		sql  string
+	}{
+		{"no args", "SELECT JSON_VALUE()"},
+		{"one arg", "SELECT JSON_VALUE('{\"a\": 1}')"},
+		{"three args", "SELECT JSON_VALUE('{\"a\": 1}', '$.a', 'extra')"},
+		{"non-string first arg", "SELECT JSON_VALUE(123, '$.a')"},
+		{"non-string path", "SELECT JSON_VALUE('{\"a\": 1}', 123)"},
+		{"invalid json", "SELECT JSON_VALUE('not json', '$.a')"},
+		{"invalid path no dollar", "SELECT JSON_VALUE('{\"a\": 1}', 'a')"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := runWithError(exec, tt.sql)
+			require.Error(t, err, "expected error for %s", tt.sql)
+		})
+	}
+}
+
+func TestJSON_VALUE_WithColumnRef(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE docs (id INT, data JSON)")
+	run(t, exec, "INSERT INTO docs VALUES (1, '{\"name\": \"alice\", \"age\": 30}')")
+	run(t, exec, "INSERT INTO docs VALUES (2, '{\"name\": \"bob\", \"age\": 25}')")
+
+	// Extract from JSON column
+	result := run(t, exec, "SELECT JSON_VALUE(data, '$.name') FROM docs ORDER BY id")
+	require.Len(t, result.Rows, 2)
+	assert.Equal(t, "alice", result.Rows[0][0])
+	assert.Equal(t, "bob", result.Rows[1][0])
+
+	// Use in WHERE clause
+	result = run(t, exec, "SELECT id FROM docs WHERE JSON_VALUE(data, '$.name') = 'alice'")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, int64(1), result.Rows[0][0])
+
+	// Extract int value from JSON column
+	result = run(t, exec, "SELECT JSON_VALUE(data, '$.age') FROM docs WHERE id = 2")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, int64(25), result.Rows[0][0])
+}
+
+func TestJSON_VALUE_ObjectArrayResult(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+
+	// JSON_VALUE should return NULL for non-scalar results (object/array)
+	// per SQL standard behavior
+	result := run(t, exec, "SELECT JSON_VALUE('{\"a\": {\"b\": 1}}', '$.a')")
+	require.Len(t, result.Rows, 1)
+	assert.Nil(t, result.Rows[0][0])
+
+	result = run(t, exec, "SELECT JSON_VALUE('{\"a\": [1, 2]}', '$.a')")
+	require.Len(t, result.Rows, 1)
+	assert.Nil(t, result.Rows[0][0])
+}
+
+func TestJSON_QUERY(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+
+	tests := []struct {
+		name     string
+		sql      string
+		expected interface{}
+	}{
+		// Extract object
+		{"nested object", "SELECT JSON_QUERY('{\"a\": {\"b\": 1}}', '$.a')", `{"b":1}`},
+		// Extract array
+		{"nested array", "SELECT JSON_QUERY('{\"items\": [1, 2, 3]}', '$.items')", `[1,2,3]`},
+		// Root object
+		{"root object", "SELECT JSON_QUERY('{\"a\": 1}', '$')", `{"a":1}`},
+		// Root array
+		{"root array", "SELECT JSON_QUERY('[1, 2, 3]', '$')", `[1,2,3]`},
+		// Deeply nested
+		{"deeply nested object", "SELECT JSON_QUERY('{\"a\": {\"b\": {\"c\": [1]}}}', '$.a.b')", `{"c":[1]}`},
+		// Array element that is object
+		{"array element object", "SELECT JSON_QUERY('[{\"id\": 1}, {\"id\": 2}]', '$[0]')", `{"id":1}`},
+		// Array element that is array
+		{"array element array", "SELECT JSON_QUERY('[[1, 2], [3, 4]]', '$[1]')", `[3,4]`},
+		// Scalar returns NULL (opposite of JSON_VALUE)
+		{"scalar string returns null", "SELECT JSON_QUERY('{\"name\": \"alice\"}', '$.name')", nil},
+		{"scalar int returns null", "SELECT JSON_QUERY('{\"age\": 30}', '$.age')", nil},
+		// Missing path returns NULL
+		{"missing key", "SELECT JSON_QUERY('{\"a\": 1}', '$.b')", nil},
+		// NULL input returns NULL
+		{"null input", "SELECT JSON_QUERY(NULL, '$.a')", nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := run(t, exec, tt.sql)
+			require.Len(t, result.Rows, 1)
+			assert.Equal(t, tt.expected, result.Rows[0][0])
+		})
+	}
+}
+
+func TestJSON_QUERY_ErrorCases(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+
+	tests := []struct {
+		name string
+		sql  string
+	}{
+		{"no args", "SELECT JSON_QUERY()"},
+		{"one arg", "SELECT JSON_QUERY('{\"a\": 1}')"},
+		{"three args", "SELECT JSON_QUERY('{\"a\": 1}', '$.a', 'extra')"},
+		{"non-string first arg", "SELECT JSON_QUERY(123, '$.a')"},
+		{"non-string path", "SELECT JSON_QUERY('{\"a\": 1}', 123)"},
+		{"invalid json", "SELECT JSON_QUERY('not json', '$.a')"},
+		{"invalid path no dollar", "SELECT JSON_QUERY('{\"a\": 1}', 'a')"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := runWithError(exec, tt.sql)
+			require.Error(t, err, "expected error for %s", tt.sql)
+		})
+	}
+}
+
+func TestJSON_QUERY_WithColumnRef(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE docs (id INT, data JSON)")
+	run(t, exec, "INSERT INTO docs VALUES (1, '{\"tags\": [\"go\", \"sql\"], \"meta\": {\"version\": 1}}')")
+	run(t, exec, "INSERT INTO docs VALUES (2, '{\"tags\": [\"rust\"], \"meta\": {\"version\": 2}}')")
+
+	// Extract array from JSON column
+	result := run(t, exec, "SELECT JSON_QUERY(data, '$.tags') FROM docs ORDER BY id")
+	require.Len(t, result.Rows, 2)
+	assert.Equal(t, `["go","sql"]`, result.Rows[0][0])
+	assert.Equal(t, `["rust"]`, result.Rows[1][0])
+
+	// Extract object from JSON column
+	result = run(t, exec, "SELECT JSON_QUERY(data, '$.meta') FROM docs WHERE id = 1")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, `{"version":1}`, result.Rows[0][0])
+}
+
 func TestJSON_OBJECT_InsertIntoJSONColumn(t *testing.T) {
 	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE docs (id INT, data JSON)")

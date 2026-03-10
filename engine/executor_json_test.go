@@ -500,6 +500,87 @@ func TestJSON_QUERY_WithColumnRef(t *testing.T) {
 	assert.Equal(t, `{"version":1}`, result.Rows[0][0])
 }
 
+func TestJSON_EXISTS(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+
+	tests := []struct {
+		name     string
+		sql      string
+		expected interface{}
+	}{
+		// Existing keys
+		{"existing string key", "SELECT JSON_EXISTS('{\"name\": \"alice\"}', '$.name')", true},
+		{"existing int key", "SELECT JSON_EXISTS('{\"age\": 30}', '$.age')", true},
+		{"existing null value", "SELECT JSON_EXISTS('{\"v\": null}', '$.v')", true},
+		{"existing nested", "SELECT JSON_EXISTS('{\"a\": {\"b\": 1}}', '$.a.b')", true},
+		{"existing array element", "SELECT JSON_EXISTS('[1, 2, 3]', '$[0]')", true},
+		{"existing object in array", "SELECT JSON_EXISTS('[{\"id\": 1}]', '$[0].id')", true},
+		{"root always exists", "SELECT JSON_EXISTS('{\"a\": 1}', '$')", true},
+		{"existing object value", "SELECT JSON_EXISTS('{\"a\": {\"b\": 1}}', '$.a')", true},
+		{"existing array value", "SELECT JSON_EXISTS('{\"items\": [1]}', '$.items')", true},
+
+		// Missing keys
+		{"missing key", "SELECT JSON_EXISTS('{\"a\": 1}', '$.b')", false},
+		{"missing nested key", "SELECT JSON_EXISTS('{\"a\": 1}', '$.a.b')", false},
+		{"out of bounds", "SELECT JSON_EXISTS('[1, 2]', '$[5]')", false},
+		{"member on array", "SELECT JSON_EXISTS('[1, 2]', '$.name')", false},
+		{"index on object", "SELECT JSON_EXISTS('{\"a\": 1}', '$[0]')", false},
+
+		// SQL NULL input
+		{"null input", "SELECT JSON_EXISTS(NULL, '$.a')", nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := run(t, exec, tt.sql)
+			require.Len(t, result.Rows, 1)
+			assert.Equal(t, tt.expected, result.Rows[0][0])
+		})
+	}
+}
+
+func TestJSON_EXISTS_ErrorCases(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+
+	tests := []struct {
+		name string
+		sql  string
+	}{
+		{"no args", "SELECT JSON_EXISTS()"},
+		{"one arg", "SELECT JSON_EXISTS('{\"a\": 1}')"},
+		{"three args", "SELECT JSON_EXISTS('{\"a\": 1}', '$.a', 'extra')"},
+		{"non-string first arg", "SELECT JSON_EXISTS(123, '$.a')"},
+		{"non-string path", "SELECT JSON_EXISTS('{\"a\": 1}', 123)"},
+		{"invalid json", "SELECT JSON_EXISTS('not json', '$.a')"},
+		{"invalid path no dollar", "SELECT JSON_EXISTS('{\"a\": 1}', 'a')"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := runWithError(exec, tt.sql)
+			require.Error(t, err, "expected error for %s", tt.sql)
+		})
+	}
+}
+
+func TestJSON_EXISTS_WithColumnRef(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE docs (id INT, data JSON)")
+	run(t, exec, "INSERT INTO docs VALUES (1, '{\"name\": \"alice\", \"email\": \"a@example.com\"}')")
+	run(t, exec, "INSERT INTO docs VALUES (2, '{\"name\": \"bob\"}')")
+
+	// Use in WHERE clause to filter rows that have a specific key
+	result := run(t, exec, "SELECT id FROM docs WHERE JSON_EXISTS(data, '$.email')")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, int64(1), result.Rows[0][0])
+
+	// SELECT JSON_EXISTS as column
+	result = run(t, exec, "SELECT id, JSON_EXISTS(data, '$.email') FROM docs ORDER BY id")
+	require.Len(t, result.Rows, 2)
+	assert.Equal(t, true, result.Rows[0][1])
+	assert.Equal(t, false, result.Rows[1][1])
+}
+
 func TestJSON_OBJECT_InsertIntoJSONColumn(t *testing.T) {
 	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE docs (id INT, data JSON)")

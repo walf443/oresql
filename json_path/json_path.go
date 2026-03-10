@@ -126,6 +126,37 @@ func (p *Path) Execute(val any) any {
 	return current
 }
 
+// Exists checks whether the path matches a value in the JSON structure.
+// Unlike Execute, it distinguishes between a missing path and a path
+// that points to a JSON null value.
+func (p *Path) Exists(val any) bool {
+	current := val
+	for _, step := range p.Steps {
+		switch step.Kind {
+		case StepMember:
+			obj, ok := current.(map[string]any)
+			if !ok {
+				return false
+			}
+			v, exists := obj[step.Key]
+			if !exists {
+				return false
+			}
+			current = v
+		case StepIndex:
+			arr, ok := current.([]any)
+			if !ok {
+				return false
+			}
+			if step.Index < 0 || step.Index >= len(arr) {
+				return false
+			}
+			current = arr[step.Index]
+		}
+	}
+	return true
+}
+
 // Traverse is a convenience function that parses the path and executes it
 // in a single call. For repeated use of the same path, prefer Parse + Execute.
 func Traverse(val any, path string) (any, error) {

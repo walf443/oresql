@@ -156,7 +156,7 @@ func evalScalarFuncLiteral(call *ast.CallExpr) (Value, error) {
 			args[i] = val
 		}
 		return evalFuncJSONArray(args)
-	case "JSON_VALUE", "JSON_QUERY":
+	case "JSON_VALUE", "JSON_QUERY", "JSON_EXISTS":
 		args := make([]Value, len(call.Args))
 		for i, arg := range call.Args {
 			val, err := evalLiteral(arg)
@@ -168,6 +168,9 @@ func evalScalarFuncLiteral(call *ast.CallExpr) (Value, error) {
 		compiled := tryCompileJSONPath(call)
 		if call.Name == "JSON_QUERY" {
 			return evalFuncJSONQuery(args, compiled)
+		}
+		if call.Name == "JSON_EXISTS" {
+			return evalFuncJSONExists(args, compiled)
 		}
 		return evalFuncJSONValue(args, compiled)
 	default:
@@ -482,7 +485,7 @@ func evalScalarFunc(call *ast.CallExpr, row Row, info *TableInfo) (Value, error)
 			args[i] = val
 		}
 		return evalFuncJSONArray(args)
-	case "JSON_VALUE", "JSON_QUERY":
+	case "JSON_VALUE", "JSON_QUERY", "JSON_EXISTS":
 		args := make([]Value, len(call.Args))
 		for i, arg := range call.Args {
 			val, err := evalExpr(arg, row, info)
@@ -494,6 +497,9 @@ func evalScalarFunc(call *ast.CallExpr, row Row, info *TableInfo) (Value, error)
 		compiled := tryCompileJSONPath(call)
 		if call.Name == "JSON_QUERY" {
 			return evalFuncJSONQuery(args, compiled)
+		}
+		if call.Name == "JSON_EXISTS" {
+			return evalFuncJSONExists(args, compiled)
 		}
 		return evalFuncJSONValue(args, compiled)
 	default:
@@ -1424,6 +1430,42 @@ func evalFuncJSONQuery(args []Value, compiledPath *json_path.Path) (Value, error
 	default:
 		return nil, nil
 	}
+}
+
+// evalFuncJSONExists checks whether a path exists in a JSON string.
+// Usage: JSON_EXISTS(json_text, path)
+// Returns TRUE if the path exists (including JSON null values), FALSE otherwise.
+// compiledPath is an optional pre-parsed path for efficiency when the path is a literal.
+func evalFuncJSONExists(args []Value, compiledPath *json_path.Path) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("JSON_EXISTS requires exactly 2 arguments, got %d", len(args))
+	}
+	if args[0] == nil {
+		return nil, nil
+	}
+	jsonStr, ok := args[0].(string)
+	if !ok {
+		return nil, fmt.Errorf("JSON_EXISTS first argument must be a string, got %T", args[0])
+	}
+	pathStr, ok := args[1].(string)
+	if compiledPath == nil && !ok {
+		return nil, fmt.Errorf("JSON_EXISTS second argument (path) must be a string, got %T", args[1])
+	}
+
+	var raw any
+	if err := json.Unmarshal([]byte(jsonStr), &raw); err != nil {
+		return nil, fmt.Errorf("JSON_EXISTS: invalid JSON: %w", err)
+	}
+
+	if compiledPath != nil {
+		return compiledPath.Exists(raw), nil
+	}
+
+	p, err := json_path.Parse(pathStr)
+	if err != nil {
+		return nil, err
+	}
+	return p.Exists(raw), nil
 }
 
 // tryCompileJSONPath checks if the second argument of a JSON_VALUE/JSON_QUERY call

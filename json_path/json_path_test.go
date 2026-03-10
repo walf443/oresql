@@ -259,6 +259,34 @@ func TestPath_Execute_Reuse(t *testing.T) {
 	assert.Nil(t, p.Execute(map[string]any{"id": float64(1)}))
 }
 
+func TestPath_Exists(t *testing.T) {
+	tests := []struct {
+		name     string
+		json     any
+		path     string
+		expected bool
+	}{
+		{"existing key", map[string]any{"name": "alice"}, "$.name", true},
+		{"existing null value", map[string]any{"v": nil}, "$.v", true},
+		{"missing key", map[string]any{"a": float64(1)}, "$.b", false},
+		{"existing nested", map[string]any{"a": map[string]any{"b": float64(1)}}, "$.a.b", true},
+		{"missing nested", map[string]any{"a": float64(1)}, "$.a.b", false},
+		{"existing array element", []any{float64(10)}, "$[0]", true},
+		{"out of bounds", []any{float64(1)}, "$[5]", false},
+		{"root", map[string]any{"a": float64(1)}, "$", true},
+		{"member on array", []any{float64(1)}, "$.name", false},
+		{"index on object", map[string]any{"a": float64(1)}, "$[0]", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := Parse(tt.path)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, p.Exists(tt.json))
+		})
+	}
+}
+
 // Traverse tests (backward compatibility)
 func TestTraverse_ObjectMember(t *testing.T) {
 	tests := []struct {

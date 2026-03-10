@@ -755,7 +755,7 @@ func evalScalarFuncGeneric(call *ast.CallExpr, row Row, eval ExprEvaluator) (Val
 			args[i] = val
 		}
 		return evalFuncJSONArray(args)
-	case "JSON_VALUE", "JSON_QUERY":
+	case "JSON_VALUE", "JSON_QUERY", "JSON_EXISTS":
 		args := make([]Value, len(call.Args))
 		for i, arg := range call.Args {
 			val, err := eval.Eval(arg, row)
@@ -767,6 +767,9 @@ func evalScalarFuncGeneric(call *ast.CallExpr, row Row, eval ExprEvaluator) (Val
 		compiled := tryCompileJSONPath(call)
 		if call.Name == "JSON_QUERY" {
 			return evalFuncJSONQuery(args, compiled)
+		}
+		if call.Name == "JSON_EXISTS" {
+			return evalFuncJSONExists(args, compiled)
 		}
 		return evalFuncJSONValue(args, compiled)
 	default:

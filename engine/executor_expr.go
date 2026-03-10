@@ -165,10 +165,11 @@ func evalScalarFuncLiteral(call *ast.CallExpr) (Value, error) {
 			}
 			args[i] = val
 		}
+		compiled := tryCompileJSONPath(call)
 		if call.Name == "JSON_QUERY" {
-			return evalFuncJSONQuery(args)
+			return evalFuncJSONQuery(args, compiled)
 		}
-		return evalFuncJSONValue(args)
+		return evalFuncJSONValue(args, compiled)
 	default:
 		return nil, fmt.Errorf("function %s not supported in literal context", call.Name)
 	}
@@ -490,10 +491,11 @@ func evalScalarFunc(call *ast.CallExpr, row Row, info *TableInfo) (Value, error)
 			}
 			args[i] = val
 		}
+		compiled := tryCompileJSONPath(call)
 		if call.Name == "JSON_QUERY" {
-			return evalFuncJSONQuery(args)
+			return evalFuncJSONQuery(args, compiled)
 		}
-		return evalFuncJSONValue(args)
+		return evalFuncJSONValue(args, compiled)
 	default:
 		return nil, fmt.Errorf("aggregate function %s not allowed in this context", call.Name)
 	}
@@ -1311,11 +1313,31 @@ func evalFuncJSONArray(args []Value) (Value, error) {
 	return buf.String(), nil
 }
 
+// parseJSONAndTraverse parses JSON text, traverses it with a path, and returns the result.
+// If compiledPath is non-nil, it is used directly; otherwise pathStr is parsed on-the-fly.
+func parseJSONAndTraverse(funcName string, jsonStr string, pathStr string, compiledPath *json_path.Path) (any, error) {
+	var raw any
+	if err := json.Unmarshal([]byte(jsonStr), &raw); err != nil {
+		return nil, fmt.Errorf("%s: invalid JSON: %w", funcName, err)
+	}
+
+	if compiledPath != nil {
+		return compiledPath.Execute(raw), nil
+	}
+
+	result, err := json_path.Traverse(raw, pathStr)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 // evalFuncJSONValue extracts a scalar value from a JSON string using a path expression.
 // Usage: JSON_VALUE(json_text, path)
 // Path syntax: $ for root, $.key for object member, $[n] for array index.
 // Returns NULL if path points to a non-scalar (object/array) or if the path doesn't exist.
-func evalFuncJSONValue(args []Value) (Value, error) {
+// compiledPath is an optional pre-parsed path for efficiency when the path is a literal.
+func evalFuncJSONValue(args []Value, compiledPath *json_path.Path) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("JSON_VALUE requires exactly 2 arguments, got %d", len(args))
 	}
@@ -1326,19 +1348,12 @@ func evalFuncJSONValue(args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("JSON_VALUE first argument must be a string, got %T", args[0])
 	}
-	pathStr, ok := args[1].(string)
-	if !ok {
+	pathStr, _ := args[1].(string)
+	if compiledPath == nil && !ok {
 		return nil, fmt.Errorf("JSON_VALUE second argument (path) must be a string, got %T", args[1])
 	}
 
-	// Parse the JSON
-	var raw interface{}
-	if err := json.Unmarshal([]byte(jsonStr), &raw); err != nil {
-		return nil, fmt.Errorf("JSON_VALUE: invalid JSON: %w", err)
-	}
-
-	// Parse and traverse the path
-	result, err := json_path.Traverse(raw, pathStr)
+	result, err := parseJSONAndTraverse("JSON_VALUE", jsonStr, pathStr, compiledPath)
 	if err != nil {
 		return nil, err
 	}
@@ -1348,7 +1363,7 @@ func evalFuncJSONValue(args []Value) (Value, error) {
 
 	// JSON_VALUE returns only scalar values; object/array returns NULL
 	switch v := result.(type) {
-	case map[string]interface{}, []interface{}:
+	case map[string]any, []any:
 		return nil, nil
 	case float64:
 		// Convert to int64 if it's a whole number
@@ -1373,7 +1388,8 @@ func evalFuncJSONValue(args []Value) (Value, error) {
 // evalFuncJSONQuery extracts a JSON object or array from a JSON string using a path expression.
 // Usage: JSON_QUERY(json_text, path)
 // Returns NULL if the path points to a scalar value or doesn't exist.
-func evalFuncJSONQuery(args []Value) (Value, error) {
+// compiledPath is an optional pre-parsed path for efficiency when the path is a literal.
+func evalFuncJSONQuery(args []Value, compiledPath *json_path.Path) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("JSON_QUERY requires exactly 2 arguments, got %d", len(args))
 	}
@@ -1384,17 +1400,12 @@ func evalFuncJSONQuery(args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("JSON_QUERY first argument must be a string, got %T", args[0])
 	}
-	pathStr, ok := args[1].(string)
-	if !ok {
+	pathStr, _ := args[1].(string)
+	if compiledPath == nil && !ok {
 		return nil, fmt.Errorf("JSON_QUERY second argument (path) must be a string, got %T", args[1])
 	}
 
-	var raw interface{}
-	if err := json.Unmarshal([]byte(jsonStr), &raw); err != nil {
-		return nil, fmt.Errorf("JSON_QUERY: invalid JSON: %w", err)
-	}
-
-	result, err := json_path.Traverse(raw, pathStr)
+	result, err := parseJSONAndTraverse("JSON_QUERY", jsonStr, pathStr, compiledPath)
 	if err != nil {
 		return nil, err
 	}
@@ -1404,7 +1415,7 @@ func evalFuncJSONQuery(args []Value) (Value, error) {
 
 	// JSON_QUERY returns only object/array; scalar returns NULL
 	switch result.(type) {
-	case map[string]interface{}, []interface{}:
+	case map[string]any, []any:
 		b, err := json.Marshal(result)
 		if err != nil {
 			return nil, fmt.Errorf("JSON_QUERY: failed to serialize result: %w", err)
@@ -1413,4 +1424,17 @@ func evalFuncJSONQuery(args []Value) (Value, error) {
 	default:
 		return nil, nil
 	}
+}
+
+// tryCompileJSONPath checks if the second argument of a JSON_VALUE/JSON_QUERY call
+// is a string literal, and if so, pre-parses the path for reuse across rows.
+func tryCompileJSONPath(call *ast.CallExpr) *json_path.Path {
+	if len(call.Args) >= 2 {
+		if lit, ok := call.Args[1].(*ast.StringLitExpr); ok {
+			if p, err := json_path.Parse(lit.Value); err == nil {
+				return p
+			}
+		}
+	}
+	return nil
 }

@@ -764,10 +764,11 @@ func evalScalarFuncGeneric(call *ast.CallExpr, row Row, eval ExprEvaluator) (Val
 			}
 			args[i] = val
 		}
+		compiled := tryCompileJSONPath(call)
 		if call.Name == "JSON_QUERY" {
-			return evalFuncJSONQuery(args)
+			return evalFuncJSONQuery(args, compiled)
 		}
-		return evalFuncJSONValue(args)
+		return evalFuncJSONValue(args, compiled)
 	default:
 		return nil, fmt.Errorf("aggregate function %s not allowed in this context", call.Name)
 	}

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/walf443/oresql/ast"
+	"github.com/walf443/oresql/json_path"
 )
 
 // validateAndCoerceValue validates a value against a column definition, coercing types as needed.
@@ -1337,7 +1338,7 @@ func evalFuncJSONValue(args []Value) (Value, error) {
 	}
 
 	// Parse and traverse the path
-	result, err := jsonPathTraverse(raw, pathStr)
+	result, err := json_path.Traverse(raw, pathStr)
 	if err != nil {
 		return nil, err
 	}
@@ -1393,7 +1394,7 @@ func evalFuncJSONQuery(args []Value) (Value, error) {
 		return nil, fmt.Errorf("JSON_QUERY: invalid JSON: %w", err)
 	}
 
-	result, err := jsonPathTraverse(raw, pathStr)
+	result, err := json_path.Traverse(raw, pathStr)
 	if err != nil {
 		return nil, err
 	}
@@ -1412,62 +1413,4 @@ func evalFuncJSONQuery(args []Value) (Value, error) {
 	default:
 		return nil, nil
 	}
-}
-
-// jsonPathTraverse traverses a parsed JSON value using a path expression.
-// Path syntax: "$" (root), ".key" (object member), "[n]" (array index).
-// Returns nil if the path doesn't match.
-func jsonPathTraverse(val interface{}, path string) (interface{}, error) {
-	if len(path) == 0 || path[0] != '$' {
-		return nil, fmt.Errorf("JSON path must start with '$', got %q", path)
-	}
-	path = path[1:] // skip '$'
-	current := val
-
-	for len(path) > 0 {
-		if path[0] == '.' {
-			// Object member access: .key
-			path = path[1:] // skip '.'
-			obj, ok := current.(map[string]interface{})
-			if !ok {
-				return nil, nil // not an object, path doesn't match
-			}
-			// Read key name (until next '.', '[', or end)
-			end := 0
-			for end < len(path) && path[end] != '.' && path[end] != '[' {
-				end++
-			}
-			key := path[:end]
-			path = path[end:]
-			v, exists := obj[key]
-			if !exists {
-				return nil, nil
-			}
-			current = v
-		} else if path[0] == '[' {
-			// Array index access: [n]
-			closeBracket := strings.IndexByte(path, ']')
-			if closeBracket < 0 {
-				return nil, fmt.Errorf("JSON path: missing ']' in %q", path)
-			}
-			indexStr := path[1:closeBracket]
-			path = path[closeBracket+1:]
-			idx, err := strconv.Atoi(indexStr)
-			if err != nil {
-				return nil, fmt.Errorf("JSON path: invalid array index %q", indexStr)
-			}
-			arr, ok := current.([]interface{})
-			if !ok {
-				return nil, nil // not an array
-			}
-			if idx < 0 || idx >= len(arr) {
-				return nil, nil // out of bounds
-			}
-			current = arr[idx]
-		} else {
-			return nil, fmt.Errorf("JSON path: unexpected character %q in path", string(path[0]))
-		}
-	}
-
-	return current, nil
 }

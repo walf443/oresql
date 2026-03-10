@@ -154,13 +154,13 @@ func (e *Executor) planSelect(stmt *ast.SelectStmt) *SelectPlan {
 	}
 
 	// SELECT without FROM
-	if stmt.TableName == "" && stmt.FromSubquery == nil {
+	if stmt.TableName == "" && stmt.FromSubquery == nil && stmt.JSONTable == nil {
 		plan.Type = PlanNoTable
 		return plan
 	}
 
-	// FROM subquery
-	if stmt.FromSubquery != nil {
+	// FROM subquery or JSON_TABLE
+	if stmt.FromSubquery != nil || stmt.JSONTable != nil {
 		plan.Type = PlanSubquery
 		return plan
 	}

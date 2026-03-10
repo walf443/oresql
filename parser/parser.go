@@ -854,6 +854,7 @@ func (p *Parser) parseSelectCore() (*ast.SelectStmt, error) {
 	var tableName string
 	var tableAlias string
 	var fromSubquery ast.Statement
+	var jsonTable *ast.JSONTableSource
 	var joins []ast.JoinClause
 	var where ast.Expr
 
@@ -875,6 +876,14 @@ func (p *Parser) parseSelectCore() (*ast.SelectStmt, error) {
 				return nil, fmt.Errorf("subquery in FROM must have an alias")
 			}
 			fromSubquery = subStmt
+		} else if p.curToken.Type == token.IDENT && strings.ToUpper(p.curToken.Literal) == "JSON_TABLE" {
+			// FROM JSON_TABLE(expr, path COLUMNS (...)) AS alias
+			jt, err := p.parseJSONTable()
+			if err != nil {
+				return nil, err
+			}
+			jsonTable = jt
+			tableAlias = jt.Alias
 		} else {
 			var err error
 			dbName, tableName, err = p.parseTableRef()
@@ -1027,12 +1036,129 @@ func (p *Parser) parseSelectCore() (*ast.SelectStmt, error) {
 		DatabaseName: dbName,
 		TableName:    tableName,
 		FromSubquery: fromSubquery,
+		JSONTable:    jsonTable,
 		TableAlias:   tableAlias,
 		Joins:        joins,
 		Where:        where,
 		GroupBy:      groupBy,
 		Having:       having,
 		Windows:      windows,
+	}, nil
+}
+
+// parseJSONTable parses: JSON_TABLE(expr, path COLUMNS (col type PATH path, ...)) AS alias
+func (p *Parser) parseJSONTable() (*ast.JSONTableSource, error) {
+	p.nextToken() // skip JSON_TABLE
+
+	if err := p.expectToken(token.LPAREN); err != nil {
+		return nil, err
+	}
+
+	// Parse JSON expression
+	jsonExpr, err := p.parseAdditive()
+	if err != nil {
+		return nil, err
+	}
+
+	if err := p.expectToken(token.COMMA); err != nil {
+		return nil, err
+	}
+
+	// Parse row path (string literal)
+	if p.curToken.Type != token.STRING_LIT {
+		return nil, fmt.Errorf("JSON_TABLE: expected path string, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+	}
+	rowPath := p.curToken.Literal
+	p.nextToken()
+
+	// Expect COLUMNS keyword (COLUMNS is not a token; it comes as IDENT)
+	if !(p.curToken.Type == token.IDENT && strings.ToUpper(p.curToken.Literal) == "COLUMNS") {
+		return nil, fmt.Errorf("JSON_TABLE: expected COLUMNS, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+	}
+	p.nextToken() // skip COLUMNS
+
+	if err := p.expectToken(token.LPAREN); err != nil {
+		return nil, err
+	}
+
+	// Parse column definitions
+	var cols []ast.JSONTableColumn
+	for {
+		col, err := p.parseJSONTableColumn()
+		if err != nil {
+			return nil, err
+		}
+		cols = append(cols, col)
+		if p.curToken.Type != token.COMMA {
+			break
+		}
+		p.nextToken() // skip comma
+	}
+
+	if err := p.expectToken(token.RPAREN); err != nil {
+		return nil, err
+	}
+
+	// Close JSON_TABLE(...)
+	if err := p.expectToken(token.RPAREN); err != nil {
+		return nil, err
+	}
+
+	// Parse alias (required)
+	alias := p.parseTableAlias()
+	if alias == "" {
+		return nil, fmt.Errorf("JSON_TABLE in FROM must have an alias")
+	}
+
+	return &ast.JSONTableSource{
+		JSONExpr: jsonExpr,
+		RowPath:  rowPath,
+		Columns:  cols,
+		Alias:    alias,
+	}, nil
+}
+
+// parseJSONTableColumn parses: name TYPE PATH 'path'
+func (p *Parser) parseJSONTableColumn() (ast.JSONTableColumn, error) {
+	if !p.isNameToken() {
+		return ast.JSONTableColumn{}, fmt.Errorf("JSON_TABLE COLUMNS: expected column name, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+	}
+	name := p.curToken.Literal
+	p.nextToken()
+
+	// Parse data type
+	var dataType string
+	switch p.curToken.Type {
+	case token.INT:
+		dataType = "INT"
+	case token.FLOAT:
+		dataType = "FLOAT"
+	case token.TEXT:
+		dataType = "TEXT"
+	case token.JSON:
+		dataType = "JSON"
+	default:
+		return ast.JSONTableColumn{}, fmt.Errorf("JSON_TABLE COLUMNS: expected data type (INT, FLOAT, TEXT, JSON), got %s (%q)", p.curToken.Type, p.curToken.Literal)
+	}
+	p.nextToken()
+
+	// Expect PATH keyword (not a token, comes as IDENT)
+	if !(p.curToken.Type == token.IDENT && strings.ToUpper(p.curToken.Literal) == "PATH") {
+		return ast.JSONTableColumn{}, fmt.Errorf("JSON_TABLE COLUMNS: expected PATH, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+	}
+	p.nextToken() // skip PATH
+
+	// Parse path string
+	if p.curToken.Type != token.STRING_LIT {
+		return ast.JSONTableColumn{}, fmt.Errorf("JSON_TABLE COLUMNS: expected path string after PATH, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+	}
+	path := p.curToken.Literal
+	p.nextToken()
+
+	return ast.JSONTableColumn{
+		Name:     name,
+		DataType: dataType,
+		Path:     path,
 	}, nil
 }
 

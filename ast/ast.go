@@ -75,6 +75,21 @@ type JoinClause struct {
 	Using        []string // USING column names (nil = ON clause used)
 }
 
+// JSONTableSource represents JSON_TABLE(expr, path COLUMNS (...)) AS alias in a FROM clause.
+type JSONTableSource struct {
+	JSONExpr Expr              // JSON expression (string literal or column ref)
+	RowPath  string            // path to iterate over (e.g. "$[*]")
+	Columns  []JSONTableColumn // column definitions
+	Alias    string            // required alias
+}
+
+// JSONTableColumn represents a column definition inside JSON_TABLE COLUMNS clause.
+type JSONTableColumn struct {
+	Name     string // column name
+	DataType string // "INT", "FLOAT", "TEXT", "JSON"
+	Path     string // JSON path expression (e.g. "$.name")
+}
+
 // NamedWindowDef represents a named window definition in a WINDOW clause.
 type NamedWindowDef struct {
 	Name        string
@@ -89,6 +104,7 @@ type SelectStmt struct {
 	DatabaseName string           // empty = current database
 	TableName    string           // table name (empty when FromSubquery is used)
 	FromSubquery Statement        // FROM subquery (nil = normal table). *SelectStmt or *SetOpStmt
+	JSONTable    *JSONTableSource // FROM JSON_TABLE(...) (nil = not used)
 	TableAlias   string           // optional alias for the FROM table or subquery
 	Joins        []JoinClause     // JOIN clauses (INNER, LEFT)
 	Where        Expr             // nil if no WHERE clause

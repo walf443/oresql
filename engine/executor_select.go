@@ -1,10 +1,12 @@
 package engine
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/walf443/oresql/ast"
+	"github.com/walf443/oresql/json_path"
 )
 
 // maxRecursiveDepth is the maximum number of iterations for recursive CTEs.
@@ -688,7 +690,7 @@ func valuesEqual(a, b Value) bool {
 // usedJoinPath returns true if scanSource would route through the join path for this stmt.
 // The join path handles WHERE internally, so callers should skip Phase 2 filtering.
 func (e *Executor) usedJoinPath(stmt *ast.SelectStmt) bool {
-	if stmt.FromSubquery != nil {
+	if stmt.FromSubquery != nil || stmt.JSONTable != nil {
 		return len(stmt.Joins) > 0
 	}
 	return len(stmt.Joins) > 0 || stmt.TableAlias != ""
@@ -697,6 +699,9 @@ func (e *Executor) usedJoinPath(stmt *ast.SelectStmt) bool {
 // scanSource returns the source rows and an appropriate evaluator for the query.
 // earlyLimit > 0 enables early termination for the JOIN path.
 func (e *Executor) scanSource(stmt *ast.SelectStmt, earlyLimit int) ([]Row, ExprEvaluator, error) {
+	if stmt.JSONTable != nil {
+		return e.scanSourceJSONTable(stmt)
+	}
 	if stmt.FromSubquery != nil {
 		return e.scanSourceSubquery(stmt, earlyLimit)
 	}
@@ -744,6 +749,167 @@ func (e *Executor) scanSourceSubquery(stmt *ast.SelectStmt, earlyLimit int) ([]R
 		return nil, nil, err
 	}
 	return rows, newTableEvaluator(e, info), nil
+}
+
+// scanSourceJSONTable handles FROM JSON_TABLE(...).
+func (e *Executor) scanSourceJSONTable(stmt *ast.SelectStmt) ([]Row, ExprEvaluator, error) {
+	info, rows, err := e.materializeJSONTable(stmt.JSONTable)
+	if err != nil {
+		return nil, nil, err
+	}
+	return rows, newTableEvaluator(e, info), nil
+}
+
+// materializeJSONTable evaluates a JSON_TABLE source and returns a virtual table.
+func (e *Executor) materializeJSONTable(jt *ast.JSONTableSource) (*TableInfo, []Row, error) {
+	// Evaluate the JSON expression (must be a literal in this context)
+	jsonVal, err := evalLiteral(jt.JSONExpr)
+	if err != nil {
+		return nil, nil, fmt.Errorf("JSON_TABLE: %w", err)
+	}
+	jsonStr, ok := jsonVal.(string)
+	if !ok {
+		return nil, nil, fmt.Errorf("JSON_TABLE: first argument must be a JSON string, got %T", jsonVal)
+	}
+
+	// Parse the JSON
+	var raw any
+	if err := json.Unmarshal([]byte(jsonStr), &raw); err != nil {
+		return nil, nil, fmt.Errorf("JSON_TABLE: invalid JSON: %w", err)
+	}
+
+	// Parse the row path and determine the items to iterate.
+	// Handle $[*] wildcard: navigate to parent, then expand array elements.
+	var items []any
+	rowPath := jt.RowPath
+	wildcard := false
+	if strings.HasSuffix(rowPath, "[*]") {
+		wildcard = true
+		rowPath = rowPath[:len(rowPath)-3] // strip [*]
+		if rowPath == "$" || rowPath == "" {
+			rowPath = "$"
+		}
+	}
+
+	rowPathExpr, err := json_path.Parse(rowPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("JSON_TABLE: invalid row path: %w", err)
+	}
+	target := rowPathExpr.Execute(raw)
+
+	if wildcard {
+		arr, ok := target.([]any)
+		if !ok {
+			// Not an array with wildcard - return empty
+			items = nil
+		} else {
+			items = arr
+		}
+	} else {
+		switch v := target.(type) {
+		case []any:
+			items = v
+		case nil:
+			items = nil
+		default:
+			// Single value (e.g. root path "$" pointing to an object) - wrap in array
+			items = []any{v}
+		}
+	}
+
+	// Pre-compile column paths
+	colPaths := make([]*json_path.Path, len(jt.Columns))
+	for i, col := range jt.Columns {
+		p, err := json_path.Parse(col.Path)
+		if err != nil {
+			return nil, nil, fmt.Errorf("JSON_TABLE: invalid column path %q: %w", col.Path, err)
+		}
+		colPaths[i] = p
+	}
+
+	// Build TableInfo
+	cols := make([]ColumnInfo, len(jt.Columns))
+	for i, col := range jt.Columns {
+		cols[i] = ColumnInfo{
+			Name:     strings.ToLower(col.Name),
+			DataType: col.DataType,
+			Index:    i,
+		}
+	}
+	info := &TableInfo{
+		Name:          strings.ToLower(jt.Alias),
+		Columns:       cols,
+		PrimaryKeyCol: -1,
+	}
+
+	// Build rows
+	var rows []Row
+	for _, item := range items {
+		row := make(Row, len(jt.Columns))
+		for i, col := range jt.Columns {
+			val := colPaths[i].Execute(item)
+			if val != nil {
+				coerced, err := coerceJSONValue(val, col.DataType)
+				if err != nil {
+					return nil, nil, fmt.Errorf("JSON_TABLE column %q: %w", col.Name, err)
+				}
+				row[i] = coerced
+			}
+			// nil stays nil (NULL)
+		}
+		rows = append(rows, row)
+	}
+
+	return info, rows, nil
+}
+
+// coerceJSONValue converts a JSON-decoded value to the expected column type.
+func coerceJSONValue(val any, dataType string) (Value, error) {
+	switch dataType {
+	case "INT":
+		switch v := val.(type) {
+		case float64:
+			return int64(v), nil
+		case string:
+			return nil, fmt.Errorf("cannot convert string %q to INT", v)
+		default:
+			return nil, fmt.Errorf("cannot convert %T to INT", val)
+		}
+	case "FLOAT":
+		switch v := val.(type) {
+		case float64:
+			return v, nil
+		case string:
+			return nil, fmt.Errorf("cannot convert string %q to FLOAT", v)
+		default:
+			return nil, fmt.Errorf("cannot convert %T to FLOAT", val)
+		}
+	case "TEXT":
+		switch v := val.(type) {
+		case string:
+			return v, nil
+		case float64:
+			if v == float64(int64(v)) {
+				return fmt.Sprintf("%d", int64(v)), nil
+			}
+			return fmt.Sprintf("%g", v), nil
+		case bool:
+			if v {
+				return "true", nil
+			}
+			return "false", nil
+		default:
+			return fmt.Sprintf("%v", val), nil
+		}
+	case "JSON":
+		b, err := json.Marshal(val)
+		if err != nil {
+			return nil, err
+		}
+		return string(b), nil
+	default:
+		return val, nil
+	}
 }
 
 // scanSourceSingle scans a single table with optional index optimization.

@@ -665,6 +665,87 @@ func TestIS_JSON_WithJSONColumn(t *testing.T) {
 	assert.Equal(t, true, result.Rows[0][0])
 }
 
+func TestJSON_TABLE_Basic(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+
+	// Array of objects
+	result := run(t, exec, `SELECT name, age FROM JSON_TABLE('[{"name":"alice","age":30},{"name":"bob","age":25}]', '$[*]' COLUMNS (name TEXT PATH '$.name', age INT PATH '$.age')) AS jt`)
+	require.Len(t, result.Rows, 2)
+	assert.Equal(t, "alice", result.Rows[0][0])
+	assert.Equal(t, int64(30), result.Rows[0][1])
+	assert.Equal(t, "bob", result.Rows[1][0])
+	assert.Equal(t, int64(25), result.Rows[1][1])
+}
+
+func TestJSON_TABLE_WithWhere(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+
+	result := run(t, exec, `SELECT name FROM JSON_TABLE('[{"name":"alice","age":30},{"name":"bob","age":25},{"name":"carol","age":35}]', '$[*]' COLUMNS (name TEXT PATH '$.name', age INT PATH '$.age')) AS jt WHERE age >= 30`)
+	require.Len(t, result.Rows, 2)
+	assert.Equal(t, "alice", result.Rows[0][0])
+	assert.Equal(t, "carol", result.Rows[1][0])
+}
+
+func TestJSON_TABLE_QualifiedColumn(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+
+	// Alias-qualified column references
+	result := run(t, exec, `SELECT jt.name FROM JSON_TABLE('[{"name":"alice"}]', '$[*]' COLUMNS (name TEXT PATH '$.name')) AS jt`)
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, "alice", result.Rows[0][0])
+}
+
+func TestJSON_TABLE_DataTypes(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+
+	// INT, FLOAT, TEXT column types
+	result := run(t, exec, `SELECT i, f, s FROM JSON_TABLE('[{"i":42,"f":3.14,"s":"hello"}]', '$[*]' COLUMNS (i INT PATH '$.i', f FLOAT PATH '$.f', s TEXT PATH '$.s')) AS jt`)
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, int64(42), result.Rows[0][0])
+	assert.Equal(t, 3.14, result.Rows[0][1])
+	assert.Equal(t, "hello", result.Rows[0][2])
+}
+
+func TestJSON_TABLE_NullValues(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+
+	// Missing key returns NULL
+	result := run(t, exec, `SELECT name, email FROM JSON_TABLE('[{"name":"alice","email":"a@test.com"},{"name":"bob"}]', '$[*]' COLUMNS (name TEXT PATH '$.name', email TEXT PATH '$.email')) AS jt`)
+	require.Len(t, result.Rows, 2)
+	assert.Equal(t, "alice", result.Rows[0][0])
+	assert.Equal(t, "a@test.com", result.Rows[0][1])
+	assert.Equal(t, "bob", result.Rows[1][0])
+	assert.Nil(t, result.Rows[1][1])
+}
+
+func TestJSON_TABLE_RootPath(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+
+	// Root path $ with a single object (produces one row)
+	result := run(t, exec, `SELECT name FROM JSON_TABLE('{"name":"alice"}', '$' COLUMNS (name TEXT PATH '$.name')) AS jt`)
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, "alice", result.Rows[0][0])
+}
+
+func TestJSON_TABLE_ErrorCases(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+
+	tests := []struct {
+		name string
+		sql  string
+	}{
+		{"invalid json", `SELECT * FROM JSON_TABLE('not json', '$[*]' COLUMNS (v TEXT PATH '$.x')) AS jt`},
+		{"no alias", `SELECT * FROM JSON_TABLE('[1]', '$[*]' COLUMNS (v TEXT PATH '$'))`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := runWithError(exec, tt.sql)
+			require.Error(t, err, "expected error for %s", tt.sql)
+		})
+	}
+}
+
 func TestJSON_OBJECT_InsertIntoJSONColumn(t *testing.T) {
 	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE docs (id INT, data JSON)")

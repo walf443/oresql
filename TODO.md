@@ -227,7 +227,7 @@ oresql 独自の拡張や実装上の項目は末尾にまとめる。
 ## SQL:2016+ — SQL/JSON (T801–T830)
 
 - [x] JSON 型 (T801)
-- [ ] JSON_OBJECT / JSON_ARRAY — JSON 値の生成 (T802)
+- [x] JSON_OBJECT / JSON_ARRAY — JSON 値の生成 (T802)
 - [ ] JSON_VALUE / JSON_QUERY — JSON からのスカラー/構造の抽出 (T803)
 - [ ] JSON_EXISTS — JSON パスの存在確認 (T804)
 - [ ] JSON_TABLE — JSON を関係テーブルに変換 (T805)

@@ -135,6 +135,26 @@ func evalScalarFuncLiteral(call *ast.CallExpr) (Value, error) {
 			args[i] = val
 		}
 		return evalStringFunc(call, args)
+	case "JSON_OBJECT":
+		args := make([]Value, len(call.Args))
+		for i, arg := range call.Args {
+			val, err := evalLiteral(arg)
+			if err != nil {
+				return nil, err
+			}
+			args[i] = val
+		}
+		return evalFuncJSONObject(args)
+	case "JSON_ARRAY":
+		args := make([]Value, len(call.Args))
+		for i, arg := range call.Args {
+			val, err := evalLiteral(arg)
+			if err != nil {
+				return nil, err
+			}
+			args[i] = val
+		}
+		return evalFuncJSONArray(args)
 	default:
 		return nil, fmt.Errorf("function %s not supported in literal context", call.Name)
 	}
@@ -427,6 +447,26 @@ func evalScalarFunc(call *ast.CallExpr, row Row, info *TableInfo) (Value, error)
 			args[i] = val
 		}
 		return evalStringFunc(call, args)
+	case "JSON_OBJECT":
+		args := make([]Value, len(call.Args))
+		for i, arg := range call.Args {
+			val, err := evalExpr(arg, row, info)
+			if err != nil {
+				return nil, err
+			}
+			args[i] = val
+		}
+		return evalFuncJSONObject(args)
+	case "JSON_ARRAY":
+		args := make([]Value, len(call.Args))
+		for i, arg := range call.Args {
+			val, err := evalExpr(arg, row, info)
+			if err != nil {
+				return nil, err
+			}
+			args[i] = val
+		}
+		return evalFuncJSONArray(args)
 	default:
 		return nil, fmt.Errorf("aggregate function %s not allowed in this context", call.Name)
 	}
@@ -1168,4 +1208,78 @@ func matchFullText(text, searchTerm, tokenizer string) bool {
 
 func isLetterOrDigit(r rune) bool {
 	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r >= 0x80
+}
+
+// valueToJSON converts a Go value to its JSON representation.
+// If the value is already a valid JSON string (from JSON_OBJECT/JSON_ARRAY), it is embedded as raw JSON.
+func valueToJSON(val Value) ([]byte, error) {
+	if val == nil {
+		return []byte("null"), nil
+	}
+	switch v := val.(type) {
+	case string:
+		if json.Valid([]byte(v)) {
+			return []byte(v), nil
+		}
+		return json.Marshal(v)
+	case int64:
+		return json.Marshal(v)
+	case float64:
+		return json.Marshal(v)
+	case bool:
+		return json.Marshal(v)
+	default:
+		return nil, fmt.Errorf("unsupported value type for JSON: %T", val)
+	}
+}
+
+// evalFuncJSONObject builds a JSON object from alternating key-value arguments.
+// Usage: JSON_OBJECT('key1', val1, 'key2', val2, ...)
+func evalFuncJSONObject(args []Value) (Value, error) {
+	if len(args)%2 != 0 {
+		return nil, fmt.Errorf("JSON_OBJECT requires an even number of arguments (key-value pairs), got %d", len(args))
+	}
+	var buf strings.Builder
+	buf.WriteByte('{')
+	for i := 0; i < len(args); i += 2 {
+		key, ok := args[i].(string)
+		if !ok {
+			return nil, fmt.Errorf("JSON_OBJECT key must be a string, got %T", args[i])
+		}
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		keyJSON, err := json.Marshal(key)
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(keyJSON)
+		buf.WriteByte(':')
+		valJSON, err := valueToJSON(args[i+1])
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(valJSON)
+	}
+	buf.WriteByte('}')
+	return buf.String(), nil
+}
+
+// evalFuncJSONArray builds a JSON array from arguments.
+// Usage: JSON_ARRAY(val1, val2, ...)
+func evalFuncJSONArray(args []Value) (Value, error) {
+	var buf strings.Builder
+	buf.WriteByte('[')
+	for i, arg := range args {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		valJSON, err := valueToJSON(arg)
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(valJSON)
+	}
+	buf.WriteByte(']')
+	return buf.String(), nil
 }

@@ -106,3 +106,216 @@ func TestJSONType_TypeMismatch(t *testing.T) {
 	// INT value into JSON column should fail
 	runExpectError(t, exec, "INSERT INTO docs VALUES (1, 42)")
 }
+
+func TestJSON_OBJECT(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+
+	// Basic key-value pairs
+	result := run(t, exec, "SELECT JSON_OBJECT('name', 'alice', 'age', 30)")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, `{"name":"alice","age":30}`, result.Rows[0][0])
+
+	// Empty object
+	result = run(t, exec, "SELECT JSON_OBJECT()")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, `{}`, result.Rows[0][0])
+
+	// With NULL value
+	result = run(t, exec, "SELECT JSON_OBJECT('key', NULL)")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, `{"key":null}`, result.Rows[0][0])
+
+	// Nested JSON_OBJECT
+	result = run(t, exec, "SELECT JSON_OBJECT('outer', JSON_OBJECT('inner', 1))")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, `{"outer":{"inner":1}}`, result.Rows[0][0])
+
+	// With column reference
+	run(t, exec, "CREATE TABLE users (id INT, name TEXT)")
+	run(t, exec, "INSERT INTO users VALUES (1, 'alice')")
+	result = run(t, exec, "SELECT JSON_OBJECT('id', id, 'name', name) FROM users")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, `{"id":1,"name":"alice"}`, result.Rows[0][0])
+}
+
+func TestJSON_OBJECT_OddArgs(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+
+	// Odd number of arguments should fail
+	_, err := runWithError(exec, "SELECT JSON_OBJECT('key')")
+	require.Error(t, err)
+}
+
+func TestJSON_OBJECT_NonStringKey(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+
+	// Non-string key should fail
+	_, err := runWithError(exec, "SELECT JSON_OBJECT(1, 'value')")
+	require.Error(t, err)
+}
+
+func TestJSON_ARRAY(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+
+	// Basic array
+	result := run(t, exec, "SELECT JSON_ARRAY(1, 2, 3)")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, `[1,2,3]`, result.Rows[0][0])
+
+	// Empty array
+	result = run(t, exec, "SELECT JSON_ARRAY()")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, `[]`, result.Rows[0][0])
+
+	// Mixed types
+	result = run(t, exec, "SELECT JSON_ARRAY(1, 'hello', NULL, 3.14)")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, `[1,"hello",null,3.14]`, result.Rows[0][0])
+
+	// Nested JSON_ARRAY
+	result = run(t, exec, "SELECT JSON_ARRAY(1, JSON_ARRAY(2, 3))")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, `[1,[2,3]]`, result.Rows[0][0])
+
+	// Nested JSON_OBJECT in JSON_ARRAY
+	result = run(t, exec, "SELECT JSON_ARRAY(JSON_OBJECT('a', 1), JSON_OBJECT('b', 2))")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, `[{"a":1},{"b":2}]`, result.Rows[0][0])
+
+	// With column reference
+	run(t, exec, "CREATE TABLE nums (val INT)")
+	run(t, exec, "INSERT INTO nums VALUES (10)")
+	result = run(t, exec, "SELECT JSON_ARRAY(val, val * 2) FROM nums")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, `[10,20]`, result.Rows[0][0])
+}
+
+func TestJSON_OBJECT_ErrorCases(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+
+	tests := []struct {
+		name string
+		sql  string
+	}{
+		{"odd args 1", "SELECT JSON_OBJECT('key')"},
+		{"odd args 3", "SELECT JSON_OBJECT('a', 1, 'b')"},
+		{"odd args 5", "SELECT JSON_OBJECT('a', 1, 'b', 2, 'c')"},
+		{"int key", "SELECT JSON_OBJECT(1, 'value')"},
+		{"float key", "SELECT JSON_OBJECT(3.14, 'value')"},
+		{"null key", "SELECT JSON_OBJECT(NULL, 'value')"},
+		{"bool key (via column)", "SELECT JSON_OBJECT(1 = 1, 'value')"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := runWithError(exec, tt.sql)
+			require.Error(t, err, "expected error for %s", tt.sql)
+		})
+	}
+}
+
+func TestJSON_OBJECT_ValueTypes(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+
+	tests := []struct {
+		name     string
+		sql      string
+		expected string
+	}{
+		{"int value", "SELECT JSON_OBJECT('v', 42)", `{"v":42}`},
+		{"negative int", "SELECT JSON_OBJECT('v', -1)", `{"v":-1}`},
+		{"float value", "SELECT JSON_OBJECT('v', 3.14)", `{"v":3.14}`},
+		{"string value", "SELECT JSON_OBJECT('v', 'hello')", `{"v":"hello"}`},
+		{"null value", "SELECT JSON_OBJECT('v', NULL)", `{"v":null}`},
+		{"empty string value", "SELECT JSON_OBJECT('v', '')", `{"v":""}`},
+		{"string with quotes", "SELECT JSON_OBJECT('v', 'say \"hi\"')", `{"v":"say \"hi\""}`},
+		{"multiple pairs", "SELECT JSON_OBJECT('a', 1, 'b', 2, 'c', 3)", `{"a":1,"b":2,"c":3}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := run(t, exec, tt.sql)
+			require.Len(t, result.Rows, 1)
+			assert.Equal(t, tt.expected, result.Rows[0][0])
+		})
+	}
+}
+
+func TestJSON_ARRAY_ErrorCases(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE items (id INT, data JSON)")
+
+	// JSON_ARRAY itself doesn't have error cases for argument count,
+	// but verify that non-serializable types from expressions are handled
+	result := run(t, exec, "SELECT JSON_ARRAY()")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, `[]`, result.Rows[0][0])
+}
+
+func TestJSON_ARRAY_ValueTypes(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+
+	tests := []struct {
+		name     string
+		sql      string
+		expected string
+	}{
+		{"single int", "SELECT JSON_ARRAY(1)", `[1]`},
+		{"single string", "SELECT JSON_ARRAY('hello')", `["hello"]`},
+		{"single null", "SELECT JSON_ARRAY(NULL)", `[null]`},
+		{"single float", "SELECT JSON_ARRAY(3.14)", `[3.14]`},
+		{"negative int", "SELECT JSON_ARRAY(-5)", `[-5]`},
+		{"empty string", "SELECT JSON_ARRAY('')", `[""]`},
+		{"all nulls", "SELECT JSON_ARRAY(NULL, NULL, NULL)", `[null,null,null]`},
+		{"many elements", "SELECT JSON_ARRAY(1, 2, 3, 4, 5)", `[1,2,3,4,5]`},
+		{"nested array in array", "SELECT JSON_ARRAY(JSON_ARRAY(1, 2), JSON_ARRAY(3, 4))", `[[1,2],[3,4]]`},
+		{"deeply nested", "SELECT JSON_ARRAY(JSON_ARRAY(JSON_ARRAY(1)))", `[[[1]]]`},
+		{"object in array", "SELECT JSON_ARRAY(JSON_OBJECT('x', 1))", `[{"x":1}]`},
+		{"mixed nesting", "SELECT JSON_ARRAY(1, JSON_OBJECT('a', JSON_ARRAY(2, 3)))", `[1,{"a":[2,3]}]`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := run(t, exec, tt.sql)
+			require.Len(t, result.Rows, 1)
+			assert.Equal(t, tt.expected, result.Rows[0][0])
+		})
+	}
+}
+
+func TestJSON_OBJECT_WithColumnRef(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE products (id INT, name TEXT, price FLOAT)")
+	run(t, exec, "INSERT INTO products VALUES (1, 'apple', 1.5)")
+	run(t, exec, "INSERT INTO products VALUES (2, 'banana', 2.0)")
+
+	// JSON_OBJECT with column references across multiple rows
+	result := run(t, exec, "SELECT JSON_OBJECT('id', id, 'name', name, 'price', price) FROM products ORDER BY id")
+	require.Len(t, result.Rows, 2)
+	assert.Equal(t, `{"id":1,"name":"apple","price":1.5}`, result.Rows[0][0])
+	assert.Equal(t, `{"id":2,"name":"banana","price":2}`, result.Rows[1][0])
+}
+
+func TestJSON_ARRAY_WithColumnRef(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE coords (x INT, y INT)")
+	run(t, exec, "INSERT INTO coords VALUES (1, 2)")
+	run(t, exec, "INSERT INTO coords VALUES (3, 4)")
+
+	// JSON_ARRAY with column references across multiple rows
+	result := run(t, exec, "SELECT JSON_ARRAY(x, y) FROM coords ORDER BY x")
+	require.Len(t, result.Rows, 2)
+	assert.Equal(t, `[1,2]`, result.Rows[0][0])
+	assert.Equal(t, `[3,4]`, result.Rows[1][0])
+}
+
+func TestJSON_OBJECT_InsertIntoJSONColumn(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE docs (id INT, data JSON)")
+
+	// JSON_OBJECT result can be inserted into JSON column
+	run(t, exec, "INSERT INTO docs SELECT 1, JSON_OBJECT('name', 'alice') FROM (SELECT 1) AS t")
+	result := run(t, exec, "SELECT data FROM docs")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, `{"name":"alice"}`, result.Rows[0][0])
+}

@@ -735,6 +735,26 @@ func evalScalarFuncGeneric(call *ast.CallExpr, row Row, eval ExprEvaluator) (Val
 			args[i] = val
 		}
 		return evalStringFunc(call, args)
+	case "JSON_OBJECT":
+		args := make([]Value, len(call.Args))
+		for i, arg := range call.Args {
+			val, err := eval.Eval(arg, row)
+			if err != nil {
+				return nil, err
+			}
+			args[i] = val
+		}
+		return evalFuncJSONObject(args)
+	case "JSON_ARRAY":
+		args := make([]Value, len(call.Args))
+		for i, arg := range call.Args {
+			val, err := eval.Eval(arg, row)
+			if err != nil {
+				return nil, err
+			}
+			args[i] = val
+		}
+		return evalFuncJSONArray(args)
 	default:
 		return nil, fmt.Errorf("aggregate function %s not allowed in this context", call.Name)
 	}

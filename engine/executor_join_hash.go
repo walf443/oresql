@@ -55,19 +55,19 @@ func resolveAllEquiJoinCols(
 	graph *JoinGraph,
 	tableOffset map[string]int,
 ) (innerColIdxs []int, outerColIdxs []int) {
-	nextEffName := nextNode.effectiveName()
+	nextEffName := nextNode.EffectiveName()
 	for _, pair := range edge.EquiJoinPairs {
 		var innerCol, outerCol string
 		var partnerName string
 
-		if nextEffName == pair.leftTable {
-			innerCol = pair.leftCol
-			outerCol = pair.rightCol
-			partnerName = pair.rightTable
+		if nextEffName == pair.LeftTable {
+			innerCol = pair.LeftCol
+			outerCol = pair.RightCol
+			partnerName = pair.RightTable
 		} else {
-			innerCol = pair.rightCol
-			outerCol = pair.leftCol
-			partnerName = pair.leftTable
+			innerCol = pair.RightCol
+			outerCol = pair.LeftCol
+			partnerName = pair.LeftTable
 		}
 
 		if partnerName == "" {

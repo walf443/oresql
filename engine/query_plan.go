@@ -915,15 +915,15 @@ func (e *Executor) addJoinPlans(plan *SelectPlan, stmt *ast.SelectStmt) {
 
 	// Build joinTableInfo for the driving (FROM) table
 	fromInfo := &joinTableInfo{
-		tableName:     strings.ToLower(stmt.TableName),
-		alias:         strings.ToLower(stmt.TableAlias),
-		effectiveName: strings.ToLower(stmt.TableName),
+		TableName:     strings.ToLower(stmt.TableName),
+		Alias:         strings.ToLower(stmt.TableAlias),
+		EffectiveName: strings.ToLower(stmt.TableName),
 	}
-	if fromInfo.alias != "" {
-		fromInfo.effectiveName = fromInfo.alias
+	if fromInfo.Alias != "" {
+		fromInfo.EffectiveName = fromInfo.Alias
 	}
 	if plan.info != nil {
-		fromInfo.info = plan.info
+		fromInfo.Info = plan.info
 	}
 
 	// Track all joined tables so far for multi-table join equi-pair extraction
@@ -952,13 +952,13 @@ func (e *Executor) addJoinPlans(plan *SelectPlan, stmt *ast.SelectStmt) {
 		if join.On != nil {
 			// Build joinTableInfo for this JOIN table
 			joinTI := &joinTableInfo{
-				info:          joinInfo,
-				tableName:     strings.ToLower(join.TableName),
-				alias:         strings.ToLower(join.TableAlias),
-				effectiveName: strings.ToLower(join.TableName),
+				Info:          joinInfo,
+				TableName:     strings.ToLower(join.TableName),
+				Alias:         strings.ToLower(join.TableAlias),
+				EffectiveName: strings.ToLower(join.TableName),
 			}
-			if joinTI.alias != "" {
-				joinTI.effectiveName = joinTI.alias
+			if joinTI.Alias != "" {
+				joinTI.EffectiveName = joinTI.Alias
 			}
 
 			// Try to find equi-join pairs by checking against all known tables
@@ -967,7 +967,7 @@ func (e *Executor) addJoinPlans(plan *SelectPlan, stmt *ast.SelectStmt) {
 				pairs, _ := extractAllEquiJoinPairs(join.On, knownTI, joinTI)
 				if len(pairs) > 0 {
 					// Check if the join table has an index on the equi-join column
-					joinCol := pairs[0].rightCol
+					joinCol := pairs[0].RightCol
 					e.resolveJoinAccessType(&jp, joinCol, joinInfo, joinDB, join, stmt)
 					found = true
 					break
@@ -1013,13 +1013,13 @@ func (e *Executor) addJoinPlans(plan *SelectPlan, stmt *ast.SelectStmt) {
 
 		// Add this table to known tables for subsequent joins
 		joinTI := &joinTableInfo{
-			info:          joinInfo,
-			tableName:     strings.ToLower(join.TableName),
-			alias:         strings.ToLower(join.TableAlias),
-			effectiveName: strings.ToLower(join.TableName),
+			Info:          joinInfo,
+			TableName:     strings.ToLower(join.TableName),
+			Alias:         strings.ToLower(join.TableAlias),
+			EffectiveName: strings.ToLower(join.TableName),
 		}
-		if joinTI.alias != "" {
-			joinTI.effectiveName = joinTI.alias
+		if joinTI.Alias != "" {
+			joinTI.EffectiveName = joinTI.Alias
 		}
 		knownTables = append(knownTables, joinTI)
 	}

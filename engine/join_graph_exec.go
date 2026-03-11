@@ -36,7 +36,7 @@ func (e *Executor) scanNodeRows(node *JoinGraphNode) ([]Row, error) {
 		return node.Rows, nil
 	}
 
-	st := node.storageEngine(e.db)
+	st := node.Storage
 	var rows []Row
 	var err error
 
@@ -130,22 +130,22 @@ func (e *Executor) resolveEquiJoinIndex(
 
 	pair := s.edge.EquiJoinPairs[0]
 	var nextEquiCol string
-	if nextName == pair.leftTable {
-		nextEquiCol = pair.leftCol
+	if nextName == pair.LeftTable {
+		nextEquiCol = pair.LeftCol
 		partnerNode := graph.Nodes[partnerName]
-		if col, err := partnerNode.Info.FindColumn(pair.rightCol); err == nil {
+		if col, err := partnerNode.Info.FindColumn(pair.RightCol); err == nil {
 			s.partnerEquiColIdx = tableOffset[partnerName] + col.Index
 		}
 	} else {
-		nextEquiCol = pair.rightCol
+		nextEquiCol = pair.RightCol
 		partnerNode := graph.Nodes[partnerName]
-		if col, err := partnerNode.Info.FindColumn(pair.leftCol); err == nil {
+		if col, err := partnerNode.Info.FindColumn(pair.LeftCol); err == nil {
 			s.partnerEquiColIdx = tableOffset[partnerName] + col.Index
 		}
 	}
 
 	nextNode := s.nextNode
-	nextStorage := nextNode.storageEngine(e.db)
+	nextStorage := nextNode.Storage
 	if col, err := nextNode.Info.FindColumn(nextEquiCol); err == nil {
 		s.nextIdx = nextStorage.LookupSingleColumnIndex(nextNode.Info.Name, col.Index)
 	}
@@ -246,7 +246,7 @@ func (e *Executor) findInnerCandidates(s *joinStepState, outerRow Row) ([]Row, b
 		if len(keys) == 0 {
 			return nil, true, nil
 		}
-		candidates, err := s.nextNode.storageEngine(e.db).GetByKeys(s.nextNode.Info.Name, keys)
+		candidates, err := s.nextNode.Storage.GetByKeys(s.nextNode.Info.Name, keys)
 		if err != nil {
 			return nil, false, err
 		}

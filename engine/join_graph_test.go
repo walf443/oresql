@@ -24,8 +24,8 @@ func TestExtractAllEquiJoinPairs(t *testing.T) {
 			{Name: "name", DataType: "TEXT", Index: 2},
 		},
 	}
-	tableA := &joinTableInfo{info: usersInfo, tableName: "users", alias: "u", effectiveName: "u"}
-	tableB := &joinTableInfo{info: ordersInfo, tableName: "orders", alias: "o", effectiveName: "o"}
+	tableA := &joinTableInfo{Info: usersInfo, TableName: "users", Alias: "u", EffectiveName: "u"}
+	tableB := &joinTableInfo{Info: ordersInfo, TableName: "orders", Alias: "o", EffectiveName: "o"}
 
 	t.Run("single pair", func(t *testing.T) {
 		on := &ast.BinaryExpr{
@@ -35,8 +35,8 @@ func TestExtractAllEquiJoinPairs(t *testing.T) {
 		}
 		pairs, residual := extractAllEquiJoinPairs(on, tableA, tableB)
 		require.Len(t, pairs, 1, "expected 1 equi-join pair")
-		assert.Equal(t, "id", pairs[0].leftCol)
-		assert.Equal(t, "user_id", pairs[0].rightCol)
+		assert.Equal(t, "id", pairs[0].LeftCol)
+		assert.Equal(t, "user_id", pairs[0].RightCol)
 		assert.Nil(t, residual, "expected no residual")
 	})
 

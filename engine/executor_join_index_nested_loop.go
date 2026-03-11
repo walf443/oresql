@@ -6,29 +6,8 @@ import (
 	"github.com/walf443/oresql/ast"
 )
 
-// equiJoinPair represents a pair of columns from two tables used in an equi-join.
-// leftTable/leftCol always refer to the FROM table, rightTable/rightCol to the JOIN table.
-type equiJoinPair struct {
-	leftTable, leftCol   string // lowercase table name, lowercase column name
-	rightTable, rightCol string
-}
-
-// joinTableInfo holds table metadata for join optimization.
-type joinTableInfo struct {
-	info          *TableInfo
-	tableName     string // lowercase
-	alias         string
-	effectiveName string // join graph node key (alias if present, otherwise tableName)
-}
-
-// matchesTable returns true if the given qualifier (table name or alias) matches this table.
-func (jt *joinTableInfo) matchesTable(qualifier string) bool {
-	if qualifier == "" {
-		return false
-	}
-	lower := strings.ToLower(qualifier)
-	return lower == jt.tableName || (jt.alias != "" && lower == strings.ToLower(jt.alias))
-}
+// equiJoinPair and joinTableInfo type aliases are defined in join_graph.go
+// (delegating to engine/join_graph package).
 
 // flattenAND decomposes an AND-connected expression tree into a flat slice.
 // Non-AND expressions (including OR) are returned as a single-element slice.

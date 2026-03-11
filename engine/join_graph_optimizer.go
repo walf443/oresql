@@ -120,13 +120,13 @@ func (e *Executor) scoreJoinEdge(effName string, node *JoinGraphNode, graph *Joi
 		edge := graph.Edges[key]
 		if edge != nil && len(edge.EquiJoinPairs) > 0 {
 			pair := edge.EquiJoinPairs[0]
-			thisCol := pair.rightCol
+			thisCol := pair.RightCol
 			if effName == edge.TableA {
-				thisCol = pair.leftCol
+				thisCol = pair.LeftCol
 			}
 			col, findErr := node.Info.FindColumn(thisCol)
 			if findErr == nil {
-				idx := node.storageEngine(e.db).LookupSingleColumnIndex(node.Info.Name, col.Index)
+				idx := node.Storage.LookupSingleColumnIndex(node.Info.Name, col.Index)
 				if idx != nil {
 					return 3, true // Index Nested Loop possible
 				}

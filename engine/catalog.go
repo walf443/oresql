@@ -28,28 +28,48 @@ func (c *Catalog) CreateTable(name string, columnDefs []ast.ColumnDef, tablePK [
 		return nil, fmt.Errorf("table %q already exists", name)
 	}
 
-	// Validate column-level PRIMARY KEY constraints
+	pkCol, hasColumnLevelPK, err := validateColumnLevelPK(columnDefs, tablePK)
+	if err != nil {
+		return nil, err
+	}
+
+	columns, err := buildColumnInfos(columnDefs)
+	if err != nil {
+		return nil, err
+	}
+
+	pkCol, primaryKeyCols, err := resolvePrimaryKey(columns, tablePK, pkCol, hasColumnLevelPK)
+	if err != nil {
+		return nil, err
+	}
+
+	info := &TableInfo{Name: lower, Columns: columns, PrimaryKeyCol: pkCol, PrimaryKeyCols: primaryKeyCols}
+	c.tables[lower] = info
+	return info, nil
+}
+
+// validateColumnLevelPK checks column-level PRIMARY KEY constraints.
+// Returns (pkColIdx, hasColumnLevelPK, error).
+func validateColumnLevelPK(columnDefs []ast.ColumnDef, tablePK []string) (int, bool, error) {
 	pkCol := -1
 	hasColumnLevelPK := false
 	for i, cd := range columnDefs {
 		if cd.PrimaryKey {
 			if pkCol >= 0 {
-				return nil, fmt.Errorf("multiple PRIMARY KEY columns are not allowed")
+				return -1, false, fmt.Errorf("multiple PRIMARY KEY columns are not allowed")
 			}
-			if cd.DataType == "INT" {
-				pkCol = i // INT PK uses BTree key directly
-			} else {
-				pkCol = i // temporary; will be reset to -1 below for non-INT
-			}
+			pkCol = i
 			hasColumnLevelPK = true
 		}
 	}
-
-	// Reject combining column-level and table-level PK
 	if hasColumnLevelPK && len(tablePK) > 0 {
-		return nil, fmt.Errorf("cannot specify both column-level and table-level PRIMARY KEY")
+		return -1, false, fmt.Errorf("cannot specify both column-level and table-level PRIMARY KEY")
 	}
+	return pkCol, hasColumnLevelPK, nil
+}
 
+// buildColumnInfos creates ColumnInfo slice from column definitions, validating DEFAULT values.
+func buildColumnInfos(columnDefs []ast.ColumnDef) ([]ColumnInfo, error) {
 	columns := make([]ColumnInfo, len(columnDefs))
 	for i, cd := range columnDefs {
 		col := ColumnInfo{
@@ -60,89 +80,108 @@ func (c *Catalog) CreateTable(name string, columnDefs []ast.ColumnDef, tablePK [
 			PrimaryKey: cd.PrimaryKey,
 		}
 		if cd.Default != nil {
-			col.HasDefault = true
-			val, err := evalLiteral(cd.Default)
+			val, err := validateDefault(cd.Name, cd.DataType, cd.NotNull, cd.Default)
 			if err != nil {
-				return nil, fmt.Errorf("invalid DEFAULT for column %q: %w", cd.Name, err)
+				return nil, err
 			}
-			if val == nil {
-				if cd.NotNull {
-					return nil, fmt.Errorf("column %q is NOT NULL but DEFAULT is NULL", cd.Name)
-				}
-			} else {
-				switch cd.DataType {
-				case "INT":
-					if _, ok := val.(int64); !ok {
-						return nil, fmt.Errorf("column %q expects INT, DEFAULT value is %T", cd.Name, val)
-					}
-				case "FLOAT":
-					switch v := val.(type) {
-					case float64:
-						// ok
-					case int64:
-						val = float64(v)
-					default:
-						return nil, fmt.Errorf("column %q expects FLOAT, DEFAULT value is %T", cd.Name, val)
-					}
-				case "TEXT":
-					if _, ok := val.(string); !ok {
-						return nil, fmt.Errorf("column %q expects TEXT, DEFAULT value is %T", cd.Name, val)
-					}
-				case "JSON":
-					s, ok := val.(string)
-					if !ok {
-						return nil, fmt.Errorf("column %q expects JSON, DEFAULT value is %T", cd.Name, val)
-					}
-					if !json.Valid([]byte(s)) {
-						return nil, fmt.Errorf("column %q: invalid JSON DEFAULT value: %s", cd.Name, s)
-					}
-				case "JSONB":
-					s, ok := val.(string)
-					if !ok {
-						return nil, fmt.Errorf("column %q expects JSONB, DEFAULT value is %T", cd.Name, val)
-					}
-					if !json.Valid([]byte(s)) {
-						return nil, fmt.Errorf("column %q: invalid JSONB DEFAULT value: %s", cd.Name, s)
-					}
-				}
-			}
+			col.HasDefault = true
 			col.Default = val
 		}
 		columns[i] = col
 	}
+	return columns, nil
+}
 
-	var primaryKeyCols []int
-
-	if len(tablePK) > 0 {
-		// Table-level PRIMARY KEY
-		pkCol = -1 // use auto-increment
-		for _, pkName := range tablePK {
-			found := false
-			pkLower := strings.ToLower(pkName)
-			for i := range columns {
-				if strings.ToLower(columns[i].Name) == pkLower {
-					primaryKeyCols = append(primaryKeyCols, i)
-					columns[i].PrimaryKey = true
-					columns[i].NotNull = true
-					found = true
-					break
-				}
-			}
-			if !found {
-				return nil, fmt.Errorf("column %q in PRIMARY KEY not found", pkName)
-			}
+// validateDefault evaluates and type-checks a DEFAULT expression for a column.
+func validateDefault(colName, dataType string, notNull bool, defaultExpr ast.Expr) (Value, error) {
+	val, err := evalLiteral(defaultExpr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid DEFAULT for column %q: %w", colName, err)
+	}
+	if val == nil {
+		if notNull {
+			return nil, fmt.Errorf("column %q is NOT NULL but DEFAULT is NULL", colName)
 		}
-	} else if hasColumnLevelPK {
-		primaryKeyCols = []int{pkCol}
-		// Non-INT PK uses auto-increment + unique index (same as composite PK)
+		return nil, nil
+	}
+	return coerceDefaultValue(colName, dataType, val)
+}
+
+// coerceDefaultValue checks that a non-nil DEFAULT value matches the column type.
+func coerceDefaultValue(colName, dataType string, val Value) (Value, error) {
+	switch dataType {
+	case "INT":
+		if _, ok := val.(int64); !ok {
+			return nil, fmt.Errorf("column %q expects INT, DEFAULT value is %T", colName, val)
+		}
+	case "FLOAT":
+		switch v := val.(type) {
+		case float64:
+			// ok
+		case int64:
+			val = float64(v)
+		default:
+			return nil, fmt.Errorf("column %q expects FLOAT, DEFAULT value is %T", colName, val)
+		}
+	case "TEXT":
+		if _, ok := val.(string); !ok {
+			return nil, fmt.Errorf("column %q expects TEXT, DEFAULT value is %T", colName, val)
+		}
+	case "JSON":
+		s, ok := val.(string)
+		if !ok {
+			return nil, fmt.Errorf("column %q expects JSON, DEFAULT value is %T", colName, val)
+		}
+		if !json.Valid([]byte(s)) {
+			return nil, fmt.Errorf("column %q: invalid JSON DEFAULT value: %s", colName, s)
+		}
+	case "JSONB":
+		s, ok := val.(string)
+		if !ok {
+			return nil, fmt.Errorf("column %q expects JSONB, DEFAULT value is %T", colName, val)
+		}
+		if !json.Valid([]byte(s)) {
+			return nil, fmt.Errorf("column %q: invalid JSONB DEFAULT value: %s", colName, s)
+		}
+	}
+	return val, nil
+}
+
+// resolvePrimaryKey resolves table-level or column-level PRIMARY KEY into pkCol and primaryKeyCols.
+func resolvePrimaryKey(columns []ColumnInfo, tablePK []string, pkCol int, hasColumnLevelPK bool) (int, []int, error) {
+	if len(tablePK) > 0 {
+		return resolveTableLevelPK(columns, tablePK)
+	}
+	if hasColumnLevelPK {
+		primaryKeyCols := []int{pkCol}
 		if columns[pkCol].DataType != "INT" {
 			pkCol = -1
 		}
+		return pkCol, primaryKeyCols, nil
 	}
+	return pkCol, nil, nil
+}
 
-	info := &TableInfo{Name: lower, Columns: columns, PrimaryKeyCol: pkCol, PrimaryKeyCols: primaryKeyCols}
-	c.tables[lower] = info
-	return info, nil
+// resolveTableLevelPK resolves a table-level PRIMARY KEY constraint.
+func resolveTableLevelPK(columns []ColumnInfo, tablePK []string) (int, []int, error) {
+	var primaryKeyCols []int
+	for _, pkName := range tablePK {
+		pkLower := strings.ToLower(pkName)
+		found := false
+		for i := range columns {
+			if strings.ToLower(columns[i].Name) == pkLower {
+				primaryKeyCols = append(primaryKeyCols, i)
+				columns[i].PrimaryKey = true
+				columns[i].NotNull = true
+				found = true
+				break
+			}
+		}
+		if !found {
+			return -1, nil, fmt.Errorf("column %q in PRIMARY KEY not found", pkName)
+		}
+	}
+	return -1, primaryKeyCols, nil
 }
 
 func (c *Catalog) DropTable(name string) error {
@@ -187,52 +226,11 @@ func (c *Catalog) AddColumn(tableName string, colDef ast.ColumnDef) (*TableInfo,
 	}
 
 	if colDef.Default != nil {
-		col.HasDefault = true
-		val, err := evalLiteral(colDef.Default)
+		val, err := validateDefault(colDef.Name, colDef.DataType, colDef.NotNull, colDef.Default)
 		if err != nil {
-			return nil, fmt.Errorf("invalid DEFAULT for column %q: %w", colDef.Name, err)
+			return nil, err
 		}
-		if val == nil {
-			if colDef.NotNull {
-				return nil, fmt.Errorf("column %q is NOT NULL but DEFAULT is NULL", colDef.Name)
-			}
-		} else {
-			switch colDef.DataType {
-			case "INT":
-				if _, ok := val.(int64); !ok {
-					return nil, fmt.Errorf("column %q expects INT, DEFAULT value is %T", colDef.Name, val)
-				}
-			case "FLOAT":
-				switch v := val.(type) {
-				case float64:
-					// ok
-				case int64:
-					val = float64(v)
-				default:
-					return nil, fmt.Errorf("column %q expects FLOAT, DEFAULT value is %T", colDef.Name, val)
-				}
-			case "TEXT":
-				if _, ok := val.(string); !ok {
-					return nil, fmt.Errorf("column %q expects TEXT, DEFAULT value is %T", colDef.Name, val)
-				}
-			case "JSON":
-				s, ok := val.(string)
-				if !ok {
-					return nil, fmt.Errorf("column %q expects JSON, DEFAULT value is %T", colDef.Name, val)
-				}
-				if !json.Valid([]byte(s)) {
-					return nil, fmt.Errorf("column %q: invalid JSON DEFAULT value: %s", colDef.Name, s)
-				}
-			case "JSONB":
-				s, ok := val.(string)
-				if !ok {
-					return nil, fmt.Errorf("column %q expects JSONB, DEFAULT value is %T", colDef.Name, val)
-				}
-				if !json.Valid([]byte(s)) {
-					return nil, fmt.Errorf("column %q: invalid JSONB DEFAULT value: %s", colDef.Name, s)
-				}
-			}
-		}
+		col.HasDefault = true
 		col.Default = val
 	}
 

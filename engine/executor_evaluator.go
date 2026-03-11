@@ -251,6 +251,43 @@ func (le *literalEvaluator) ColumnList() []ColumnInfo {
 	return nil
 }
 
+// pkOnlyEvaluator is a lightweight evaluator for PK-only covering scans.
+// Rows contain a single element: the PK value at index 0.
+type pkOnlyEvaluator struct {
+	exec *Executor
+	info *TableInfo
+	col  ColumnInfo // PK column with Index remapped to 0
+}
+
+func newPKOnlyEvaluator(exec *Executor, info *TableInfo) *pkOnlyEvaluator {
+	pkCol := info.Columns[info.PrimaryKeyCol]
+	return &pkOnlyEvaluator{
+		exec: exec,
+		info: info,
+		col:  ColumnInfo{Name: pkCol.Name, DataType: pkCol.DataType, Index: 0},
+	}
+}
+
+func (pe *pkOnlyEvaluator) GetExecutor() *Executor { return pe.exec }
+
+func (pe *pkOnlyEvaluator) Eval(expr ast.Expr, row Row) (Value, error) {
+	return evalExprGeneric(expr, row, pe)
+}
+
+func (pe *pkOnlyEvaluator) ResolveColumn(tableName, colName string) (*ColumnInfo, error) {
+	if err := validateTableRef(tableName, pe.info.Name); err != nil {
+		return nil, err
+	}
+	if strings.ToLower(colName) == strings.ToLower(pe.col.Name) {
+		return &pe.col, nil
+	}
+	return nil, fmt.Errorf("column %q not available in PK-only scan", colName)
+}
+
+func (pe *pkOnlyEvaluator) ColumnList() []ColumnInfo {
+	return []ColumnInfo{pe.col}
+}
+
 // evalExprGeneric is the unified expression evaluator that delegates column resolution
 // to the ExprEvaluator interface.
 func evalExprGeneric(expr ast.Expr, row Row, eval ExprEvaluator) (Value, error) {

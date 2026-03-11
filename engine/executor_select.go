@@ -284,6 +284,10 @@ func (e *Executor) executeSelectWithPlan(stmt *ast.SelectStmt, plan *SelectPlan)
 		if err != nil {
 			return nil, err
 		}
+		// PK-only covering scan: rows are already compact Row{key}, skip projection
+		if _, isPKOnly := eval.(*pkOnlyEvaluator); isPKOnly {
+			projected = true
+		}
 	}
 
 	// Phase 4: ORDER BY (use heap-based top-K when LIMIT is present)
@@ -416,10 +420,11 @@ func (e *Executor) scanFullOrder(
 		// PK Covering: if only PK column (or no columns) are needed, skip row decoding
 		neededCols := collectNeededColumns(stmt.Columns, stmt.Where, stmt.OrderBy, info)
 		if isPKOnlyCovering(neededCols, info.PrimaryKeyCol) {
-			numCols := len(info.Columns)
-			pkIdx := info.PrimaryKeyCol
-			db.storage.ForEachRowKeyOnly(info.Name, ior.reverse, func(key int64) bool {
-				if stmt.Where != nil {
+			if stmt.Where != nil {
+				// WHERE requires full-width Row for evaluation
+				numCols := len(info.Columns)
+				pkIdx := info.PrimaryKeyCol
+				db.storage.ForEachRowKeyOnly(info.Name, ior.reverse, func(key int64) bool {
 					row := buildPKOnlyRow(key, numCols, pkIdx)
 					val, err := eval.Eval(stmt.Where, row)
 					if err != nil {
@@ -430,14 +435,22 @@ func (e *Executor) scanFullOrder(
 						return true
 					}
 					rows = append(rows, row)
-				} else {
-					rows = append(rows, buildPKOnlyRow(key, numCols, pkIdx))
-				}
-				if needed > 0 && len(rows) >= needed {
-					return false
-				}
-				return true
-			}, forEachLimit)
+					if needed > 0 && len(rows) >= needed {
+						return false
+					}
+					return true
+				}, forEachLimit)
+			} else {
+				// No WHERE: use compact 1-element rows with pkOnlyEvaluator
+				eval = newPKOnlyEvaluator(e, info)
+				db.storage.ForEachRowKeyOnly(info.Name, ior.reverse, func(key int64) bool {
+					rows = append(rows, Row{key})
+					if needed > 0 && len(rows) >= needed {
+						return false
+					}
+					return true
+				}, forEachLimit)
+			}
 		} else if stmt.Where != nil && !containsSubquery(stmt.Where) && !columnsContainSubquery(stmt.Columns) {
 			// WHERE + no subquery: use ScanEachWithKey for Row reuse (alloc on match only)
 			db.storage.ScanEachWithKey(info.Name, ior.reverse, func(key int64, row Row) bool {
@@ -934,12 +947,21 @@ func (e *Executor) scanSourceSingle(stmt *ast.SelectStmt, earlyLimit int) ([]Row
 
 	// PK Covering: if only PK column (or no columns) are needed, skip row decoding
 	if isPKOnlyCovering(neededCols, info.PrimaryKeyCol) {
-		numCols := len(info.Columns)
-		pkIdx := info.PrimaryKeyCol
 		limit := 0
 		if earlyLimit > 0 && stmt.Where == nil {
 			limit = earlyLimit
 		}
+		if stmt.Where == nil {
+			// No WHERE: use compact 1-element rows with pkOnlyEvaluator
+			db.storage.ForEachRowKeyOnly(info.Name, false, func(key int64) bool {
+				rows = append(rows, Row{key})
+				return true
+			}, limit)
+			return rows, newPKOnlyEvaluator(e, info), nil
+		}
+		// WHERE present: need full-width rows for eval
+		numCols := len(info.Columns)
+		pkIdx := info.PrimaryKeyCol
 		db.storage.ForEachRowKeyOnly(info.Name, false, func(key int64) bool {
 			rows = append(rows, buildPKOnlyRow(key, numCols, pkIdx))
 			return true

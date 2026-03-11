@@ -30,6 +30,8 @@ const (
 	TagLargeArray      byte = 0x0D // count as uint32 (>255 elements)
 	TagLargeIntArray   byte = 0x0E // count as uint32 (>255 elements)
 	TagLargeFloatArray byte = 0x0F // count as uint32 (>255 elements)
+	TagEmptyObject     byte = 0x10 // empty object {} in a single byte
+	TagEmptyArray      byte = 0x11 // empty array [] in a single byte
 
 	// Inline small integers: tags 0x80-0xFF encode values 0-127 in a single byte.
 	// Value = tag & 0x7F.
@@ -195,8 +197,7 @@ func encodeDictKey(buf []byte, v string) []byte {
 
 func encodeArray(buf []byte, arr []any, dict map[string]uint16) ([]byte, error) {
 	if len(arr) == 0 {
-		buf = append(buf, TagArray, 0)
-		return buf, nil
+		return append(buf, TagEmptyArray), nil
 	}
 
 	// Check if all elements are the same type for typed array optimization.
@@ -382,15 +383,14 @@ func readUintN(b []byte, pos int, width uint8) (uint32, int) {
 // Keys are written in sorted order (by dictionary index, which is already sorted).
 func encodeObject(buf []byte, obj map[string]any, dict map[string]uint16) ([]byte, error) {
 	count := len(obj)
+	if count == 0 {
+		return append(buf, TagEmptyObject), nil
+	}
 	if count <= 255 {
 		buf = append(buf, TagObject, byte(count))
 	} else {
 		buf = append(buf, TagLargeObject)
 		buf = binary.BigEndian.AppendUint16(buf, uint16(count))
-	}
-
-	if count == 0 {
-		return buf, nil
 	}
 
 	// Sort keys.
@@ -649,10 +649,14 @@ func decodeValue(b []byte, pos int, dict []string) (any, int, error) {
 		}
 		v := string(b[pos : pos+length])
 		return v, pos + length, nil
+	case TagEmptyArray:
+		return []any{}, pos, nil
 	case TagArray:
 		return decodeArray(b, pos, 1, dict)
 	case TagLargeArray:
 		return decodeArray(b, pos, 4, dict)
+	case TagEmptyObject:
+		return map[string]any{}, pos, nil
 	case TagObject:
 		return decodeObject(b, pos, 1, dict)
 	case TagLargeObject:
@@ -1392,10 +1396,14 @@ func writeJSONValue(buf []byte, b []byte, pos int, dict []dictEntry) ([]byte, er
 		return strconv.AppendFloat(buf, v, 'f', -1, 64), nil
 	case TagString:
 		return writeJSONString(buf, b, pos)
+	case TagEmptyArray:
+		return append(buf, '[', ']'), nil
 	case TagArray:
 		return writeJSONArray(buf, b, pos, 1, dict)
 	case TagLargeArray:
 		return writeJSONArray(buf, b, pos, 4, dict)
+	case TagEmptyObject:
+		return append(buf, '{', '}'), nil
 	case TagObject:
 		return writeJSONObject(buf, b, pos, 1, dict)
 	case TagLargeObject:
@@ -1636,7 +1644,7 @@ func skipValue(b []byte, pos int) (byte, int, error) {
 		return tag, pos, nil
 	}
 	switch tag {
-	case TagNull, TagTrue, TagFalse:
+	case TagNull, TagTrue, TagFalse, TagEmptyObject, TagEmptyArray:
 		return tag, pos, nil
 	case TagBool:
 		return tag, pos + 1, nil

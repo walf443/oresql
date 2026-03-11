@@ -912,6 +912,44 @@ func TestCompactIntArrayCount(t *testing.T) {
 	assert.Len(t, decoded, 100)
 }
 
+func TestEmptyObjectInlineTag(t *testing.T) {
+	obj := map[string]any{}
+	b, err := Encode(obj)
+	require.NoError(t, err)
+	_, bodyPos, err := readDictHeader(b)
+	require.NoError(t, err)
+	assert.Equal(t, byte(TagEmptyObject), b[bodyPos], "empty object should use TagEmptyObject")
+	// header(2) + tag(1) = 3 bytes total
+	assert.Equal(t, 3, len(b))
+
+	val, err := Decode(b)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{}, val)
+
+	j, err := ToJSON(b)
+	require.NoError(t, err)
+	assert.Equal(t, "{}", j)
+}
+
+func TestEmptyArrayInlineTag(t *testing.T) {
+	arr := []any{}
+	b, err := Encode(arr)
+	require.NoError(t, err)
+	_, bodyPos, err := readDictHeader(b)
+	require.NoError(t, err)
+	assert.Equal(t, byte(TagEmptyArray), b[bodyPos], "empty array should use TagEmptyArray")
+	// header(2) + tag(1) = 3 bytes total
+	assert.Equal(t, 3, len(b))
+
+	val, err := Decode(b)
+	require.NoError(t, err)
+	assert.Equal(t, []any{}, val)
+
+	j, err := ToJSON(b)
+	require.NoError(t, err)
+	assert.Equal(t, "[]", j)
+}
+
 func TestCompactEntryTableSizeReduction(t *testing.T) {
 	// 3-key object: {"a":1, "b":2, "c":3}
 	// Dict header: 2 + 3*(len+1) = 2 + 6 = 8

@@ -886,3 +886,143 @@ func TestCompactEntryTableEmptyObject(t *testing.T) {
 	decoded := val.(map[string]any)
 	assert.Len(t, decoded, 0)
 }
+
+// --- LookupKeys tests ---
+
+func TestLookupKeysNestedObject(t *testing.T) {
+	data := map[string]any{
+		"address": map[string]any{
+			"city": "Tokyo",
+			"zip":  "100-0001",
+		},
+	}
+	b, err := Encode(data)
+	require.NoError(t, err)
+
+	// $.address.city
+	val, found, err := LookupKeys(b, "address", "city")
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, "Tokyo", val)
+}
+
+func TestLookupKeysArrayIndex(t *testing.T) {
+	data := map[string]any{
+		"items": []any{
+			map[string]any{"name": "apple"},
+			map[string]any{"name": "banana"},
+		},
+	}
+	b, err := Encode(data)
+	require.NoError(t, err)
+
+	// $.items[1].name
+	val, found, err := LookupKeys(b, "items", 1, "name")
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, "banana", val)
+}
+
+func TestLookupKeysSingleKey(t *testing.T) {
+	data := map[string]any{"x": int64(42)}
+	b, err := Encode(data)
+	require.NoError(t, err)
+
+	val, found, err := LookupKeys(b, "x")
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, int64(42), val)
+}
+
+func TestLookupKeysNotFound(t *testing.T) {
+	data := map[string]any{
+		"a": map[string]any{"b": int64(1)},
+	}
+	b, err := Encode(data)
+	require.NoError(t, err)
+
+	// key doesn't exist
+	val, found, err := LookupKeys(b, "a", "z")
+	require.NoError(t, err)
+	assert.False(t, found)
+	assert.Nil(t, val)
+}
+
+func TestLookupKeysTypeMismatch(t *testing.T) {
+	data := map[string]any{"x": int64(42)}
+	b, err := Encode(data)
+	require.NoError(t, err)
+
+	// try to index into a scalar
+	_, _, err = LookupKeys(b, "x", "y")
+	assert.Error(t, err)
+}
+
+func TestLookupKeysEmptyPath(t *testing.T) {
+	data := map[string]any{"x": int64(1)}
+	b, err := Encode(data)
+	require.NoError(t, err)
+
+	// empty path returns root value
+	val, found, err := LookupKeys(b)
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, map[string]any{"x": int64(1)}, val)
+}
+
+func TestLookupKeysDeeplyNested(t *testing.T) {
+	data := map[string]any{
+		"a": map[string]any{
+			"b": map[string]any{
+				"c": map[string]any{
+					"d": "deep",
+				},
+			},
+		},
+	}
+	b, err := Encode(data)
+	require.NoError(t, err)
+
+	val, found, err := LookupKeys(b, "a", "b", "c", "d")
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, "deep", val)
+}
+
+// --- KeysExists tests ---
+
+func TestKeysExistsFound(t *testing.T) {
+	data := map[string]any{
+		"address": map[string]any{
+			"city": "Tokyo",
+		},
+	}
+	b, err := Encode(data)
+	require.NoError(t, err)
+
+	assert.True(t, KeysExists(b, "address", "city"))
+}
+
+func TestKeysExistsNotFound(t *testing.T) {
+	data := map[string]any{
+		"address": map[string]any{
+			"city": "Tokyo",
+		},
+	}
+	b, err := Encode(data)
+	require.NoError(t, err)
+
+	assert.False(t, KeysExists(b, "address", "zip"))
+	assert.False(t, KeysExists(b, "missing"))
+}
+
+func TestKeysExistsWithArrayIndex(t *testing.T) {
+	data := map[string]any{
+		"items": []any{"a", "b", "c"},
+	}
+	b, err := Encode(data)
+	require.NoError(t, err)
+
+	assert.True(t, KeysExists(b, "items", 1))
+	assert.False(t, KeysExists(b, "items", 5))
+}

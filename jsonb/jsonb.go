@@ -841,6 +841,159 @@ func KeyExists(b []byte, key string) bool {
 	return err == nil && found
 }
 
+// LookupKeys traverses a path of string keys and/or int indices
+// without full deserialization at each intermediate level.
+// Each path element must be a string (object key) or int (array index).
+// An empty path returns the root value.
+func LookupKeys(b []byte, path ...any) (any, bool, error) {
+	dict, bodyPos, err := readDictHeader(b)
+	if err != nil {
+		return nil, false, err
+	}
+
+	pos := bodyPos
+	for i, step := range path {
+		if pos >= len(b) {
+			return nil, false, fmt.Errorf("unexpected end of data at path step %d", i)
+		}
+		isLast := i == len(path)-1
+		switch s := step.(type) {
+		case string:
+			newPos, found, err := lookupKeyPos(b, pos, s, dict)
+			if err != nil {
+				return nil, false, err
+			}
+			if !found {
+				return nil, false, nil
+			}
+			pos = newPos
+		case int:
+			// For the last step, typed arrays can be accessed directly.
+			if isLast {
+				tag := b[pos]
+				if tag == TagIntArray {
+					return lookupIntArrayIndex(b, pos, s)
+				}
+				if tag == TagFloatArray {
+					return lookupFloatArrayIndex(b, pos, s)
+				}
+			}
+			newPos, found, err := lookupIndexPos(b, pos, s, dict)
+			if err != nil {
+				return nil, false, err
+			}
+			if !found {
+				return nil, false, nil
+			}
+			pos = newPos
+		default:
+			return nil, false, fmt.Errorf("path element %d: expected string or int, got %T", i, step)
+		}
+	}
+
+	val, _, err := decodeValue(b, pos, dict)
+	if err != nil {
+		return nil, false, err
+	}
+	return val, true, nil
+}
+
+// KeysExists checks whether a value exists at the given path.
+func KeysExists(b []byte, path ...any) bool {
+	_, found, err := LookupKeys(b, path...)
+	return err == nil && found
+}
+
+// lookupKeyPos returns the byte position of the value for the given key
+// in an object starting at pos, without decoding the value.
+func lookupKeyPos(b []byte, pos int, key string, dict []string) (int, bool, error) {
+	if b[pos] != TagObject {
+		return 0, false, fmt.Errorf("not an object")
+	}
+
+	// Binary search dictionary for the key.
+	targetIdx := -1
+	lo, hi := 0, len(dict)-1
+	for lo <= hi {
+		mid := (lo + hi) / 2
+		cmp := strings.Compare(dict[mid], key)
+		if cmp == 0 {
+			targetIdx = mid
+			break
+		} else if cmp < 0 {
+			lo = mid + 1
+		} else {
+			hi = mid - 1
+		}
+	}
+	if targetIdx < 0 {
+		return 0, false, nil
+	}
+
+	p := pos + 1
+	if p+4 > len(b) {
+		return 0, false, fmt.Errorf("unexpected end of data")
+	}
+	count := int(binary.BigEndian.Uint16(b[p : p+2]))
+	p += 2
+	keyIdxW := b[p]
+	valOffW := b[p+1]
+	p += 2
+
+	if count == 0 {
+		return 0, false, nil
+	}
+
+	entrySize := int(keyIdxW) + int(valOffW)
+	entryTableStart := p
+	lo, hi = 0, count-1
+	for lo <= hi {
+		mid := (lo + hi) / 2
+		entryPos := entryTableStart + mid*entrySize
+		midKeyIdx, _ := readUintN(b, entryPos, keyIdxW)
+		if int(midKeyIdx) == targetIdx {
+			valOff, _ := readUintN(b, entryPos+int(keyIdxW), valOffW)
+			valDataStart := entryTableStart + count*entrySize
+			return valDataStart + int(valOff), true, nil
+		} else if int(midKeyIdx) < targetIdx {
+			lo = mid + 1
+		} else {
+			hi = mid - 1
+		}
+	}
+	return 0, false, nil
+}
+
+// lookupIndexPos returns the byte position of the element at the given index
+// in an array starting at pos, without decoding the value.
+func lookupIndexPos(b []byte, pos int, idx int, dict []string) (int, bool, error) {
+	tag := b[pos]
+	switch tag {
+	case TagIntArray, TagFloatArray:
+		// Typed array elements are scalars; cannot traverse further.
+		return 0, false, fmt.Errorf("cannot traverse into typed array element")
+	case TagArray:
+		p := pos + 1
+		if p+4 > len(b) {
+			return 0, false, fmt.Errorf("unexpected end of data")
+		}
+		count := int(binary.BigEndian.Uint32(b[p : p+4]))
+		p += 4
+		if idx < 0 || idx >= count {
+			return 0, false, nil
+		}
+		offsetPos := p + idx*4
+		if offsetPos+4 > len(b) {
+			return 0, false, fmt.Errorf("unexpected end of data for offset")
+		}
+		offset := int(binary.BigEndian.Uint32(b[offsetPos : offsetPos+4]))
+		dataStart := p + count*4
+		return dataStart + offset, true, nil
+	default:
+		return 0, false, fmt.Errorf("not an array")
+	}
+}
+
 // --- JSON conversion ---
 
 // FromJSON converts a JSON string to the custom JSONB binary format.

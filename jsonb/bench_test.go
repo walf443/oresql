@@ -194,6 +194,44 @@ func BenchmarkLookupIndex_vs_FullDecode(b *testing.B) {
 	})
 }
 
+func BenchmarkLookupKeys_vs_FullDecode(b *testing.B) {
+	data, _ := FromJSON(largeObject())
+
+	// $.address.city — 2-level nested access
+	b.Run("LookupKeys_2level", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_, _, _ = LookupKeys(data, "address", "city")
+		}
+	})
+
+	// $.items[0].product — 3-level mixed access (key, index, key)
+	b.Run("LookupKeys_3level", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_, _, _ = LookupKeys(data, "items", 0, "product")
+		}
+	})
+
+	// Equivalent using chained LookupKey + LookupIndex (re-parsing dict each time)
+	b.Run("ChainedLookup_3level", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			items, _, _ := LookupKey(data, "items")
+			arr := items.([]any)
+			obj := arr[0].(map[string]any)
+			_ = obj["product"]
+		}
+	})
+
+	b.Run("FullDecode_3level", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			val, _ := Decode(data)
+			m := val.(map[string]any)
+			items := m["items"].([]any)
+			obj := items[0].(map[string]any)
+			_ = obj["product"]
+		}
+	})
+}
+
 func compactJSON(s string) ([]byte, error) {
 	var v any
 	if err := json.Unmarshal([]byte(s), &v); err != nil {

@@ -401,16 +401,30 @@ func readDictHeader(b []byte) ([]string, int, error) {
 	pos := 2
 	dict := make([]string, keyCount)
 	for i := 0; i < keyCount; i++ {
-		val, newPos, err := decodeValue(b, pos, nil)
-		if err != nil {
-			return nil, 0, fmt.Errorf("invalid dictionary entry: %w", err)
+		if pos >= len(b) || b[pos] != TagString {
+			return nil, 0, fmt.Errorf("dictionary entry must be a string")
 		}
-		s, ok := val.(string)
-		if !ok {
-			return nil, 0, fmt.Errorf("dictionary entry must be string, got %T", val)
+		pos++ // skip TagString
+		if pos >= len(b) {
+			return nil, 0, fmt.Errorf("unexpected end of data for dictionary string length")
 		}
-		dict[i] = s
-		pos = newPos
+		var length int
+		if b[pos]&0x80 == 0 {
+			length = int(b[pos])
+			pos++
+		} else {
+			pos++
+			if pos+4 > len(b) {
+				return nil, 0, fmt.Errorf("unexpected end of data for dictionary long string length")
+			}
+			length = int(binary.BigEndian.Uint32(b[pos : pos+4]))
+			pos += 4
+		}
+		if pos+length > len(b) {
+			return nil, 0, fmt.Errorf("unexpected end of data for dictionary string body")
+		}
+		dict[i] = string(b[pos : pos+length])
+		pos += length
 	}
 	return dict, pos, nil
 }
@@ -516,31 +530,24 @@ func decodeArray(b []byte, pos int, dict []string) (any, int, error) {
 		return []any{}, pos, nil
 	}
 
-	// Read offset table.
+	// Skip offset table — decode elements sequentially instead.
 	offsetTableSize := count * 4
 	if pos+offsetTableSize > len(b) {
 		return nil, pos, fmt.Errorf("unexpected end of data for array offsets")
 	}
-	offsets := make([]uint32, count)
-	for i := 0; i < count; i++ {
-		offsets[i] = binary.BigEndian.Uint32(b[pos+i*4 : pos+i*4+4])
-	}
-	pos += offsetTableSize
+	dataStart := pos + offsetTableSize
 
-	// Data section starts at pos.
-	dataStart := pos
 	result := make([]any, count)
+	cur := dataStart
 	for i := 0; i < count; i++ {
-		val, newPos, err := decodeValue(b, dataStart+int(offsets[i]), dict)
+		val, newPos, err := decodeValue(b, cur, dict)
 		if err != nil {
 			return nil, newPos, err
 		}
 		result[i] = val
-		if newPos > pos {
-			pos = newPos
-		}
+		cur = newPos
 	}
-	return result, pos, nil
+	return result, cur, nil
 }
 
 func decodeIntArray(b []byte, pos int) (any, int, error) {
@@ -637,33 +644,25 @@ func decodeObject(b []byte, pos int, dict []string) (any, int, error) {
 		return nil, pos, fmt.Errorf("unexpected end of data for object entry table")
 	}
 
-	keyIndices := make([]uint32, count)
-	valOffsets := make([]uint32, count)
-	epos := pos
-	for i := 0; i < count; i++ {
-		keyIndices[i], epos = readUintN(b, epos, keyIdxW)
-		valOffsets[i], epos = readUintN(b, epos, valOffW)
-	}
-	pos += entryTableSize
-
-	valDataStart := pos
+	valDataStart := pos + entryTableSize
 	result := make(map[string]any, count)
-	furthest := valDataStart
+	epos := pos
+	cur := valDataStart
 	for i := 0; i < count; i++ {
-		if int(keyIndices[i]) >= len(dict) {
-			return nil, pos, fmt.Errorf("key index %d out of range (dict size %d)", keyIndices[i], len(dict))
+		keyIdx, nextEpos := readUintN(b, epos, keyIdxW)
+		epos = nextEpos + int(valOffW) // skip valOff — decode sequentially
+		if int(keyIdx) >= len(dict) {
+			return nil, pos, fmt.Errorf("key index %d out of range (dict size %d)", keyIdx, len(dict))
 		}
-		key := dict[keyIndices[i]]
-		val, newPos, err := decodeValue(b, valDataStart+int(valOffsets[i]), dict)
+		key := dict[keyIdx]
+		val, newPos, err := decodeValue(b, cur, dict)
 		if err != nil {
 			return nil, newPos, err
 		}
 		result[key] = val
-		if newPos > furthest {
-			furthest = newPos
-		}
+		cur = newPos
 	}
-	return result, furthest, nil
+	return result, cur, nil
 }
 
 // --- Partial access ---

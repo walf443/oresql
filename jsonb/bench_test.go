@@ -142,6 +142,32 @@ func BenchmarkDecodeToJSON(b *testing.B) {
 	}
 }
 
+func BenchmarkDecode_vs_JSONUnmarshal(b *testing.B) {
+	cases := []struct {
+		name string
+		json string
+	}{
+		{"SmallObject", smallObject()},
+		{"MediumObject", mediumObject()},
+		{"LargeObject", largeObject()},
+	}
+	for _, tc := range cases {
+		data, _ := FromJSON(tc.json)
+		jsonBytes := []byte(tc.json)
+		b.Run(tc.name+"/JSONB_Decode", func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				_, _ = Decode(data)
+			}
+		})
+		b.Run(tc.name+"/JSON_Unmarshal", func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				var v any
+				_ = json.Unmarshal(jsonBytes, &v)
+			}
+		})
+	}
+}
+
 func BenchmarkLookupKey(b *testing.B) {
 	cases := []struct {
 		name string

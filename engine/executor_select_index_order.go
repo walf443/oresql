@@ -241,6 +241,35 @@ func (e *Executor) scanFullOrderSecondary(
 	return rows
 }
 
+// partialOrderState holds mutable state for partial order scanning.
+type partialOrderState struct {
+	rows        []Row
+	prevKeyVal  Value
+	firstRow    bool
+	orderColIdx int
+	needed      int
+	where       ast.Expr
+	eval        ExprEvaluator
+}
+
+// acceptRow applies WHERE filter and group boundary cutoff, appending the row if accepted.
+// Returns true to continue scanning.
+func (s *partialOrderState) acceptRow(row Row) bool {
+	if s.where != nil && !evalWhereFilter(s.where, row, s.eval) {
+		return true
+	}
+	currentKeyVal := row[s.orderColIdx]
+	if s.needed > 0 && len(s.rows) >= s.needed && !s.firstRow {
+		if !valuesEqual(currentKeyVal, s.prevKeyVal) {
+			return false
+		}
+	}
+	s.prevKeyVal = currentKeyVal
+	s.firstRow = false
+	s.rows = append(s.rows, row)
+	return true
+}
+
 // scanPartialOrder handles ORDER BY with multiple columns where only the first has an index.
 // Reads rows in first-column order, applying group boundary cutoff for LIMIT optimization.
 func (e *Executor) scanPartialOrder(
@@ -251,114 +280,64 @@ func (e *Executor) scanPartialOrder(
 	if needed > 0 {
 		cap = needed
 	}
-	rows := make([]Row, 0, cap)
 
-	// Determine the column index for the first ORDER BY column
 	ident := stmt.OrderBy[0].Expr.(*ast.IdentExpr)
 	orderCol, _ := info.FindColumn(ident.Name)
-	orderColIdx := orderCol.Index
 
-	var prevKeyVal Value
-	firstRow := true
-
-	scanFn := func(rowKey int64) bool {
-		row, found := db.storage.GetRow(info.Name, rowKey)
-		if !found {
-			return true
-		}
-		if stmt.Where != nil {
-			wVal, err := eval.Eval(stmt.Where, row)
-			if err != nil {
-				return false
-			}
-			b, ok := wVal.(bool)
-			if !ok || !b {
-				return true
-			}
-		}
-
-		currentKeyVal := row[orderColIdx]
-		if needed > 0 && len(rows) >= needed && !firstRow {
-			// Check if first column value changed
-			if !valuesEqual(currentKeyVal, prevKeyVal) {
-				return false // stop
-			}
-		}
-		prevKeyVal = currentKeyVal
-		firstRow = false
-		rows = append(rows, row)
-		return true
+	state := &partialOrderState{
+		rows:        make([]Row, 0, cap),
+		firstRow:    true,
+		orderColIdx: orderCol.Index,
+		needed:      needed,
+		where:       stmt.Where,
+		eval:        eval,
 	}
 
 	if ior.usePK {
-		// partialOrder cannot use limit because it needs to collect all rows
-		// in the same first-column value group even after reaching needed count.
-		db.storage.ForEachRow(info.Name, ior.reverse, func(key int64, row Row) bool {
-			if stmt.Where != nil {
-				wVal, err := eval.Eval(stmt.Where, row)
-				if err != nil {
-					return false
-				}
-				b, ok := wVal.(bool)
-				if !ok || !b {
-					return true
-				}
-			}
-
-			currentKeyVal := row[orderColIdx]
-			if needed > 0 && len(rows) >= needed && !firstRow {
-				if !valuesEqual(currentKeyVal, prevKeyVal) {
-					return false
-				}
-			}
-			prevKeyVal = currentKeyVal
-			firstRow = false
-			rows = append(rows, row)
-			return true
-		}, 0)
+		e.scanPartialOrderPK(db, info, ior, state)
 	} else {
-		// Try covering scan for partial order
-		neededCols := collectNeededColumns(stmt.Columns, stmt.Where, stmt.OrderBy, info)
-		cir, isCovering := ior.index.(CoveringIndexReader)
-		if isCovering && isIndexCovering(ior.index, neededCols, info.PrimaryKeyCol) {
-			cir.OrderedCoveringScan(
-				ior.fromVal, ior.fromInclusive,
-				ior.toVal, ior.toInclusive,
-				ior.reverse, len(info.Columns), info.PrimaryKeyCol,
-				func(rowKey int64, row Row) bool {
-					if stmt.Where != nil {
-						wVal, err := eval.Eval(stmt.Where, row)
-						if err != nil {
-							return false
-						}
-						b, ok := wVal.(bool)
-						if !ok || !b {
-							return true
-						}
-					}
-					currentKeyVal := row[orderColIdx]
-					if needed > 0 && len(rows) >= needed && !firstRow {
-						if !valuesEqual(currentKeyVal, prevKeyVal) {
-							return false
-						}
-					}
-					prevKeyVal = currentKeyVal
-					firstRow = false
-					rows = append(rows, row)
-					return true
-				},
-			)
-		} else {
-			ior.index.OrderedRangeScan(
-				ior.fromVal, ior.fromInclusive,
-				ior.toVal, ior.toInclusive,
-				ior.reverse,
-				scanFn,
-			)
-		}
+		e.scanPartialOrderSecondary(stmt, db, info, ior, state)
 	}
 
-	return rows, eval, nil
+	return state.rows, eval, nil
+}
+
+// scanPartialOrderPK scans using PK order for partial order.
+func (e *Executor) scanPartialOrderPK(db *Database, info *TableInfo, ior *indexOrderResult, state *partialOrderState) {
+	db.storage.ForEachRow(info.Name, ior.reverse, func(key int64, row Row) bool {
+		return state.acceptRow(row)
+	}, 0)
+}
+
+// scanPartialOrderSecondary scans using a secondary index for partial order.
+func (e *Executor) scanPartialOrderSecondary(
+	stmt *ast.SelectStmt, db *Database, info *TableInfo, ior *indexOrderResult, state *partialOrderState,
+) {
+	neededCols := collectNeededColumns(stmt.Columns, stmt.Where, stmt.OrderBy, info)
+	cir, isCovering := ior.index.(CoveringIndexReader)
+	if isCovering && isIndexCovering(ior.index, neededCols, info.PrimaryKeyCol) {
+		cir.OrderedCoveringScan(
+			ior.fromVal, ior.fromInclusive,
+			ior.toVal, ior.toInclusive,
+			ior.reverse, len(info.Columns), info.PrimaryKeyCol,
+			func(rowKey int64, row Row) bool {
+				return state.acceptRow(row)
+			},
+		)
+	} else {
+		ior.index.OrderedRangeScan(
+			ior.fromVal, ior.fromInclusive,
+			ior.toVal, ior.toInclusive,
+			ior.reverse,
+			func(rowKey int64) bool {
+				row, found := db.storage.GetRow(info.Name, rowKey)
+				if !found {
+					return true
+				}
+				return state.acceptRow(row)
+			},
+		)
+	}
 }
 
 // valuesEqual compares two Values for equality (including nil == nil).

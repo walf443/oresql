@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"github.com/walf443/oresql/ast"
+	"github.com/walf443/oresql/jsonb"
 )
 
 // rowIdentity is a rowOf function for Row (identity mapping).
@@ -480,7 +481,7 @@ func projectRows(rows []Row, colExprs []ast.Expr, isStar bool, eval ExprEvaluato
 // JSONB ([]byte msgpack) is converted to JSON string for display.
 func finalizeValue(val Value) Value {
 	if b, ok := val.([]byte); ok {
-		s, err := msgpackToJSON(b)
+		s, err := jsonb.ToJSON(b)
 		if err != nil {
 			return val // fallback: return raw bytes
 		}

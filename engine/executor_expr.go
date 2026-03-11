@@ -9,6 +9,7 @@ import (
 
 	"github.com/walf443/oresql/ast"
 	"github.com/walf443/oresql/json_path"
+	"github.com/walf443/oresql/jsonb"
 )
 
 // validateAndCoerceValue validates a value against a column definition, coercing types as needed.
@@ -52,7 +53,7 @@ func validateAndCoerceValue(val Value, col ColumnInfo) (Value, error) {
 			return v, nil
 		case string:
 			// Convert JSON string to msgpack
-			b, err := jsonToMsgpack(v)
+			b, err := jsonb.FromJSON(v)
 			if err != nil {
 				return nil, fmt.Errorf("column %q: %w", col.Name, err)
 			}
@@ -1238,7 +1239,7 @@ func evalCast(cast *ast.CastExpr, row Row, eval ExprEvaluator) (Value, error) {
 			return v, nil
 		case []byte:
 			// JSONB to JSON: decode msgpack to JSON string
-			s, err := msgpackToJSON(v)
+			s, err := jsonb.ToJSON(v)
 			if err != nil {
 				return nil, fmt.Errorf("cannot cast JSONB to JSON: %w", err)
 			}
@@ -1249,7 +1250,7 @@ func evalCast(cast *ast.CastExpr, row Row, eval ExprEvaluator) (Value, error) {
 	case "JSONB":
 		switch v := val.(type) {
 		case string:
-			b, err := jsonToMsgpack(v)
+			b, err := jsonb.FromJSON(v)
 			if err != nil {
 				return nil, fmt.Errorf("cannot cast %q to JSONB: %w", v, err)
 			}
@@ -1304,7 +1305,7 @@ func valueToJSON(val Value) ([]byte, error) {
 		return json.Marshal(v)
 	case []byte:
 		// JSONB: decode msgpack to JSON
-		s, err := msgpackToJSON(v)
+		s, err := jsonb.ToJSON(v)
 		if err != nil {
 			return nil, err
 		}
@@ -1380,7 +1381,7 @@ func jsonStringFromValue(funcName string, val Value) (string, error) {
 	case string:
 		return v, nil
 	case []byte:
-		s, err := msgpackToJSON(v)
+		s, err := jsonb.ToJSON(v)
 		if err != nil {
 			return "", fmt.Errorf("%s: %w", funcName, err)
 		}

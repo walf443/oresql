@@ -836,6 +836,61 @@ func TestGinIndexJSONBPathOpsINExplain(t *testing.T) {
 	})
 }
 
+func TestGinIndexJSONBPathOpsIntValueWithStringLiteral(t *testing.T) {
+	// JSON_VALUE returns strings per SQL standard. Integer 30 in JSONB → "30".
+	// GIN tokens must be type-independent so string literal '30' matches integer 30.
+	exec := setupGinTestExecutor(t, "memory")
+	run(t, exec, "CREATE TABLE docs (id INT PRIMARY KEY, data JSONB)")
+	run(t, exec, `INSERT INTO docs VALUES (1, '{"name": "alice", "age": 30}')`)
+	run(t, exec, `INSERT INTO docs VALUES (2, '{"name": "bob", "age": 25}')`)
+	run(t, exec, "CREATE INDEX idx_data_gin ON docs(data) USING GIN")
+
+	// JSON_VALUE(data, '$.age') returns "30" (string), = '30' should match
+	result := run(t, exec, `SELECT id FROM docs WHERE JSON_VALUE(data, '$.age') = '30'`)
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, int64(1), result.Rows[0][0])
+}
+
+func TestGinIndexJSONBPathOpsIntValueExplain(t *testing.T) {
+	exec := setupGinTestExecutor(t, "memory")
+	run(t, exec, "CREATE TABLE docs (id INT PRIMARY KEY, data JSONB)")
+	run(t, exec, `INSERT INTO docs VALUES (1, '{"age": 30}')`)
+	run(t, exec, "CREATE INDEX idx_data_gin ON docs(data) USING GIN")
+
+	assertExplain(t, exec, `SELECT id FROM docs WHERE JSON_VALUE(data, '$.age') = '30'`, []planRow{
+		{Table: "docs", Type: "fulltext", Key: "idx_data_gin"},
+	})
+}
+
+func TestGinIndexJSONBPathOpsConsistencyWithoutIndex(t *testing.T) {
+	// Verify GIN index returns the same results as full scan
+	exec := setupGinTestExecutor(t, "memory")
+	run(t, exec, "CREATE TABLE docs (id INT PRIMARY KEY, data JSONB)")
+	run(t, exec, `INSERT INTO docs VALUES (1, '{"status": "active", "count": 10}')`)
+	run(t, exec, `INSERT INTO docs VALUES (2, '{"status": "inactive", "count": 20}')`)
+	run(t, exec, `INSERT INTO docs VALUES (3, '{"status": "active", "count": 30}')`)
+
+	// Get results without index (full scan) — string comparison
+	noIndex := run(t, exec, `SELECT id FROM docs WHERE JSON_VALUE(data, '$.status') = 'active'`)
+
+	// Create index and get results with GIN
+	run(t, exec, "CREATE INDEX idx_data_gin ON docs(data) USING GIN")
+	withIndex := run(t, exec, `SELECT id FROM docs WHERE JSON_VALUE(data, '$.status') = 'active'`)
+
+	// Results must be identical
+	require.Equal(t, len(noIndex.Rows), len(withIndex.Rows), "GIN index and full scan should return same number of rows")
+	for i := range noIndex.Rows {
+		assert.Equal(t, noIndex.Rows[i][0], withIndex.Rows[i][0])
+	}
+
+	// Test integer value searched as string (JSON_VALUE returns "10")
+	noIndexInt := run(t, exec, `SELECT id FROM docs WHERE JSON_VALUE(data, '$.count') = '10'`)
+	withIndexInt := run(t, exec, `SELECT id FROM docs WHERE JSON_VALUE(data, '$.count') = '10'`)
+	require.Equal(t, len(noIndexInt.Rows), len(withIndexInt.Rows),
+		"GIN index should match integer values when searched with string literal")
+	require.Len(t, withIndexInt.Rows, 1)
+}
+
 func TestGinIndexStreamingLimit(t *testing.T) {
 	for _, st := range []string{"memory", "disk"} {
 		t.Run(st, func(t *testing.T) {

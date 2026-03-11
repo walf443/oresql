@@ -1560,7 +1560,7 @@ func jsonbTraverse(funcName string, b []byte, pathStr string, compiledPath *json
 }
 
 // jsonValueResult converts a traversal result to JSON_VALUE semantics:
-// scalars are returned, objects/arrays return NULL.
+// scalars are returned as strings (per SQL standard), objects/arrays return NULL.
 func jsonValueResult(result any) (Value, error) {
 	if result == nil {
 		return nil, nil
@@ -1570,11 +1570,11 @@ func jsonValueResult(result any) (Value, error) {
 		return nil, nil
 	case float64:
 		if v == float64(int64(v)) {
-			return int64(v), nil
+			return fmt.Sprintf("%d", int64(v)), nil
 		}
-		return v, nil
+		return fmt.Sprintf("%v", v), nil
 	case int64:
-		return v, nil
+		return fmt.Sprintf("%d", v), nil
 	case string:
 		return v, nil
 	case bool:

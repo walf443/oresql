@@ -319,28 +319,28 @@ func TestJSON_VALUE(t *testing.T) {
 	}{
 		// Object member access
 		{"string member", "SELECT JSON_VALUE('{\"name\": \"alice\"}', '$.name')", "alice"},
-		{"int member", "SELECT JSON_VALUE('{\"age\": 30}', '$.age')", int64(30)},
-		{"float member", "SELECT JSON_VALUE('{\"price\": 9.99}', '$.price')", 9.99},
+		{"int member", "SELECT JSON_VALUE('{\"age\": 30}', '$.age')", "30"},
+		{"float member", "SELECT JSON_VALUE('{\"price\": 9.99}', '$.price')", "9.99"},
 		{"bool true member", "SELECT JSON_VALUE('{\"active\": true}', '$.active')", "true"},
 		{"bool false member", "SELECT JSON_VALUE('{\"active\": false}', '$.active')", "false"},
 		{"null member", "SELECT JSON_VALUE('{\"v\": null}', '$.v')", nil},
 
 		// Nested object access
 		{"nested member", "SELECT JSON_VALUE('{\"a\": {\"b\": \"deep\"}}', '$.a.b')", "deep"},
-		{"deeply nested", "SELECT JSON_VALUE('{\"a\": {\"b\": {\"c\": 42}}}', '$.a.b.c')", int64(42)},
+		{"deeply nested", "SELECT JSON_VALUE('{\"a\": {\"b\": {\"c\": 42}}}', '$.a.b.c')", "42"},
 
 		// Array index access
-		{"array first", "SELECT JSON_VALUE('[10, 20, 30]', '$[0]')", int64(10)},
-		{"array second", "SELECT JSON_VALUE('[10, 20, 30]', '$[1]')", int64(20)},
-		{"array last", "SELECT JSON_VALUE('[10, 20, 30]', '$[2]')", int64(30)},
+		{"array first", "SELECT JSON_VALUE('[10, 20, 30]', '$[0]')", "10"},
+		{"array second", "SELECT JSON_VALUE('[10, 20, 30]', '$[1]')", "20"},
+		{"array last", "SELECT JSON_VALUE('[10, 20, 30]', '$[2]')", "30"},
 
 		// Mixed object and array access
-		{"object then array", "SELECT JSON_VALUE('{\"items\": [1, 2, 3]}', '$.items[1]')", int64(2)},
-		{"array then object", "SELECT JSON_VALUE('[{\"id\": 1}, {\"id\": 2}]', '$[1].id')", int64(2)},
+		{"object then array", "SELECT JSON_VALUE('{\"items\": [1, 2, 3]}', '$.items[1]')", "2"},
+		{"array then object", "SELECT JSON_VALUE('[{\"id\": 1}, {\"id\": 2}]', '$[1].id')", "2"},
 
 		// Root reference
 		{"root string", "SELECT JSON_VALUE('\"hello\"', '$')", "hello"},
-		{"root int", "SELECT JSON_VALUE('42', '$')", int64(42)},
+		{"root int", "SELECT JSON_VALUE('42', '$')", "42"},
 
 		// Missing key returns NULL
 		{"missing key", "SELECT JSON_VALUE('{\"a\": 1}', '$.b')", nil},
@@ -398,10 +398,10 @@ func TestJSON_VALUE_WithColumnRef(t *testing.T) {
 	require.Len(t, result.Rows, 1)
 	assert.Equal(t, int64(1), result.Rows[0][0])
 
-	// Extract int value from JSON column
+	// Extract int value from JSON column — returns string per SQL standard
 	result = run(t, exec, "SELECT JSON_VALUE(data, '$.age') FROM docs WHERE id = 2")
 	require.Len(t, result.Rows, 1)
-	assert.Equal(t, int64(25), result.Rows[0][0])
+	assert.Equal(t, "25", result.Rows[0][0])
 }
 
 func TestJSON_VALUE_ObjectArrayResult(t *testing.T) {

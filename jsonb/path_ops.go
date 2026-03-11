@@ -33,7 +33,7 @@ func PathOpsTokenize(b []byte) ([]string, error) {
 		// Inline small integer: 0x80-0xFF → value 0-127
 		if tag >= TagInlineIntBase {
 			val := int64(tag & 0x7F)
-			addToken(&tokens, seen, path, fmt.Sprintf("i:%d", val))
+			addToken(&tokens, seen, path, fmt.Sprintf("%d", val))
 			return pos, nil
 		}
 
@@ -43,7 +43,7 @@ func PathOpsTokenize(b []byte) ([]string, error) {
 			if pos+n > len(b) {
 				return pos, fmt.Errorf("unexpected end for short string")
 			}
-			addToken(&tokens, seen, path, "s:"+string(b[pos:pos+n]))
+			addToken(&tokens, seen, path, string(b[pos:pos+n]))
 			return pos + n, nil
 		}
 
@@ -70,7 +70,7 @@ func PathOpsTokenize(b []byte) ([]string, error) {
 				return pos, fmt.Errorf("unexpected end for int value")
 			}
 			val := decodeSignedInt(b[pos:pos+w], w)
-			addToken(&tokens, seen, path, fmt.Sprintf("i:%d", val))
+			addToken(&tokens, seen, path, fmt.Sprintf("%d", val))
 			return pos + w, nil
 
 		case TagFloat:
@@ -79,7 +79,7 @@ func PathOpsTokenize(b []byte) ([]string, error) {
 			}
 			bits := binary.BigEndian.Uint64(b[pos : pos+8])
 			val := math.Float64frombits(bits)
-			addToken(&tokens, seen, path, fmt.Sprintf("f:%v", val))
+			addToken(&tokens, seen, path, formatFloat(val))
 			return pos + 8, nil
 
 		case TagString:
@@ -95,7 +95,7 @@ func PathOpsTokenize(b []byte) ([]string, error) {
 			if pos+length > len(b) {
 				return pos, fmt.Errorf("unexpected end for string body")
 			}
-			addToken(&tokens, seen, path, "s:"+string(b[pos:pos+length]))
+			addToken(&tokens, seen, path, string(b[pos:pos+length]))
 			return pos + length, nil
 
 		case TagStringRef:
@@ -106,7 +106,7 @@ func PathOpsTokenize(b []byte) ([]string, error) {
 			if idx >= len(dict) {
 				return pos, fmt.Errorf("string ref index %d out of range (dict len %d)", idx, len(dict))
 			}
-			addToken(&tokens, seen, path, "s:"+dict[idx])
+			addToken(&tokens, seen, path, dict[idx])
 			return pos + 2, nil
 
 		case TagEmptyObject, TagEmptyArray:
@@ -206,7 +206,7 @@ func PathOpsTokenize(b []byte) ([]string, error) {
 			pos++
 			for i := 0; i < count; i++ {
 				val := decodeSignedInt(b[pos:pos+width], width)
-				addToken(&tokens, seen, path, fmt.Sprintf("i:%d", val))
+				addToken(&tokens, seen, path, fmt.Sprintf("%d", val))
 				pos += width
 			}
 			return pos, nil
@@ -227,7 +227,7 @@ func PathOpsTokenize(b []byte) ([]string, error) {
 				}
 				bits := binary.BigEndian.Uint64(b[pos : pos+8])
 				val := math.Float64frombits(bits)
-				addToken(&tokens, seen, path, fmt.Sprintf("f:%v", val))
+				addToken(&tokens, seen, path, formatFloat(val))
 				pos += 8
 			}
 			return pos, nil
@@ -257,6 +257,15 @@ func addToken(tokens *[]string, seen map[string]struct{}, path []string, value s
 		seen[tok] = struct{}{}
 		*tokens = append(*tokens, tok)
 	}
+}
+
+// formatFloat formats a float64 to its string representation,
+// matching JSON_VALUE's output format.
+func formatFloat(v float64) string {
+	if v == float64(int64(v)) {
+		return fmt.Sprintf("%d", int64(v))
+	}
+	return fmt.Sprintf("%v", v)
 }
 
 // decodeSignedInt decodes a big-endian signed integer of the given width.

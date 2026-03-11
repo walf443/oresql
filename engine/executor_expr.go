@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/walf443/oresql/ast"
+	"github.com/walf443/oresql/engine/expr"
 	"github.com/walf443/oresql/jsonb"
 )
 
@@ -165,120 +166,16 @@ func evalWhereWith(expr ast.Expr, row Row, eval ExprEvaluator) (bool, error) {
 	return b, nil
 }
 
-// toFloat64 converts a numeric value to float64 for mixed-type arithmetic.
-func toFloat64(v Value) (float64, bool) {
-	switch tv := v.(type) {
-	case int64:
-		return float64(tv), true
-	case float64:
-		return tv, true
-	default:
-		return 0, false
-	}
-}
+// Delegating functions to engine/expr package.
 
+func toFloat64(v Value) (float64, bool) { return expr.ToFloat64(v) }
 func evalArithmetic(left Value, op string, right Value) (Value, error) {
-	if left == nil || right == nil {
-		return nil, nil
-	}
-
-	// Both int64: integer arithmetic
-	if lv, ok := left.(int64); ok {
-		if rv, ok := right.(int64); ok {
-			return applyIntArithOp(lv, op, rv)
-		}
-	}
-
-	// Mixed or both float64: float arithmetic
-	lf, lok := toFloat64(left)
-	rf, rok := toFloat64(right)
-	if lok && rok {
-		return applyFloatArithOp(lf, op, rf)
-	}
-
-	return nil, fmt.Errorf("arithmetic requires numeric operands, got %T and %T", left, right)
+	return expr.Arithmetic(left, op, right)
 }
-
-// applyIntArithOp dispatches an arithmetic operator on int64 operands.
-func applyIntArithOp(lv int64, op string, rv int64) (Value, error) {
-	switch op {
-	case "+":
-		return lv + rv, nil
-	case "-":
-		return lv - rv, nil
-	case "*":
-		return lv * rv, nil
-	case "/":
-		if rv == 0 {
-			return nil, fmt.Errorf("division by zero")
-		}
-		return lv / rv, nil
-	default:
-		return nil, fmt.Errorf("unknown arithmetic operator: %s", op)
-	}
-}
-
-// applyFloatArithOp dispatches an arithmetic operator on float64 operands.
-func applyFloatArithOp(lf float64, op string, rf float64) (Value, error) {
-	switch op {
-	case "+":
-		return lf + rf, nil
-	case "-":
-		return lf - rf, nil
-	case "*":
-		return lf * rf, nil
-	case "/":
-		if rf == 0 {
-			return nil, fmt.Errorf("division by zero")
-		}
-		return lf / rf, nil
-	default:
-		return nil, fmt.Errorf("unknown arithmetic operator: %s", op)
-	}
-}
-
 func evalComparison(left Value, op string, right Value) (bool, error) {
-	// NULL comparison: any comparison with NULL returns false (SQL semantics)
-	if left == nil || right == nil {
-		return false, nil
-	}
-
-	// Check type compatibility before comparing
-	switch left.(type) {
-	case int64, float64:
-		if _, ok := toFloat64(right); !ok {
-			return false, fmt.Errorf("cannot compare %T and %T with %s", left, right, op)
-		}
-	case string:
-		if _, ok := right.(string); !ok {
-			return false, fmt.Errorf("cannot compare %T and %T with %s", left, right, op)
-		}
-	default:
-		return false, fmt.Errorf("cannot compare %T and %T with %s", left, right, op)
-	}
-
-	return applyCmpOp(compareValues(left, right), op)
+	return expr.Comparison(left, op, right)
 }
-
-// applyCmpOp applies a comparison operator to the result of compareValues.
-func applyCmpOp(cmp int, op string) (bool, error) {
-	switch op {
-	case "=":
-		return cmp == 0, nil
-	case "!=":
-		return cmp != 0, nil
-	case "<":
-		return cmp < 0, nil
-	case ">":
-		return cmp > 0, nil
-	case "<=":
-		return cmp <= 0, nil
-	case ">=":
-		return cmp >= 0, nil
-	default:
-		return false, fmt.Errorf("unknown comparison operator: %s", op)
-	}
-}
+func applyCmpOp(cmp int, op string) (bool, error) { return expr.ApplyCmpOp(cmp, op) }
 
 // evalLogicalOp dispatches a logical operator (AND/OR) on boolean operands.
 func evalLogicalOp(leftBool bool, op string, rightBool bool) (Value, error) {
@@ -295,73 +192,7 @@ func evalLogicalOp(leftBool bool, op string, rightBool bool) (Value, error) {
 // compareValues compares two values for ORDER BY sorting.
 // Returns -1 if a < b, 0 if a == b, 1 if a > b.
 // NULL values sort last (are considered greater than any non-NULL value).
-func compareValues(a, b Value) int {
-	if a == nil && b == nil {
-		return 0
-	}
-	if a == nil {
-		return 1 // NULL sorts last
-	}
-	if b == nil {
-		return -1 // NULL sorts last
-	}
-
-	switch av := a.(type) {
-	case int64:
-		switch bv := b.(type) {
-		case int64:
-			if av < bv {
-				return -1
-			}
-			if av > bv {
-				return 1
-			}
-			return 0
-		case float64:
-			af := float64(av)
-			if af < bv {
-				return -1
-			}
-			if af > bv {
-				return 1
-			}
-			return 0
-		}
-	case float64:
-		switch bv := b.(type) {
-		case float64:
-			if av < bv {
-				return -1
-			}
-			if av > bv {
-				return 1
-			}
-			return 0
-		case int64:
-			bf := float64(bv)
-			if av < bf {
-				return -1
-			}
-			if av > bf {
-				return 1
-			}
-			return 0
-		}
-	case string:
-		bv, ok := b.(string)
-		if !ok {
-			return 0
-		}
-		if av < bv {
-			return -1
-		}
-		if av > bv {
-			return 1
-		}
-		return 0
-	}
-	return 0
-}
+func compareValues(a, b Value) int { return expr.Compare(a, b) }
 
 // validateTableRef checks that a qualified table reference matches the target table.
 // If tableRef is empty (unqualified), validation is skipped.
@@ -605,70 +436,4 @@ func isLetterOrDigit(r rune) bool {
 // forEachChildExpr calls fn on each direct child expression of expr.
 // It handles all compound AST node types; leaf nodes produce no calls.
 // Subqueries (ScalarExpr, ExistsExpr) are NOT traversed.
-func forEachChildExpr(expr ast.Expr, fn func(ast.Expr)) {
-	switch e := expr.(type) {
-	case *ast.BinaryExpr:
-		fn(e.Left)
-		fn(e.Right)
-	case *ast.LogicalExpr:
-		fn(e.Left)
-		fn(e.Right)
-	case *ast.ArithmeticExpr:
-		fn(e.Left)
-		fn(e.Right)
-	case *ast.NotExpr:
-		fn(e.Expr)
-	case *ast.IsNullExpr:
-		fn(e.Expr)
-	case *ast.IsJSONExpr:
-		fn(e.Expr)
-	case *ast.InExpr:
-		fn(e.Left)
-		for _, v := range e.Values {
-			fn(v)
-		}
-	case *ast.BetweenExpr:
-		fn(e.Left)
-		fn(e.Low)
-		fn(e.High)
-	case *ast.LikeExpr:
-		fn(e.Left)
-		fn(e.Pattern)
-	case *ast.MatchExpr:
-		fn(e.Expr)
-	case *ast.AliasExpr:
-		fn(e.Expr)
-	case *ast.CastExpr:
-		fn(e.Expr)
-	case *ast.CallExpr:
-		for _, arg := range e.Args {
-			fn(arg)
-		}
-	case *ast.CaseExpr:
-		if e.Operand != nil {
-			fn(e.Operand)
-		}
-		for _, w := range e.Whens {
-			fn(w.When)
-			fn(w.Then)
-		}
-		if e.Else != nil {
-			fn(e.Else)
-		}
-	case *ast.WindowExpr:
-		for _, arg := range e.Args {
-			fn(arg)
-		}
-		for _, p := range e.PartitionBy {
-			fn(p)
-		}
-		for _, ob := range e.OrderBy {
-			fn(ob.Expr)
-		}
-	// Leaf nodes and subqueries: no children to traverse
-	case *ast.IdentExpr, *ast.StarExpr,
-		*ast.IntLitExpr, *ast.FloatLitExpr, *ast.StringLitExpr, *ast.BoolLitExpr, *ast.NullLitExpr,
-		*ast.ScalarExpr, *ast.ExistsExpr:
-		// no children
-	}
-}
+func forEachChildExpr(e ast.Expr, fn func(ast.Expr)) { expr.ForEachChild(e, fn) }

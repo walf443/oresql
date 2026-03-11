@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/walf443/oresql/json_path"
@@ -1214,36 +1215,371 @@ func convertJSONNumbers(val any) any {
 }
 
 // ToJSON converts the custom JSONB binary format to a JSON string.
+// Writes JSON directly from the binary without intermediate Go value allocation.
 func ToJSON(b []byte) (string, error) {
-	val, err := Decode(b)
+	dictOffsets, bodyPos, err := readDictOffsets(b)
 	if err != nil {
 		return "", err
 	}
-	out, err := json.Marshal(convertForJSON(val))
+	// Estimate capacity: roughly same size as JSONB binary.
+	buf := make([]byte, 0, len(b))
+	buf, err = writeJSONValue(buf, b, bodyPos, dictOffsets)
 	if err != nil {
 		return "", err
 	}
-	return string(out), nil
+	return string(buf), nil
 }
 
-func convertForJSON(val any) any {
-	switch v := val.(type) {
-	case int64:
-		return v
-	case map[string]any:
-		m := make(map[string]any, len(v))
-		for k, v2 := range v {
-			m[k] = convertForJSON(v2)
+// writeJSONValue writes a single JSONB value at pos as JSON into buf.
+func writeJSONValue(buf []byte, b []byte, pos int, dict []dictEntry) ([]byte, error) {
+	if pos >= len(b) {
+		return nil, fmt.Errorf("unexpected end of data")
+	}
+	tag := b[pos]
+	pos++
+	switch tag {
+	case TagNull:
+		return append(buf, "null"...), nil
+	case TagBool:
+		if pos >= len(b) {
+			return nil, fmt.Errorf("unexpected end of data for bool")
 		}
-		return m
-	case []any:
-		a := make([]any, len(v))
-		for i, v2 := range v {
-			a[i] = convertForJSON(v2)
+		if b[pos] != 0 {
+			return append(buf, "true"...), nil
 		}
-		return a
+		return append(buf, "false"...), nil
+	case TagInt:
+		if pos >= len(b) {
+			return nil, fmt.Errorf("unexpected end of data for int width")
+		}
+		width := int(b[pos])
+		pos++
+		if pos+width > len(b) {
+			return nil, fmt.Errorf("unexpected end of data for int value")
+		}
+		var v int64
+		switch width {
+		case 1:
+			v = int64(b[pos])
+		case 2:
+			v = int64(binary.BigEndian.Uint16(b[pos : pos+2]))
+		case 4:
+			v = int64(binary.BigEndian.Uint32(b[pos : pos+4]))
+		case 8:
+			v = int64(binary.BigEndian.Uint64(b[pos : pos+8]))
+		}
+		return strconv.AppendInt(buf, v, 10), nil
+	case TagFloat:
+		if pos+8 > len(b) {
+			return nil, fmt.Errorf("unexpected end of data for float")
+		}
+		v := math.Float64frombits(binary.BigEndian.Uint64(b[pos : pos+8]))
+		return strconv.AppendFloat(buf, v, 'f', -1, 64), nil
+	case TagString:
+		return writeJSONString(buf, b, pos)
+	case TagArray:
+		return writeJSONArray(buf, b, pos, dict)
+	case TagObject:
+		return writeJSONObject(buf, b, pos, dict)
+	case TagIntArray:
+		return writeJSONIntArray(buf, b, pos)
+	case TagFloatArray:
+		return writeJSONFloatArray(buf, b, pos)
 	default:
-		return val
+		return nil, fmt.Errorf("unknown tag: 0x%02x", tag)
+	}
+}
+
+// writeJSONString writes a JSONB string value at pos as a JSON quoted string.
+func writeJSONString(buf []byte, b []byte, pos int) ([]byte, error) {
+	if pos >= len(b) {
+		return nil, fmt.Errorf("unexpected end of data for string length")
+	}
+	var length int
+	if b[pos]&0x80 == 0 {
+		length = int(b[pos])
+		pos++
+	} else {
+		pos++
+		if pos+4 > len(b) {
+			return nil, fmt.Errorf("unexpected end of data for long string length")
+		}
+		length = int(binary.BigEndian.Uint32(b[pos : pos+4]))
+		pos += 4
+	}
+	if pos+length > len(b) {
+		return nil, fmt.Errorf("unexpected end of data for string body")
+	}
+	// Write JSON-escaped string directly from bytes.
+	buf = append(buf, '"')
+	for i := 0; i < length; i++ {
+		c := b[pos+i]
+		switch c {
+		case '"':
+			buf = append(buf, '\\', '"')
+		case '\\':
+			buf = append(buf, '\\', '\\')
+		case '\n':
+			buf = append(buf, '\\', 'n')
+		case '\r':
+			buf = append(buf, '\\', 'r')
+		case '\t':
+			buf = append(buf, '\\', 't')
+		default:
+			if c < 0x20 {
+				buf = append(buf, '\\', 'u', '0', '0', hexDigit(c>>4), hexDigit(c&0x0f))
+			} else {
+				buf = append(buf, c)
+			}
+		}
+	}
+	buf = append(buf, '"')
+	return buf, nil
+}
+
+func hexDigit(v byte) byte {
+	if v < 10 {
+		return '0' + v
+	}
+	return 'a' + v - 10
+}
+
+// writeJSONArray writes a generic JSONB array at pos as JSON.
+func writeJSONArray(buf []byte, b []byte, pos int, dict []dictEntry) ([]byte, error) {
+	if pos+4 > len(b) {
+		return nil, fmt.Errorf("unexpected end of data for array count")
+	}
+	count := int(binary.BigEndian.Uint32(b[pos : pos+4]))
+	pos += 4
+
+	buf = append(buf, '[')
+	if count == 0 {
+		return append(buf, ']'), nil
+	}
+
+	// Skip offset table, decode sequentially.
+	dataStart := pos + count*4
+	cur := dataStart
+	var err error
+	for i := 0; i < count; i++ {
+		if i > 0 {
+			buf = append(buf, ',')
+		}
+		buf, err = writeJSONValue(buf, b, cur, dict)
+		if err != nil {
+			return nil, err
+		}
+		// Advance cur by skipping over the value we just wrote.
+		_, cur, err = skipValue(b, cur)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return append(buf, ']'), nil
+}
+
+// writeJSONIntArray writes a typed int array as JSON.
+func writeJSONIntArray(buf []byte, b []byte, pos int) ([]byte, error) {
+	if pos+4 > len(b) {
+		return nil, fmt.Errorf("unexpected end of data for int array count")
+	}
+	count := int(binary.BigEndian.Uint32(b[pos : pos+4]))
+	pos += 4
+
+	buf = append(buf, '[')
+	if count == 0 {
+		return append(buf, ']'), nil
+	}
+
+	if pos >= len(b) {
+		return nil, fmt.Errorf("unexpected end of data for int array width")
+	}
+	width := int(b[pos])
+	pos++
+
+	for i := 0; i < count; i++ {
+		if i > 0 {
+			buf = append(buf, ',')
+		}
+		off := pos + i*width
+		var v int64
+		switch width {
+		case 1:
+			v = int64(b[off])
+		case 2:
+			v = int64(binary.BigEndian.Uint16(b[off : off+2]))
+		case 4:
+			v = int64(binary.BigEndian.Uint32(b[off : off+4]))
+		case 8:
+			v = int64(binary.BigEndian.Uint64(b[off : off+8]))
+		}
+		buf = strconv.AppendInt(buf, v, 10)
+	}
+	return append(buf, ']'), nil
+}
+
+// writeJSONFloatArray writes a typed float array as JSON.
+func writeJSONFloatArray(buf []byte, b []byte, pos int) ([]byte, error) {
+	if pos+4 > len(b) {
+		return nil, fmt.Errorf("unexpected end of data for float array count")
+	}
+	count := int(binary.BigEndian.Uint32(b[pos : pos+4]))
+	pos += 4
+
+	buf = append(buf, '[')
+	for i := 0; i < count; i++ {
+		if i > 0 {
+			buf = append(buf, ',')
+		}
+		off := pos + i*8
+		v := math.Float64frombits(binary.BigEndian.Uint64(b[off : off+8]))
+		buf = strconv.AppendFloat(buf, v, 'f', -1, 64)
+	}
+	return append(buf, ']'), nil
+}
+
+// writeJSONObject writes a JSONB object at pos as JSON.
+func writeJSONObject(buf []byte, b []byte, pos int, dict []dictEntry) ([]byte, error) {
+	if pos+2 > len(b) {
+		return nil, fmt.Errorf("unexpected end of data for object count")
+	}
+	count := int(binary.BigEndian.Uint16(b[pos : pos+2]))
+	pos += 2
+
+	buf = append(buf, '{')
+	if count == 0 {
+		return append(buf, '}'), nil
+	}
+
+	if pos+2 > len(b) {
+		return nil, fmt.Errorf("unexpected end of data for object widths")
+	}
+	keyIdxW := uint8(b[pos])
+	valOffW := uint8(b[pos+1])
+	pos += 2
+
+	entryWidth := int(keyIdxW) + int(valOffW)
+	entryTableStart := pos
+	valDataStart := pos + count*entryWidth
+
+	cur := valDataStart
+	for i := 0; i < count; i++ {
+		if i > 0 {
+			buf = append(buf, ',')
+		}
+		// Read key index from entry table.
+		epos := entryTableStart + i*entryWidth
+		keyIdx, _ := readUintN(b, epos, keyIdxW)
+
+		// Write key directly from dictionary bytes (no string allocation).
+		if int(keyIdx) >= len(dict) {
+			return nil, fmt.Errorf("key index %d out of range", keyIdx)
+		}
+		de := dict[keyIdx]
+		buf = append(buf, '"')
+		// Keys in JSON objects generally don't need escaping (alphanumeric + underscore),
+		// but we do it correctly for safety.
+		for j := 0; j < de.length; j++ {
+			c := b[de.offset+j]
+			switch c {
+			case '"':
+				buf = append(buf, '\\', '"')
+			case '\\':
+				buf = append(buf, '\\', '\\')
+			default:
+				buf = append(buf, c)
+			}
+		}
+		buf = append(buf, '"', ':')
+
+		// Write value.
+		var err error
+		buf, err = writeJSONValue(buf, b, cur, dict)
+		if err != nil {
+			return nil, err
+		}
+		_, cur, err = skipValue(b, cur)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return append(buf, '}'), nil
+}
+
+// skipValue advances past a value at pos without decoding it, returning the new position.
+func skipValue(b []byte, pos int) (byte, int, error) {
+	if pos >= len(b) {
+		return 0, pos, fmt.Errorf("unexpected end of data")
+	}
+	tag := b[pos]
+	pos++
+	switch tag {
+	case TagNull:
+		return tag, pos, nil
+	case TagBool:
+		return tag, pos + 1, nil
+	case TagInt:
+		width := int(b[pos])
+		return tag, pos + 1 + width, nil
+	case TagFloat:
+		return tag, pos + 8, nil
+	case TagString:
+		var length int
+		if b[pos]&0x80 == 0 {
+			length = int(b[pos])
+			pos++
+		} else {
+			pos++
+			length = int(binary.BigEndian.Uint32(b[pos : pos+4]))
+			pos += 4
+		}
+		return tag, pos + length, nil
+	case TagArray:
+		count := int(binary.BigEndian.Uint32(b[pos : pos+4]))
+		pos += 4
+		// Skip offset table.
+		dataStart := pos + count*4
+		cur := dataStart
+		for i := 0; i < count; i++ {
+			_, next, err := skipValue(b, cur)
+			if err != nil {
+				return 0, 0, err
+			}
+			cur = next
+		}
+		return tag, cur, nil
+	case TagObject:
+		count := int(binary.BigEndian.Uint16(b[pos : pos+2]))
+		pos += 2
+		if count == 0 {
+			return tag, pos, nil
+		}
+		keyIdxW := uint8(b[pos])
+		valOffW := uint8(b[pos+1])
+		pos += 2
+		entryWidth := int(keyIdxW) + int(valOffW)
+		valDataStart := pos + count*entryWidth
+		cur := valDataStart
+		for i := 0; i < count; i++ {
+			_, next, err := skipValue(b, cur)
+			if err != nil {
+				return 0, 0, err
+			}
+			cur = next
+		}
+		return tag, cur, nil
+	case TagIntArray:
+		count := int(binary.BigEndian.Uint32(b[pos : pos+4]))
+		pos += 4
+		width := int(b[pos])
+		pos++
+		return tag, pos + count*width, nil
+	case TagFloatArray:
+		count := int(binary.BigEndian.Uint32(b[pos : pos+4]))
+		pos += 4
+		return tag, pos + count*8, nil
+	default:
+		return 0, 0, fmt.Errorf("unknown tag: 0x%02x", tag)
 	}
 }
 

@@ -807,6 +807,35 @@ func TestGinIndexJSONBPathOpsNestedPath(t *testing.T) {
 	assert.Equal(t, int64(1), result.Rows[0][0])
 }
 
+func TestGinIndexJSONBPathOpsIN(t *testing.T) {
+	exec := setupGinTestExecutor(t, "memory")
+	run(t, exec, "CREATE TABLE docs (id INT PRIMARY KEY, data JSONB)")
+	run(t, exec, `INSERT INTO docs VALUES (1, '{"status": "active"}')`)
+	run(t, exec, `INSERT INTO docs VALUES (2, '{"status": "inactive"}')`)
+	run(t, exec, `INSERT INTO docs VALUES (3, '{"status": "pending"}')`)
+	run(t, exec, `INSERT INTO docs VALUES (4, '{"status": "active"}')`)
+	run(t, exec, `INSERT INTO docs VALUES (5, '{"status": "deleted"}')`)
+	run(t, exec, "CREATE INDEX idx_data_gin ON docs(data) USING GIN")
+
+	// IN with multiple values should use GIN index
+	result := run(t, exec, `SELECT id FROM docs WHERE JSON_VALUE(data, '$.status') IN ('active', 'pending')`)
+	require.Len(t, result.Rows, 3)
+	assert.Equal(t, int64(1), result.Rows[0][0])
+	assert.Equal(t, int64(3), result.Rows[1][0])
+	assert.Equal(t, int64(4), result.Rows[2][0])
+}
+
+func TestGinIndexJSONBPathOpsINExplain(t *testing.T) {
+	exec := setupGinTestExecutor(t, "memory")
+	run(t, exec, "CREATE TABLE docs (id INT PRIMARY KEY, data JSONB)")
+	run(t, exec, `INSERT INTO docs VALUES (1, '{"status": "active"}')`)
+	run(t, exec, "CREATE INDEX idx_data_gin ON docs(data) USING GIN")
+
+	assertExplain(t, exec, `SELECT id FROM docs WHERE JSON_VALUE(data, '$.status') IN ('active', 'pending')`, []planRow{
+		{Table: "docs", Type: "fulltext", Key: "idx_data_gin"},
+	})
+}
+
 func TestGinIndexStreamingLimit(t *testing.T) {
 	for _, st := range []string{"memory", "disk"} {
 		t.Run(st, func(t *testing.T) {

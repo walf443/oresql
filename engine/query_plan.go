@@ -522,6 +522,13 @@ func (e *Executor) tryGinBitmapLookup(where ast.Expr, info *TableInfo) (*storage
 		}
 	}
 
+	// Handle JSON_VALUE(col, '$.path') IN ('a', 'b', ...) with jsonb_path_ops GIN index
+	if inExpr, ok := where.(*ast.InExpr); ok && !inExpr.Not {
+		if rb, idxName, ok := e.tryGinJsonbPathOpsIN(inExpr, info); ok {
+			return rb, idxName, true
+		}
+	}
+
 	// Handle IN (col IN ('a', 'b', ...)) with bigram GIN index
 	if inExpr, ok := where.(*ast.InExpr); ok && !inExpr.Not {
 		ident, ok := inExpr.Left.(*ast.IdentExpr)
@@ -626,6 +633,56 @@ func (e *Executor) tryGinJsonbPathOps(binExpr *ast.BinaryExpr, info *storage.Tab
 		rb = storage.NewRoaringBitmap()
 	}
 	return rb, ginIdx.GetInfo().Name, true
+}
+
+// tryGinJsonbPathOpsIN checks if an IN expression matches the pattern
+// JSON_VALUE(col, '$.path') IN ('val1', 'val2', ...) and uses a jsonb_path_ops GIN index.
+func (e *Executor) tryGinJsonbPathOpsIN(inExpr *ast.InExpr, info *storage.TableInfo) (*storage.RoaringBitmap, string, bool) {
+	call, ok := inExpr.Left.(*ast.CallExpr)
+	if !ok || strings.ToUpper(call.Name) != "JSON_VALUE" {
+		return nil, "", false
+	}
+	if len(call.Args) != 2 {
+		return nil, "", false
+	}
+	ident, ok := call.Args[0].(*ast.IdentExpr)
+	if !ok {
+		return nil, "", false
+	}
+	pathLit, ok := call.Args[1].(*ast.StringLitExpr)
+	if !ok {
+		return nil, "", false
+	}
+
+	col, err := info.FindColumn(ident.Name)
+	if err != nil {
+		return nil, "", false
+	}
+	ginIdx := e.db.storage.LookupGinIndex(info.Name, col.Index)
+	if ginIdx == nil || ginIdx.GetInfo().Tokenizer != "jsonb_path_ops" {
+		return nil, "", false
+	}
+
+	result := storage.NewRoaringBitmap()
+	for _, valExpr := range inExpr.Values {
+		var token string
+		switch v := valExpr.(type) {
+		case *ast.StringLitExpr:
+			token, err = jsonbPathOpsToken(pathLit.Value, v.Value, 0, false)
+		case *ast.IntLitExpr:
+			token, err = jsonbPathOpsToken(pathLit.Value, "", v.Value, true)
+		default:
+			return nil, "", false
+		}
+		if err != nil || token == "" {
+			return nil, "", false
+		}
+		rb := ginIdx.MatchTokenBitmap(token)
+		if rb != nil {
+			result = result.Or(rb)
+		}
+	}
+	return result, ginIdx.GetInfo().Name, true
 }
 
 // jsonbPathOpsToken builds a JSONB document from a JSON path and value,

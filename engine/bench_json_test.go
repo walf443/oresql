@@ -184,3 +184,109 @@ func BenchmarkSelectIdOnly_JSON_vs_JSONB(b *testing.B) {
 		benchQuery(b, exec, "SELECT id FROM docs")
 	})
 }
+
+// --- GIN Index benchmarks ---
+
+func setupJSONBGinBench(b *testing.B, n int, withIndex bool) *Executor {
+	b.Helper()
+	exec := NewExecutor(NewDatabase("test"))
+	if err := execSQL(exec, "CREATE TABLE docs (id INT PRIMARY KEY, data JSONB)"); err != nil {
+		b.Fatal(err)
+	}
+	statuses := []string{"active", "inactive", "pending", "suspended", "deleted"}
+	for i := 0; i < n; i++ {
+		sql := fmt.Sprintf(`INSERT INTO docs VALUES (%d, '{"status":"%s","name":"user_%d","age":%d}')`,
+			i, statuses[i%len(statuses)], i, 20+i%50)
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+	if withIndex {
+		if err := execSQL(exec, "CREATE INDEX idx_data_gin ON docs(data) USING GIN"); err != nil {
+			b.Fatal(err)
+		}
+	}
+	return exec
+}
+
+func setupJSONGinBench(b *testing.B, n int) *Executor {
+	b.Helper()
+	exec := NewExecutor(NewDatabase("test"))
+	if err := execSQL(exec, "CREATE TABLE docs (id INT PRIMARY KEY, data JSON)"); err != nil {
+		b.Fatal(err)
+	}
+	statuses := []string{"active", "inactive", "pending", "suspended", "deleted"}
+	for i := 0; i < n; i++ {
+		sql := fmt.Sprintf(`INSERT INTO docs VALUES (%d, '{"status":"%s","name":"user_%d","age":%d}')`,
+			i, statuses[i%len(statuses)], i, 20+i%50)
+		if err := execSQL(exec, sql); err != nil {
+			b.Fatal(err)
+		}
+	}
+	return exec
+}
+
+func BenchmarkJSONBGinIndex_WhereEquality(b *testing.B) {
+	for _, n := range []int{100, 1000, 10000} {
+		b.Run(fmt.Sprintf("rows=%d/JSON", n), func(b *testing.B) {
+			exec := setupJSONGinBench(b, n)
+			benchQuery(b, exec, `SELECT id FROM docs WHERE JSON_VALUE(data, '$.status') = 'active'`)
+		})
+		b.Run(fmt.Sprintf("rows=%d/JSONB_NoIndex", n), func(b *testing.B) {
+			exec := setupJSONBGinBench(b, n, false)
+			benchQuery(b, exec, `SELECT id FROM docs WHERE JSON_VALUE(data, '$.status') = 'active'`)
+		})
+		b.Run(fmt.Sprintf("rows=%d/JSONB_GinIndex", n), func(b *testing.B) {
+			exec := setupJSONBGinBench(b, n, true)
+			benchQuery(b, exec, `SELECT id FROM docs WHERE JSON_VALUE(data, '$.status') = 'active'`)
+		})
+	}
+}
+
+func BenchmarkJSONBGinIndex_WhereIN(b *testing.B) {
+	for _, n := range []int{100, 1000, 10000} {
+		b.Run(fmt.Sprintf("rows=%d/JSON", n), func(b *testing.B) {
+			exec := setupJSONGinBench(b, n)
+			benchQuery(b, exec, `SELECT id FROM docs WHERE JSON_VALUE(data, '$.status') IN ('active', 'pending')`)
+		})
+		b.Run(fmt.Sprintf("rows=%d/JSONB_NoIndex", n), func(b *testing.B) {
+			exec := setupJSONBGinBench(b, n, false)
+			benchQuery(b, exec, `SELECT id FROM docs WHERE JSON_VALUE(data, '$.status') IN ('active', 'pending')`)
+		})
+		b.Run(fmt.Sprintf("rows=%d/JSONB_GinIndex", n), func(b *testing.B) {
+			exec := setupJSONBGinBench(b, n, true)
+			benchQuery(b, exec, `SELECT id FROM docs WHERE JSON_VALUE(data, '$.status') IN ('active', 'pending')`)
+		})
+	}
+}
+
+func BenchmarkJSONBGinIndex_Insert(b *testing.B) {
+	jsonData := `'{"status":"active","name":"user","age":30}'`
+
+	b.Run("NoIndex", func(b *testing.B) {
+		exec := NewExecutor(NewDatabase("test"))
+		execSQL(exec, "CREATE TABLE docs (id INT PRIMARY KEY, data JSONB)")
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			sql := fmt.Sprintf("INSERT INTO docs VALUES (%d, %s)", i, jsonData)
+			l := lexer.New(sql)
+			p := parser.New(l)
+			stmt, _ := p.Parse()
+			exec.Execute(stmt)
+		}
+	})
+
+	b.Run("GinIndex", func(b *testing.B) {
+		exec := NewExecutor(NewDatabase("test"))
+		execSQL(exec, "CREATE TABLE docs (id INT PRIMARY KEY, data JSONB)")
+		execSQL(exec, "CREATE INDEX idx_data_gin ON docs(data) USING GIN")
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			sql := fmt.Sprintf("INSERT INTO docs VALUES (%d, %s)", i, jsonData)
+			l := lexer.New(sql)
+			p := parser.New(l)
+			stmt, _ := p.Parse()
+			exec.Execute(stmt)
+		}
+	})
+}

@@ -483,14 +483,7 @@ func evalExprGeneric(expr ast.Expr, row Row, eval ExprEvaluator) (Value, error) 
 		if !ok {
 			return nil, fmt.Errorf("expected boolean in %s expression, got %T", e.Op, right)
 		}
-		switch e.Op {
-		case "AND":
-			return leftBool && rightBool, nil
-		case "OR":
-			return leftBool || rightBool, nil
-		default:
-			return nil, fmt.Errorf("unknown logical operator: %s", e.Op)
-		}
+		return evalLogicalOp(leftBool, e.Op, rightBool)
 	case *ast.NotExpr:
 		val, err := eval.Eval(e.Expr, row)
 		if err != nil {

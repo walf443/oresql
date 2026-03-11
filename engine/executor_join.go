@@ -290,14 +290,7 @@ func evalExprJoin(expr ast.Expr, row Row, jc *JoinContext) (Value, error) {
 		if !ok {
 			return nil, fmt.Errorf("expected boolean in %s expression, got %T", e.Op, right)
 		}
-		switch e.Op {
-		case "AND":
-			return leftBool && rightBool, nil
-		case "OR":
-			return leftBool || rightBool, nil
-		default:
-			return nil, fmt.Errorf("unknown logical operator: %s", e.Op)
-		}
+		return evalLogicalOp(leftBool, e.Op, rightBool)
 	case *ast.NotExpr:
 		val, err := evalExprJoin(e.Expr, row, jc)
 		if err != nil {

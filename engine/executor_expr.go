@@ -326,14 +326,7 @@ func evalExpr(expr ast.Expr, row Row, info *TableInfo) (Value, error) {
 		if !ok {
 			return nil, fmt.Errorf("expected boolean in %s expression, got %T", e.Op, right)
 		}
-		switch e.Op {
-		case "AND":
-			return leftBool && rightBool, nil
-		case "OR":
-			return leftBool || rightBool, nil
-		default:
-			return nil, fmt.Errorf("unknown logical operator: %s", e.Op)
-		}
+		return evalLogicalOp(leftBool, e.Op, rightBool)
 	case *ast.NotExpr:
 		val, err := evalExpr(e.Expr, row, info)
 		if err != nil {
@@ -425,21 +418,7 @@ func evalArithmetic(left Value, op string, right Value) (Value, error) {
 	// Both int64: integer arithmetic
 	if lv, ok := left.(int64); ok {
 		if rv, ok := right.(int64); ok {
-			switch op {
-			case "+":
-				return lv + rv, nil
-			case "-":
-				return lv - rv, nil
-			case "*":
-				return lv * rv, nil
-			case "/":
-				if rv == 0 {
-					return nil, fmt.Errorf("division by zero")
-				}
-				return lv / rv, nil
-			default:
-				return nil, fmt.Errorf("unknown arithmetic operator: %s", op)
-			}
+			return applyIntArithOp(lv, op, rv)
 		}
 	}
 
@@ -447,24 +426,48 @@ func evalArithmetic(left Value, op string, right Value) (Value, error) {
 	lf, lok := toFloat64(left)
 	rf, rok := toFloat64(right)
 	if lok && rok {
-		switch op {
-		case "+":
-			return lf + rf, nil
-		case "-":
-			return lf - rf, nil
-		case "*":
-			return lf * rf, nil
-		case "/":
-			if rf == 0 {
-				return nil, fmt.Errorf("division by zero")
-			}
-			return lf / rf, nil
-		default:
-			return nil, fmt.Errorf("unknown arithmetic operator: %s", op)
-		}
+		return applyFloatArithOp(lf, op, rf)
 	}
 
 	return nil, fmt.Errorf("arithmetic requires numeric operands, got %T and %T", left, right)
+}
+
+// applyIntArithOp dispatches an arithmetic operator on int64 operands.
+func applyIntArithOp(lv int64, op string, rv int64) (Value, error) {
+	switch op {
+	case "+":
+		return lv + rv, nil
+	case "-":
+		return lv - rv, nil
+	case "*":
+		return lv * rv, nil
+	case "/":
+		if rv == 0 {
+			return nil, fmt.Errorf("division by zero")
+		}
+		return lv / rv, nil
+	default:
+		return nil, fmt.Errorf("unknown arithmetic operator: %s", op)
+	}
+}
+
+// applyFloatArithOp dispatches an arithmetic operator on float64 operands.
+func applyFloatArithOp(lf float64, op string, rf float64) (Value, error) {
+	switch op {
+	case "+":
+		return lf + rf, nil
+	case "-":
+		return lf - rf, nil
+	case "*":
+		return lf * rf, nil
+	case "/":
+		if rf == 0 {
+			return nil, fmt.Errorf("division by zero")
+		}
+		return lf / rf, nil
+	default:
+		return nil, fmt.Errorf("unknown arithmetic operator: %s", op)
+	}
 }
 
 func evalComparison(left Value, op string, right Value) (bool, error) {
@@ -473,87 +476,53 @@ func evalComparison(left Value, op string, right Value) (bool, error) {
 		return false, nil
 	}
 
-	// Both int64
-	if lv, ok := left.(int64); ok {
-		if rv, ok := right.(int64); ok {
-			switch op {
-			case "=":
-				return lv == rv, nil
-			case "!=":
-				return lv != rv, nil
-			case "<":
-				return lv < rv, nil
-			case ">":
-				return lv > rv, nil
-			case "<=":
-				return lv <= rv, nil
-			case ">=":
-				return lv >= rv, nil
-			}
+	// Check type compatibility before comparing
+	switch left.(type) {
+	case int64, float64:
+		if _, ok := toFloat64(right); !ok {
+			return false, fmt.Errorf("cannot compare %T and %T with %s", left, right, op)
 		}
+	case string:
+		if _, ok := right.(string); !ok {
+			return false, fmt.Errorf("cannot compare %T and %T with %s", left, right, op)
+		}
+	default:
+		return false, fmt.Errorf("cannot compare %T and %T with %s", left, right, op)
 	}
 
-	// Both float64
-	if lv, ok := left.(float64); ok {
-		if rv, ok := right.(float64); ok {
-			switch op {
-			case "=":
-				return lv == rv, nil
-			case "!=":
-				return lv != rv, nil
-			case "<":
-				return lv < rv, nil
-			case ">":
-				return lv > rv, nil
-			case "<=":
-				return lv <= rv, nil
-			case ">=":
-				return lv >= rv, nil
-			}
-		}
-	}
+	return applyCmpOp(compareValues(left, right), op)
+}
 
-	// Mixed int64 and float64: promote to float64
-	lf, lok := toFloat64(left)
-	rf, rok := toFloat64(right)
-	if lok && rok {
-		switch op {
-		case "=":
-			return lf == rf, nil
-		case "!=":
-			return lf != rf, nil
-		case "<":
-			return lf < rf, nil
-		case ">":
-			return lf > rf, nil
-		case "<=":
-			return lf <= rf, nil
-		case ">=":
-			return lf >= rf, nil
-		}
+// applyCmpOp applies a comparison operator to the result of compareValues.
+func applyCmpOp(cmp int, op string) (bool, error) {
+	switch op {
+	case "=":
+		return cmp == 0, nil
+	case "!=":
+		return cmp != 0, nil
+	case "<":
+		return cmp < 0, nil
+	case ">":
+		return cmp > 0, nil
+	case "<=":
+		return cmp <= 0, nil
+	case ">=":
+		return cmp >= 0, nil
+	default:
+		return false, fmt.Errorf("unknown comparison operator: %s", op)
 	}
+}
 
-	// Both string
-	if lv, ok := left.(string); ok {
-		if rv, ok := right.(string); ok {
-			switch op {
-			case "=":
-				return lv == rv, nil
-			case "!=":
-				return lv != rv, nil
-			case "<":
-				return lv < rv, nil
-			case ">":
-				return lv > rv, nil
-			case "<=":
-				return lv <= rv, nil
-			case ">=":
-				return lv >= rv, nil
-			}
-		}
+// evalLogicalOp dispatches a logical operator (AND/OR) on boolean operands.
+func evalLogicalOp(leftBool bool, op string, rightBool bool) (Value, error) {
+	switch op {
+	case "AND":
+		return leftBool && rightBool, nil
+	case "OR":
+		return leftBool || rightBool, nil
+	default:
+		return nil, fmt.Errorf("unknown logical operator: %s", op)
 	}
-
-	return false, fmt.Errorf("cannot compare %T and %T with %s", left, right, op)
 }
 
 // compareValues compares two values for ORDER BY sorting.

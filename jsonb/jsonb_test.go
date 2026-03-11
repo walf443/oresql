@@ -252,3 +252,189 @@ func TestEmptyArray(t *testing.T) {
 	decoded := val.([]any)
 	assert.Len(t, decoded, 0)
 }
+
+// Typed array tests (compact encoding for homogeneous arrays)
+
+func TestIntArrayCompact(t *testing.T) {
+	// Small ints (0-255) should use 1-byte width
+	arr := []any{int64(0), int64(42), int64(255)}
+	b, err := Encode(arr)
+	require.NoError(t, err)
+	assert.Equal(t, byte(TagIntArray), b[0])
+
+	val, err := Decode(b)
+	require.NoError(t, err)
+	decoded := val.([]any)
+	require.Len(t, decoded, 3)
+	assert.Equal(t, int64(0), decoded[0])
+	assert.Equal(t, int64(42), decoded[1])
+	assert.Equal(t, int64(255), decoded[2])
+}
+
+func TestIntArrayWidth2(t *testing.T) {
+	// Values requiring 2-byte width
+	arr := []any{int64(0), int64(256), int64(65535)}
+	b, err := Encode(arr)
+	require.NoError(t, err)
+	assert.Equal(t, byte(TagIntArray), b[0])
+
+	val, err := Decode(b)
+	require.NoError(t, err)
+	decoded := val.([]any)
+	require.Len(t, decoded, 3)
+	assert.Equal(t, int64(0), decoded[0])
+	assert.Equal(t, int64(256), decoded[1])
+	assert.Equal(t, int64(65535), decoded[2])
+}
+
+func TestIntArrayWidth4(t *testing.T) {
+	arr := []any{int64(0), int64(65536), int64(1<<32 - 1)}
+	b, err := Encode(arr)
+	require.NoError(t, err)
+	assert.Equal(t, byte(TagIntArray), b[0])
+
+	val, err := Decode(b)
+	require.NoError(t, err)
+	decoded := val.([]any)
+	require.Len(t, decoded, 3)
+	assert.Equal(t, int64(0), decoded[0])
+	assert.Equal(t, int64(65536), decoded[1])
+	assert.Equal(t, int64(1<<32-1), decoded[2])
+}
+
+func TestIntArrayWidth8(t *testing.T) {
+	// Negative values or large values require 8-byte width
+	arr := []any{int64(-1), int64(0), int64(1 << 40)}
+	b, err := Encode(arr)
+	require.NoError(t, err)
+	assert.Equal(t, byte(TagIntArray), b[0])
+
+	val, err := Decode(b)
+	require.NoError(t, err)
+	decoded := val.([]any)
+	require.Len(t, decoded, 3)
+	assert.Equal(t, int64(-1), decoded[0])
+	assert.Equal(t, int64(0), decoded[1])
+	assert.Equal(t, int64(1<<40), decoded[2])
+}
+
+func TestIntArraySpaceEfficiency(t *testing.T) {
+	// 100 small ints: should be tag(1) + count(4) + width(1) + 100*1 = 106 bytes
+	arr := make([]any, 100)
+	for i := range arr {
+		arr[i] = int64(i)
+	}
+	b, err := Encode(arr)
+	require.NoError(t, err)
+	assert.Equal(t, byte(TagIntArray), b[0])
+	assert.Equal(t, 106, len(b), "100 small ints should be 106 bytes")
+
+	// Verify round-trip
+	val, err := Decode(b)
+	require.NoError(t, err)
+	decoded := val.([]any)
+	require.Len(t, decoded, 100)
+	for i := 0; i < 100; i++ {
+		assert.Equal(t, int64(i), decoded[i])
+	}
+}
+
+func TestFloatArrayCompact(t *testing.T) {
+	arr := []any{float64(1.5), float64(2.7), float64(3.14)}
+	b, err := Encode(arr)
+	require.NoError(t, err)
+	assert.Equal(t, byte(TagFloatArray), b[0])
+
+	val, err := Decode(b)
+	require.NoError(t, err)
+	decoded := val.([]any)
+	require.Len(t, decoded, 3)
+	assert.Equal(t, float64(1.5), decoded[0])
+	assert.Equal(t, float64(2.7), decoded[1])
+	assert.Equal(t, float64(3.14), decoded[2])
+}
+
+func TestMixedArrayUsesGenericFormat(t *testing.T) {
+	// Mixed types should fall back to TagArray
+	arr := []any{int64(1), "hello", true}
+	b, err := Encode(arr)
+	require.NoError(t, err)
+	assert.Equal(t, byte(TagArray), b[0])
+
+	val, err := Decode(b)
+	require.NoError(t, err)
+	decoded := val.([]any)
+	require.Len(t, decoded, 3)
+	assert.Equal(t, int64(1), decoded[0])
+	assert.Equal(t, "hello", decoded[1])
+	assert.Equal(t, true, decoded[2])
+}
+
+func TestIntArrayLookupIndex(t *testing.T) {
+	arr := []any{int64(10), int64(20), int64(30)}
+	b, err := Encode(arr)
+	require.NoError(t, err)
+
+	val, found, err := LookupIndex(b, 0)
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, int64(10), val)
+
+	val, found, err = LookupIndex(b, 2)
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, int64(30), val)
+
+	// Out of bounds
+	_, found, err = LookupIndex(b, 5)
+	require.NoError(t, err)
+	assert.False(t, found)
+}
+
+func TestFloatArrayLookupIndex(t *testing.T) {
+	arr := []any{float64(1.1), float64(2.2), float64(3.3)}
+	b, err := Encode(arr)
+	require.NoError(t, err)
+
+	val, found, err := LookupIndex(b, 1)
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, float64(2.2), val)
+}
+
+func TestIntArrayFromJSON(t *testing.T) {
+	b, err := FromJSON(`[1, 2, 3]`)
+	require.NoError(t, err)
+	assert.Equal(t, byte(TagIntArray), b[0])
+
+	out, err := ToJSON(b)
+	require.NoError(t, err)
+	assert.Equal(t, `[1,2,3]`, out)
+}
+
+func TestFloatArrayFromJSON(t *testing.T) {
+	b, err := FromJSON(`[1.5, 2.5, 3.5]`)
+	require.NoError(t, err)
+	assert.Equal(t, byte(TagFloatArray), b[0])
+
+	out, err := ToJSON(b)
+	require.NoError(t, err)
+	assert.Equal(t, `[1.5,2.5,3.5]`, out)
+}
+
+func TestNestedIntArray(t *testing.T) {
+	obj := map[string]any{
+		"ids": []any{int64(1), int64(2), int64(3)},
+	}
+	b, err := Encode(obj)
+	require.NoError(t, err)
+
+	val, err := Decode(b)
+	require.NoError(t, err)
+	decoded := val.(map[string]any)
+	ids := decoded["ids"].([]any)
+	require.Len(t, ids, 3)
+	assert.Equal(t, int64(1), ids[0])
+	assert.Equal(t, int64(2), ids[1])
+	assert.Equal(t, int64(3), ids[2])
+}

@@ -11,14 +11,16 @@ import (
 
 // Type tags for the custom binary format.
 const (
-	TagInvalid byte = 0x00
-	TagNull    byte = 0x01
-	TagBool    byte = 0x02
-	TagInt     byte = 0x03
-	TagFloat   byte = 0x04
-	TagString  byte = 0x05
-	TagArray   byte = 0x06
-	TagObject  byte = 0x07
+	TagInvalid    byte = 0x00
+	TagNull       byte = 0x01
+	TagBool       byte = 0x02
+	TagInt        byte = 0x03
+	TagFloat      byte = 0x04
+	TagString     byte = 0x05
+	TagArray      byte = 0x06
+	TagObject     byte = 0x07
+	TagIntArray   byte = 0x08
+	TagFloatArray byte = 0x09
 )
 
 // Encode serializes a Go value into the custom JSONB binary format.
@@ -73,6 +75,21 @@ func encodeValue(buf []byte, val any) ([]byte, error) {
 }
 
 func encodeArray(buf []byte, arr []any) ([]byte, error) {
+	if len(arr) == 0 {
+		buf = append(buf, TagArray)
+		buf = binary.BigEndian.AppendUint32(buf, 0)
+		return buf, nil
+	}
+
+	// Check if all elements are the same type for typed array optimization.
+	if b, err := tryEncodeIntArray(buf, arr); err == nil && b != nil {
+		return b, nil
+	}
+	if b, err := tryEncodeFloatArray(buf, arr); err == nil && b != nil {
+		return b, nil
+	}
+
+	// Generic array encoding with offset table.
 	buf = append(buf, TagArray)
 	count := uint32(len(arr))
 	buf = binary.BigEndian.AppendUint32(buf, count)
@@ -97,6 +114,82 @@ func encodeArray(buf []byte, arr []any) ([]byte, error) {
 	// Write element data.
 	for _, elem := range elements {
 		buf = append(buf, elem...)
+	}
+	return buf, nil
+}
+
+// intWidth returns the minimum byte width (1, 2, 4, or 8) needed to represent all values.
+func intWidth(vals []int64) uint8 {
+	for _, v := range vals {
+		if v < 0 || v > math.MaxUint32 {
+			return 8
+		}
+	}
+	for _, v := range vals {
+		if v > math.MaxUint16 {
+			return 4
+		}
+	}
+	for _, v := range vals {
+		if v > math.MaxUint8 {
+			return 2
+		}
+	}
+	return 1
+}
+
+// tryEncodeIntArray attempts to encode arr as a typed int array.
+// Returns (nil, nil) if the array is not all int64.
+// Format: [TagIntArray][count: uint32][width: uint8][values: width × count]
+func tryEncodeIntArray(buf []byte, arr []any) ([]byte, error) {
+	vals := make([]int64, len(arr))
+	for i, v := range arr {
+		n, ok := v.(int64)
+		if !ok {
+			return nil, nil // not all int64
+		}
+		vals[i] = n
+	}
+
+	width := intWidth(vals)
+
+	buf = append(buf, TagIntArray)
+	buf = binary.BigEndian.AppendUint32(buf, uint32(len(vals)))
+	buf = append(buf, width)
+
+	for _, v := range vals {
+		switch width {
+		case 1:
+			buf = append(buf, byte(v))
+		case 2:
+			buf = binary.BigEndian.AppendUint16(buf, uint16(v))
+		case 4:
+			buf = binary.BigEndian.AppendUint32(buf, uint32(v))
+		case 8:
+			buf = binary.BigEndian.AppendUint64(buf, uint64(v))
+		}
+	}
+	return buf, nil
+}
+
+// tryEncodeFloatArray attempts to encode arr as a typed float array.
+// Returns (nil, nil) if the array is not all float64.
+// Format: [TagFloatArray][count: uint32][values: 8 × count]
+func tryEncodeFloatArray(buf []byte, arr []any) ([]byte, error) {
+	vals := make([]float64, len(arr))
+	for i, v := range arr {
+		f, ok := v.(float64)
+		if !ok {
+			return nil, nil // not all float64
+		}
+		vals[i] = f
+	}
+
+	buf = append(buf, TagFloatArray)
+	buf = binary.BigEndian.AppendUint32(buf, uint32(len(vals)))
+
+	for _, v := range vals {
+		buf = binary.BigEndian.AppendUint64(buf, math.Float64bits(v))
 	}
 	return buf, nil
 }
@@ -209,6 +302,10 @@ func decodeValue(b []byte, pos int) (any, int, error) {
 		return decodeArray(b, pos)
 	case TagObject:
 		return decodeObject(b, pos)
+	case TagIntArray:
+		return decodeIntArray(b, pos)
+	case TagFloatArray:
+		return decodeFloatArray(b, pos)
 	default:
 		return nil, pos, fmt.Errorf("unknown tag: 0x%02x", tag)
 	}
@@ -252,6 +349,69 @@ func decodeArray(b []byte, pos int) (any, int, error) {
 		}
 	}
 	return result, pos, nil
+}
+
+func decodeIntArray(b []byte, pos int) (any, int, error) {
+	if pos+4 > len(b) {
+		return nil, pos, fmt.Errorf("unexpected end of data for int array count")
+	}
+	count := int(binary.BigEndian.Uint32(b[pos : pos+4]))
+	pos += 4
+
+	if count == 0 {
+		return []any{}, pos, nil
+	}
+
+	if pos >= len(b) {
+		return nil, pos, fmt.Errorf("unexpected end of data for int array width")
+	}
+	width := int(b[pos])
+	pos++
+
+	dataSize := count * width
+	if pos+dataSize > len(b) {
+		return nil, pos, fmt.Errorf("unexpected end of data for int array values")
+	}
+
+	result := make([]any, count)
+	for i := 0; i < count; i++ {
+		off := pos + i*width
+		switch width {
+		case 1:
+			result[i] = int64(b[off])
+		case 2:
+			result[i] = int64(binary.BigEndian.Uint16(b[off : off+2]))
+		case 4:
+			result[i] = int64(binary.BigEndian.Uint32(b[off : off+4]))
+		case 8:
+			result[i] = int64(binary.BigEndian.Uint64(b[off : off+8]))
+		}
+	}
+	return result, pos + dataSize, nil
+}
+
+func decodeFloatArray(b []byte, pos int) (any, int, error) {
+	if pos+4 > len(b) {
+		return nil, pos, fmt.Errorf("unexpected end of data for float array count")
+	}
+	count := int(binary.BigEndian.Uint32(b[pos : pos+4]))
+	pos += 4
+
+	if count == 0 {
+		return []any{}, pos, nil
+	}
+
+	dataSize := count * 8
+	if pos+dataSize > len(b) {
+		return nil, pos, fmt.Errorf("unexpected end of data for float array values")
+	}
+
+	result := make([]any, count)
+	for i := 0; i < count; i++ {
+		off := pos + i*8
+		result[i] = math.Float64frombits(binary.BigEndian.Uint64(b[off : off+8]))
+	}
+	return result, pos + dataSize, nil
 }
 
 func decodeObject(b []byte, pos int) (any, int, error) {
@@ -386,34 +546,84 @@ func LookupKey(b []byte, key string) (any, bool, error) {
 // LookupIndex retrieves the element at the given index from an encoded array
 // without fully deserializing the entire array.
 func LookupIndex(b []byte, idx int) (any, bool, error) {
-	if len(b) == 0 || b[0] != TagArray {
+	if len(b) == 0 {
 		return nil, false, fmt.Errorf("not an array")
 	}
-	pos := 1
-	if pos+4 > len(b) {
+
+	switch b[0] {
+	case TagIntArray:
+		return lookupIntArrayIndex(b, idx)
+	case TagFloatArray:
+		return lookupFloatArrayIndex(b, idx)
+	case TagArray:
+		// Generic array with offset table.
+		pos := 1
+		if pos+4 > len(b) {
+			return nil, false, fmt.Errorf("unexpected end of data")
+		}
+		count := int(binary.BigEndian.Uint32(b[pos : pos+4]))
+		pos += 4
+
+		if idx < 0 || idx >= count {
+			return nil, false, nil
+		}
+
+		offsetPos := pos + idx*4
+		if offsetPos+4 > len(b) {
+			return nil, false, fmt.Errorf("unexpected end of data for offset")
+		}
+		offset := int(binary.BigEndian.Uint32(b[offsetPos : offsetPos+4]))
+		dataStart := pos + count*4
+		val, _, err := decodeValue(b, dataStart+offset)
+		if err != nil {
+			return nil, false, err
+		}
+		return val, true, nil
+	default:
+		return nil, false, fmt.Errorf("not an array")
+	}
+}
+
+func lookupIntArrayIndex(b []byte, idx int) (any, bool, error) {
+	if len(b) < 6 { // tag + count + width
 		return nil, false, fmt.Errorf("unexpected end of data")
 	}
-	count := int(binary.BigEndian.Uint32(b[pos : pos+4]))
-	pos += 4
-
+	count := int(binary.BigEndian.Uint32(b[1:5]))
 	if idx < 0 || idx >= count {
 		return nil, false, nil
 	}
-
-	// Read offset for the requested index.
-	offsetPos := pos + idx*4
-	if offsetPos+4 > len(b) {
-		return nil, false, fmt.Errorf("unexpected end of data for offset")
+	width := int(b[5])
+	off := 6 + idx*width
+	if off+width > len(b) {
+		return nil, false, fmt.Errorf("unexpected end of data")
 	}
-	offset := int(binary.BigEndian.Uint32(b[offsetPos : offsetPos+4]))
-
-	// Data section starts after the offset table.
-	dataStart := pos + count*4
-	val, _, err := decodeValue(b, dataStart+offset)
-	if err != nil {
-		return nil, false, err
+	switch width {
+	case 1:
+		return int64(b[off]), true, nil
+	case 2:
+		return int64(binary.BigEndian.Uint16(b[off : off+2])), true, nil
+	case 4:
+		return int64(binary.BigEndian.Uint32(b[off : off+4])), true, nil
+	case 8:
+		return int64(binary.BigEndian.Uint64(b[off : off+8])), true, nil
+	default:
+		return nil, false, fmt.Errorf("invalid int array width: %d", width)
 	}
-	return val, true, nil
+}
+
+func lookupFloatArrayIndex(b []byte, idx int) (any, bool, error) {
+	if len(b) < 5 { // tag + count
+		return nil, false, fmt.Errorf("unexpected end of data")
+	}
+	count := int(binary.BigEndian.Uint32(b[1:5]))
+	if idx < 0 || idx >= count {
+		return nil, false, nil
+	}
+	off := 5 + idx*8
+	if off+8 > len(b) {
+		return nil, false, fmt.Errorf("unexpected end of data")
+	}
+	return math.Float64frombits(binary.BigEndian.Uint64(b[off : off+8])), true, nil
 }
 
 // KeyExists checks whether a key exists in an encoded object using binary search.

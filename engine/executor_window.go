@@ -115,7 +115,6 @@ func (e *Executor) applyWindowFunctions(stmt *ast.SelectStmt, rows []Row, eval E
 	}
 
 	weval := &windowEvaluator{
-		exec:       e,
 		inner:      eval,
 		selectCols: stmt.Columns,
 		windowMap:  windowMap,

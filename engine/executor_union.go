@@ -141,15 +141,15 @@ func exceptRows(left, right []Row, all bool) []Row {
 // setOpEvaluator evaluates expressions against set operation result rows.
 // Result rows are already projected, so column lookup is by name → index.
 type setOpEvaluator struct {
-	exec     *Executor
+	runner   SubqueryRunner
 	colNames []string
 }
 
 func newSetOpEvaluator(exec *Executor, colNames []string) *setOpEvaluator {
-	return &setOpEvaluator{exec: exec, colNames: colNames}
+	return &setOpEvaluator{runner: makeSubqueryRunner(exec), colNames: colNames}
 }
 
-func (se *setOpEvaluator) GetExecutor() *Executor { return se.exec }
+func (se *setOpEvaluator) GetSubqueryRunner() SubqueryRunner { return se.runner }
 
 func (se *setOpEvaluator) Eval(expr ast.Expr, row Row) (Value, error) {
 	switch e := expr.(type) {

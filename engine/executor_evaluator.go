@@ -7,26 +7,41 @@ import (
 	"github.com/walf443/oresql/ast"
 )
 
+// SubqueryRunner executes a subquery in the context of an outer row.
+// This decouples ExprEvaluator from *Executor, enabling package splitting.
+type SubqueryRunner func(subquery *ast.SelectStmt, eval ExprEvaluator, row Row) (*Result, error)
+
 // ExprEvaluator abstracts expression evaluation across different contexts
 // (single table, join, group by, result row).
 type ExprEvaluator interface {
 	Eval(expr ast.Expr, row Row) (Value, error)
 	ResolveColumn(tableName, colName string) (*ColumnInfo, error)
-	ColumnList() []ColumnInfo // for SELECT * expansion
-	GetExecutor() *Executor   // for subquery evaluation (EXISTS, etc.)
+	ColumnList() []ColumnInfo          // for SELECT * expansion
+	GetSubqueryRunner() SubqueryRunner // for subquery evaluation (EXISTS, IN subquery, scalar subquery)
+}
+
+// makeSubqueryRunner creates a SubqueryRunner from an Executor.
+// Returns nil if exec is nil (e.g. in tests without subquery support).
+func makeSubqueryRunner(exec *Executor) SubqueryRunner {
+	if exec == nil {
+		return nil
+	}
+	return func(subquery *ast.SelectStmt, eval ExprEvaluator, row Row) (*Result, error) {
+		return exec.executeSelectMaybeCorrelated(subquery, eval, row)
+	}
 }
 
 // tableEvaluator evaluates expressions against a single table.
 type tableEvaluator struct {
-	exec *Executor
-	info *TableInfo
+	runner SubqueryRunner
+	info   *TableInfo
 }
 
 func newTableEvaluator(exec *Executor, info *TableInfo) *tableEvaluator {
-	return &tableEvaluator{exec: exec, info: info}
+	return &tableEvaluator{runner: makeSubqueryRunner(exec), info: info}
 }
 
-func (te *tableEvaluator) GetExecutor() *Executor { return te.exec }
+func (te *tableEvaluator) GetSubqueryRunner() SubqueryRunner { return te.runner }
 
 func (te *tableEvaluator) Eval(expr ast.Expr, row Row) (Value, error) {
 	return evalExprGeneric(expr, row, te)
@@ -45,15 +60,15 @@ func (te *tableEvaluator) ColumnList() []ColumnInfo {
 
 // joinEvaluator evaluates expressions against a joined (merged) row.
 type joinEvaluator struct {
-	exec *Executor
-	jc   *JoinContext
+	runner SubqueryRunner
+	jc     *JoinContext
 }
 
 func newJoinEvaluator(exec *Executor, jc *JoinContext) *joinEvaluator {
-	return &joinEvaluator{exec: exec, jc: jc}
+	return &joinEvaluator{runner: makeSubqueryRunner(exec), jc: jc}
 }
 
-func (je *joinEvaluator) GetExecutor() *Executor { return je.exec }
+func (je *joinEvaluator) GetSubqueryRunner() SubqueryRunner { return je.runner }
 
 func (je *joinEvaluator) Eval(expr ast.Expr, row Row) (Value, error) {
 	return evalExprGeneric(expr, row, je)
@@ -71,16 +86,16 @@ func (je *joinEvaluator) ColumnList() []ColumnInfo {
 // For aggregate functions (CallExpr), it evaluates against the group rows.
 // For other expressions, it delegates to evalExprGeneric using the representative row.
 type groupEvaluator struct {
-	exec      *Executor
+	runner    SubqueryRunner
 	info      *TableInfo
 	groupRows []Row
 }
 
 func newGroupEvaluator(exec *Executor, info *TableInfo, groupRows []Row) *groupEvaluator {
-	return &groupEvaluator{exec: exec, info: info, groupRows: groupRows}
+	return &groupEvaluator{runner: makeSubqueryRunner(exec), info: info, groupRows: groupRows}
 }
 
-func (ge *groupEvaluator) GetExecutor() *Executor { return ge.exec }
+func (ge *groupEvaluator) GetSubqueryRunner() SubqueryRunner { return ge.runner }
 
 func (ge *groupEvaluator) Eval(expr ast.Expr, row Row) (Value, error) {
 	// Intercept CallExpr for aggregate evaluation
@@ -109,16 +124,16 @@ func (ge *groupEvaluator) ColumnList() []ColumnInfo {
 // Used for ORDER BY after GROUP BY, where expressions need to be resolved
 // against SELECT column names/positions.
 type resultEvaluator struct {
-	exec       *Executor
+	runner     SubqueryRunner
 	selectCols []ast.Expr // original SELECT expressions (with AliasExpr)
 	colNames   []string   // resolved column names
 }
 
 func newResultEvaluator(exec *Executor, selectCols []ast.Expr, colNames []string) *resultEvaluator {
-	return &resultEvaluator{exec: exec, selectCols: selectCols, colNames: colNames}
+	return &resultEvaluator{runner: makeSubqueryRunner(exec), selectCols: selectCols, colNames: colNames}
 }
 
-func (re *resultEvaluator) GetExecutor() *Executor { return re.exec }
+func (re *resultEvaluator) GetSubqueryRunner() SubqueryRunner { return re.runner }
 
 func (re *resultEvaluator) Eval(expr ast.Expr, row Row) (Value, error) {
 	// Try to match the expression to a SELECT column
@@ -185,14 +200,13 @@ func (re *resultEvaluator) resolveOrderByValue(orderExpr ast.Expr, resultRow Row
 // windowEvaluator wraps an inner evaluator and resolves WindowExpr references
 // from extended row columns.
 type windowEvaluator struct {
-	exec       *Executor
 	inner      ExprEvaluator
 	selectCols []ast.Expr  // SELECT columns (for pointer matching)
 	windowMap  map[int]int // selectCol index → extended row column index
 	numOrig    int         // number of original columns before extension
 }
 
-func (we *windowEvaluator) GetExecutor() *Executor { return we.exec }
+func (we *windowEvaluator) GetSubqueryRunner() SubqueryRunner { return we.inner.GetSubqueryRunner() }
 
 func (we *windowEvaluator) Eval(expr ast.Expr, row Row) (Value, error) {
 	// Check if this is a window expression from SELECT columns
@@ -230,14 +244,14 @@ func (we *windowEvaluator) ColumnList() []ColumnInfo {
 // literalEvaluator evaluates expressions in a context without a table (SELECT without FROM).
 // It supports scalar subqueries via the executor.
 type literalEvaluator struct {
-	exec *Executor
+	runner SubqueryRunner
 }
 
 func newLiteralEvaluator(exec *Executor) *literalEvaluator {
-	return &literalEvaluator{exec: exec}
+	return &literalEvaluator{runner: makeSubqueryRunner(exec)}
 }
 
-func (le *literalEvaluator) GetExecutor() *Executor { return le.exec }
+func (le *literalEvaluator) GetSubqueryRunner() SubqueryRunner { return le.runner }
 
 func (le *literalEvaluator) Eval(expr ast.Expr, row Row) (Value, error) {
 	return evalExprGeneric(expr, row, le)
@@ -254,21 +268,21 @@ func (le *literalEvaluator) ColumnList() []ColumnInfo {
 // pkOnlyEvaluator is a lightweight evaluator for PK-only covering scans.
 // Rows contain a single element: the PK value at index 0.
 type pkOnlyEvaluator struct {
-	exec *Executor
-	info *TableInfo
-	col  ColumnInfo // PK column with Index remapped to 0
+	runner SubqueryRunner
+	info   *TableInfo
+	col    ColumnInfo // PK column with Index remapped to 0
 }
 
 func newPKOnlyEvaluator(exec *Executor, info *TableInfo) *pkOnlyEvaluator {
 	pkCol := info.Columns[info.PrimaryKeyCol]
 	return &pkOnlyEvaluator{
-		exec: exec,
-		info: info,
-		col:  ColumnInfo{Name: pkCol.Name, DataType: pkCol.DataType, Index: 0},
+		runner: makeSubqueryRunner(exec),
+		info:   info,
+		col:    ColumnInfo{Name: pkCol.Name, DataType: pkCol.DataType, Index: 0},
 	}
 }
 
-func (pe *pkOnlyEvaluator) GetExecutor() *Executor { return pe.exec }
+func (pe *pkOnlyEvaluator) GetSubqueryRunner() SubqueryRunner { return pe.runner }
 
 func (pe *pkOnlyEvaluator) Eval(expr ast.Expr, row Row) (Value, error) {
 	return evalExprGeneric(expr, row, pe)
@@ -318,11 +332,11 @@ func evalInExpr(e *ast.InExpr, row Row, eval ExprEvaluator) (Value, error) {
 
 // evalInSubquery evaluates an IN expression with a subquery.
 func evalInSubquery(e *ast.InExpr, left Value, row Row, eval ExprEvaluator) (Value, error) {
-	exec := eval.GetExecutor()
-	if exec == nil {
+	runner := eval.GetSubqueryRunner()
+	if runner == nil {
 		return nil, fmt.Errorf("IN subquery not supported in this context")
 	}
-	result, err := exec.executeSelectMaybeCorrelated(e.Subquery, eval, row)
+	result, err := runner(e.Subquery, eval, row)
 	if err != nil {
 		return nil, err
 	}
@@ -475,11 +489,11 @@ func evalCaseExpr(e *ast.CaseExpr, row Row, eval ExprEvaluator) (Value, error) {
 
 // evalScalarSubquery evaluates a scalar subquery expression.
 func evalScalarSubquery(e *ast.ScalarExpr, row Row, eval ExprEvaluator) (Value, error) {
-	exec := eval.GetExecutor()
-	if exec == nil {
+	runner := eval.GetSubqueryRunner()
+	if runner == nil {
 		return nil, fmt.Errorf("scalar subquery not supported in this context")
 	}
-	result, err := exec.executeSelectMaybeCorrelated(e.Subquery, eval, row)
+	result, err := runner(e.Subquery, eval, row)
 	if err != nil {
 		return nil, err
 	}
@@ -494,11 +508,11 @@ func evalScalarSubquery(e *ast.ScalarExpr, row Row, eval ExprEvaluator) (Value, 
 
 // evalExistsExpr evaluates an EXISTS subquery expression.
 func evalExistsExpr(e *ast.ExistsExpr, row Row, eval ExprEvaluator) (Value, error) {
-	exec := eval.GetExecutor()
-	if exec == nil {
+	runner := eval.GetSubqueryRunner()
+	if runner == nil {
 		return nil, fmt.Errorf("EXISTS subquery not supported in this context")
 	}
-	result, err := exec.executeSelectMaybeCorrelated(e.Subquery, eval, row)
+	result, err := runner(e.Subquery, eval, row)
 	if err != nil {
 		return nil, err
 	}
@@ -651,7 +665,7 @@ func evalNotExpr(e *ast.NotExpr, row Row, eval ExprEvaluator) (Value, error) {
 // (for the outer query). Column resolution tries inner first, then falls back to outer
 // with an index offset. Eval builds a merged row [innerRow | outerRow].
 type correlatedEvaluator struct {
-	exec     *Executor
+	runner   SubqueryRunner
 	inner    ExprEvaluator
 	outer    ExprEvaluator
 	outerRow Row
@@ -659,10 +673,10 @@ type correlatedEvaluator struct {
 }
 
 func newCorrelatedEvaluator(exec *Executor, inner, outer ExprEvaluator, outerRow Row, numInner int) *correlatedEvaluator {
-	return &correlatedEvaluator{exec: exec, inner: inner, outer: outer, outerRow: outerRow, numInner: numInner}
+	return &correlatedEvaluator{runner: makeSubqueryRunner(exec), inner: inner, outer: outer, outerRow: outerRow, numInner: numInner}
 }
 
-func (ce *correlatedEvaluator) GetExecutor() *Executor { return ce.exec }
+func (ce *correlatedEvaluator) GetSubqueryRunner() SubqueryRunner { return ce.runner }
 
 func (ce *correlatedEvaluator) Eval(expr ast.Expr, row Row) (Value, error) {
 	mergedRow := make(Row, len(row)+len(ce.outerRow))

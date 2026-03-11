@@ -530,24 +530,9 @@ func evalExprGeneric(expr ast.Expr, row Row, eval ExprEvaluator) (Value, error) 
 	case *ast.BoolLitExpr:
 		return e.Value, nil
 	case *ast.IsNullExpr:
-		val, err := eval.Eval(e.Expr, row)
-		if err != nil {
-			return nil, err
-		}
-		if e.Not {
-			return val != nil, nil
-		}
-		return val == nil, nil
+		return evalIsNullExpr(e, row, eval)
 	case *ast.IsJSONExpr:
-		val, err := eval.Eval(e.Expr, row)
-		if err != nil {
-			return nil, err
-		}
-		result := isValidJSON(val)
-		if e.Not {
-			return !result, nil
-		}
-		return result, nil
+		return evalIsJSONExpr(e, row, eval)
 	case *ast.InExpr:
 		return evalInExpr(e, row, eval)
 	case *ast.BetweenExpr:
@@ -555,50 +540,15 @@ func evalExprGeneric(expr ast.Expr, row Row, eval ExprEvaluator) (Value, error) 
 	case *ast.LikeExpr:
 		return evalLikeExpr(e, row, eval)
 	case *ast.MatchExpr:
-		val, err := eval.Eval(e.Expr, row)
-		if err != nil {
-			return nil, err
-		}
-		if val == nil {
-			return false, nil
-		}
-		text, ok := val.(string)
-		if !ok {
-			return nil, fmt.Errorf("@@ requires TEXT operand, got %T", val)
-		}
-		return matchFullText(text, e.Pattern, e.Tokenizer), nil
+		return evalMatchExpr(e, row, eval)
 	case *ast.ArithmeticExpr:
-		left, err := eval.Eval(e.Left, row)
-		if err != nil {
-			return nil, err
-		}
-		right, err := eval.Eval(e.Right, row)
-		if err != nil {
-			return nil, err
-		}
-		return evalArithmetic(left, e.Op, right)
+		return evalArithmeticExpr(e, row, eval)
 	case *ast.BinaryExpr:
-		left, err := eval.Eval(e.Left, row)
-		if err != nil {
-			return nil, err
-		}
-		right, err := eval.Eval(e.Right, row)
-		if err != nil {
-			return nil, err
-		}
-		return evalComparison(left, e.Op, right)
+		return evalBinaryExpr(e, row, eval)
 	case *ast.LogicalExpr:
 		return evalLogicalExpr(e, row, eval)
 	case *ast.NotExpr:
-		val, err := eval.Eval(e.Expr, row)
-		if err != nil {
-			return nil, err
-		}
-		b, ok := val.(bool)
-		if !ok {
-			return nil, fmt.Errorf("NOT requires boolean operand, got %T", val)
-		}
-		return !b, nil
+		return evalNotExpr(e, row, eval)
 	case *ast.CaseExpr:
 		return evalCaseExpr(e, row, eval)
 	case *ast.ScalarExpr:
@@ -614,6 +564,86 @@ func evalExprGeneric(expr ast.Expr, row Row, eval ExprEvaluator) (Value, error) 
 	default:
 		return nil, fmt.Errorf("cannot evaluate expression: %T", expr)
 	}
+}
+
+// evalIsNullExpr evaluates IS NULL / IS NOT NULL.
+func evalIsNullExpr(e *ast.IsNullExpr, row Row, eval ExprEvaluator) (Value, error) {
+	val, err := eval.Eval(e.Expr, row)
+	if err != nil {
+		return nil, err
+	}
+	if e.Not {
+		return val != nil, nil
+	}
+	return val == nil, nil
+}
+
+// evalIsJSONExpr evaluates IS JSON / IS NOT JSON.
+func evalIsJSONExpr(e *ast.IsJSONExpr, row Row, eval ExprEvaluator) (Value, error) {
+	val, err := eval.Eval(e.Expr, row)
+	if err != nil {
+		return nil, err
+	}
+	result := isValidJSON(val)
+	if e.Not {
+		return !result, nil
+	}
+	return result, nil
+}
+
+// evalMatchExpr evaluates the @@ full-text match operator.
+func evalMatchExpr(e *ast.MatchExpr, row Row, eval ExprEvaluator) (Value, error) {
+	val, err := eval.Eval(e.Expr, row)
+	if err != nil {
+		return nil, err
+	}
+	if val == nil {
+		return false, nil
+	}
+	text, ok := val.(string)
+	if !ok {
+		return nil, fmt.Errorf("@@ requires TEXT operand, got %T", val)
+	}
+	return matchFullText(text, e.Pattern, e.Tokenizer), nil
+}
+
+// evalArithmeticExpr evaluates an arithmetic expression (+, -, *, /, %).
+func evalArithmeticExpr(e *ast.ArithmeticExpr, row Row, eval ExprEvaluator) (Value, error) {
+	left, err := eval.Eval(e.Left, row)
+	if err != nil {
+		return nil, err
+	}
+	right, err := eval.Eval(e.Right, row)
+	if err != nil {
+		return nil, err
+	}
+	return evalArithmetic(left, e.Op, right)
+}
+
+// evalBinaryExpr evaluates a binary comparison expression (=, !=, <, >, <=, >=).
+func evalBinaryExpr(e *ast.BinaryExpr, row Row, eval ExprEvaluator) (Value, error) {
+	left, err := eval.Eval(e.Left, row)
+	if err != nil {
+		return nil, err
+	}
+	right, err := eval.Eval(e.Right, row)
+	if err != nil {
+		return nil, err
+	}
+	return evalComparison(left, e.Op, right)
+}
+
+// evalNotExpr evaluates a NOT expression.
+func evalNotExpr(e *ast.NotExpr, row Row, eval ExprEvaluator) (Value, error) {
+	val, err := eval.Eval(e.Expr, row)
+	if err != nil {
+		return nil, err
+	}
+	b, ok := val.(bool)
+	if !ok {
+		return nil, fmt.Errorf("NOT requires boolean operand, got %T", val)
+	}
+	return !b, nil
 }
 
 // correlatedEvaluator evaluates expressions in a correlated subquery context.

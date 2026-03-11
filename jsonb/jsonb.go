@@ -24,18 +24,61 @@ const (
 )
 
 // Encode serializes a Go value into the custom JSONB binary format.
-// Supported types: nil, bool, int64, int, float64, string, []any, map[string]any.
+// The binary starts with a key dictionary header, followed by the encoded body.
+// All object keys across the entire value are stored once in the dictionary,
+// and objects reference keys by uint16 index.
+//
+// Format:
+//
+//	[keyCount: uint16][key0: TagString...][key1: TagString...]...[body]
 func Encode(val any) ([]byte, error) {
+	// Phase 1: Collect all unique keys from the entire value.
+	keySet := make(map[string]struct{})
+	collectKeys(val, keySet)
+
+	sortedKeys := make([]string, 0, len(keySet))
+	for k := range keySet {
+		sortedKeys = append(sortedKeys, k)
+	}
+	sort.Strings(sortedKeys)
+
+	keyToIdx := make(map[string]uint16, len(sortedKeys))
+	for i, k := range sortedKeys {
+		keyToIdx[k] = uint16(i)
+	}
+
+	// Phase 2: Write dictionary header.
 	var buf []byte
+	buf = binary.BigEndian.AppendUint16(buf, uint16(len(sortedKeys)))
+	for _, k := range sortedKeys {
+		buf = encodeCompactString(buf, k)
+	}
+
+	// Phase 3: Encode body.
 	var err error
-	buf, err = encodeValue(buf, val)
+	buf, err = encodeValue(buf, val, keyToIdx)
 	if err != nil {
 		return nil, err
 	}
 	return buf, nil
 }
 
-func encodeValue(buf []byte, val any) ([]byte, error) {
+// collectKeys recursively finds all unique object keys in the value.
+func collectKeys(val any, keys map[string]struct{}) {
+	switch v := val.(type) {
+	case map[string]any:
+		for k, child := range v {
+			keys[k] = struct{}{}
+			collectKeys(child, keys)
+		}
+	case []any:
+		for _, child := range v {
+			collectKeys(child, keys)
+		}
+	}
+}
+
+func encodeValue(buf []byte, val any, dict map[string]uint16) ([]byte, error) {
 	if val == nil {
 		return append(buf, TagNull), nil
 	}
@@ -49,32 +92,77 @@ func encodeValue(buf []byte, val any) ([]byte, error) {
 		}
 		return buf, nil
 	case int64:
-		buf = append(buf, TagInt)
-		buf = binary.BigEndian.AppendUint64(buf, uint64(v))
-		return buf, nil
+		return encodeCompactInt(buf, v), nil
 	case int:
-		buf = append(buf, TagInt)
-		buf = binary.BigEndian.AppendUint64(buf, uint64(int64(v)))
-		return buf, nil
+		return encodeCompactInt(buf, int64(v)), nil
 	case float64:
 		buf = append(buf, TagFloat)
 		buf = binary.BigEndian.AppendUint64(buf, math.Float64bits(v))
 		return buf, nil
 	case string:
-		buf = append(buf, TagString)
-		buf = binary.BigEndian.AppendUint32(buf, uint32(len(v)))
-		buf = append(buf, v...)
-		return buf, nil
+		return encodeCompactString(buf, v), nil
 	case []any:
-		return encodeArray(buf, v)
+		return encodeArray(buf, v, dict)
 	case map[string]any:
-		return encodeObject(buf, v)
+		return encodeObject(buf, v, dict)
 	default:
 		return nil, fmt.Errorf("unsupported type: %T", val)
 	}
 }
 
-func encodeArray(buf []byte, arr []any) ([]byte, error) {
+// encodeCompactInt encodes an integer with minimum byte width.
+// Format: [TagInt][width: uint8][value: width bytes]
+func encodeCompactInt(buf []byte, v int64) []byte {
+	w := intWidthScalar(v)
+	buf = append(buf, TagInt, w)
+	switch w {
+	case 1:
+		buf = append(buf, byte(v))
+	case 2:
+		buf = binary.BigEndian.AppendUint16(buf, uint16(v))
+	case 4:
+		buf = binary.BigEndian.AppendUint32(buf, uint32(v))
+	case 8:
+		buf = binary.BigEndian.AppendUint64(buf, uint64(v))
+	}
+	return buf
+}
+
+// intWidthScalar returns the minimum byte width for a single int64 value.
+func intWidthScalar(v int64) uint8 {
+	if v < 0 || v > math.MaxUint32 {
+		return 8
+	}
+	if v > math.MaxUint16 {
+		return 4
+	}
+	if v > math.MaxUint8 {
+		return 2
+	}
+	return 1
+}
+
+// encodeCompactString encodes a string with compact length.
+// Short strings (< 128 bytes): [TagString][1-byte length][data]
+// Long strings (>= 128 bytes): [TagString][0x80 | high byte][low 3 bytes as uint24] — actually simpler:
+// We use the high bit of the first length byte as a flag:
+//
+//	0xxxxxxx = length is this byte (0-127)
+//	1xxxxxxx = length is next 4 bytes (big-endian uint32), this byte is just the marker 0x80
+func encodeCompactString(buf []byte, v string) []byte {
+	buf = append(buf, TagString)
+	n := len(v)
+	if n < 128 {
+		buf = append(buf, byte(n))
+	} else {
+		buf = append(buf, 0x80)
+		buf = binary.BigEndian.AppendUint32(buf, uint32(n))
+	}
+	buf = append(buf, v...)
+	return buf
+}
+
+func encodeArray(buf []byte, arr []any, dict map[string]uint16) ([]byte, error) {
 	if len(arr) == 0 {
 		buf = append(buf, TagArray)
 		buf = binary.BigEndian.AppendUint32(buf, 0)
@@ -97,7 +185,7 @@ func encodeArray(buf []byte, arr []any) ([]byte, error) {
 	// Encode each element into a temporary buffer to compute offsets.
 	elements := make([][]byte, len(arr))
 	for i, v := range arr {
-		elem, err := encodeValue(nil, v)
+		elem, err := encodeValue(nil, v, dict)
 		if err != nil {
 			return nil, err
 		}
@@ -194,56 +282,101 @@ func tryEncodeFloatArray(buf []byte, arr []any) ([]byte, error) {
 	return buf, nil
 }
 
-func encodeObject(buf []byte, obj map[string]any) ([]byte, error) {
+// offsetWidth returns the minimum byte width (1, 2, or 4) for an unsigned offset value.
+func offsetWidth(maxVal uint32) uint8 {
+	if maxVal <= math.MaxUint8 {
+		return 1
+	}
+	if maxVal <= math.MaxUint16 {
+		return 2
+	}
+	return 4
+}
+
+// appendUintN appends a uint value using the specified byte width.
+func appendUintN(buf []byte, v uint32, width uint8) []byte {
+	switch width {
+	case 1:
+		return append(buf, byte(v))
+	case 2:
+		return binary.BigEndian.AppendUint16(buf, uint16(v))
+	case 4:
+		return binary.BigEndian.AppendUint32(buf, uint32(v))
+	}
+	return buf
+}
+
+// readUintN reads a uint value of the specified byte width.
+func readUintN(b []byte, pos int, width uint8) (uint32, int) {
+	switch width {
+	case 1:
+		return uint32(b[pos]), pos + 1
+	case 2:
+		return uint32(binary.BigEndian.Uint16(b[pos : pos+2])), pos + 2
+	case 4:
+		return binary.BigEndian.Uint32(b[pos : pos+4]), pos + 4
+	}
+	return 0, pos
+}
+
+// encodeObject encodes a map as an object with dictionary key references.
+//
+// Format:
+//
+//	[TagObject][count: uint16][keyIdxWidth: uint8][valOffWidth: uint8]
+//	[entry table: (keyIdx: keyIdxWidth, valOff: valOffWidth) × count]
+//	[value data]
+//
+// Keys are written in sorted order (by dictionary index, which is already sorted).
+func encodeObject(buf []byte, obj map[string]any, dict map[string]uint16) ([]byte, error) {
 	buf = append(buf, TagObject)
-	count := uint32(len(obj))
-	buf = binary.BigEndian.AppendUint32(buf, count)
+	count := len(obj)
+	buf = binary.BigEndian.AppendUint16(buf, uint16(count))
+
+	if count == 0 {
+		return buf, nil
+	}
 
 	// Sort keys.
-	keys := make([]string, 0, len(obj))
+	keys := make([]string, 0, count)
 	for k := range obj {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 
-	// Encode keys and values separately.
-	encodedKeys := make([][]byte, len(keys))
+	// Encode values.
 	encodedVals := make([][]byte, len(keys))
 	for i, k := range keys {
-		ek, err := encodeValue(nil, k)
-		if err != nil {
-			return nil, err
-		}
-		encodedKeys[i] = ek
-
-		ev, err := encodeValue(nil, obj[k])
+		ev, err := encodeValue(nil, obj[k], dict)
 		if err != nil {
 			return nil, err
 		}
 		encodedVals[i] = ev
 	}
 
-	// Compute total sizes for key data and value data.
-	totalKeySize := uint32(0)
-	for _, ek := range encodedKeys {
-		totalKeySize += uint32(len(ek))
+	// Compute widths for key index and value offset.
+	maxKeyIdx := uint32(0)
+	for _, k := range keys {
+		if uint32(dict[k]) > maxKeyIdx {
+			maxKeyIdx = uint32(dict[k])
+		}
 	}
+	keyIdxW := offsetWidth(maxKeyIdx)
 
-	// Key entry table: [keyOffset: uint32, valOffset: uint32] per entry.
-	// Key offsets are relative to the start of the key data section.
-	// Value offsets are relative to the start of the value data section.
-	keyOffset := uint32(0)
+	totalValSize := uint32(0)
+	for _, ev := range encodedVals {
+		totalValSize += uint32(len(ev))
+	}
+	valOffW := offsetWidth(totalValSize)
+
+	buf = append(buf, keyIdxW, valOffW)
+
+	// Entry table with adaptive widths.
 	valOffset := uint32(0)
-	for i := range keys {
-		buf = binary.BigEndian.AppendUint32(buf, keyOffset)
-		buf = binary.BigEndian.AppendUint32(buf, valOffset)
-		keyOffset += uint32(len(encodedKeys[i]))
+	for i, k := range keys {
+		buf = appendUintN(buf, uint32(dict[k]), keyIdxW)
+		buf = appendUintN(buf, valOffset, valOffW)
 		valOffset += uint32(len(encodedVals[i]))
-	}
-
-	// Write key data.
-	for _, ek := range encodedKeys {
-		buf = append(buf, ek...)
 	}
 
 	// Write value data.
@@ -254,13 +387,43 @@ func encodeObject(buf []byte, obj map[string]any) ([]byte, error) {
 	return buf, nil
 }
 
+// --- Decode ---
+
+// readDictHeader reads the key dictionary from the header.
+// Returns the dictionary keys, the body start position, and any error.
+func readDictHeader(b []byte) ([]string, int, error) {
+	if len(b) < 2 {
+		return nil, 0, fmt.Errorf("unexpected end of data for dictionary header")
+	}
+	keyCount := int(binary.BigEndian.Uint16(b[0:2]))
+	pos := 2
+	dict := make([]string, keyCount)
+	for i := 0; i < keyCount; i++ {
+		val, newPos, err := decodeValue(b, pos, nil)
+		if err != nil {
+			return nil, 0, fmt.Errorf("invalid dictionary entry: %w", err)
+		}
+		s, ok := val.(string)
+		if !ok {
+			return nil, 0, fmt.Errorf("dictionary entry must be string, got %T", val)
+		}
+		dict[i] = s
+		pos = newPos
+	}
+	return dict, pos, nil
+}
+
 // Decode deserializes the custom JSONB binary format into a Go value.
 func Decode(b []byte) (any, error) {
-	val, _, err := decodeValue(b, 0)
+	dict, bodyPos, err := readDictHeader(b)
+	if err != nil {
+		return nil, err
+	}
+	val, _, err := decodeValue(b, bodyPos, dict)
 	return val, err
 }
 
-func decodeValue(b []byte, pos int) (any, int, error) {
+func decodeValue(b []byte, pos int, dict []string) (any, int, error) {
 	if pos >= len(b) {
 		return nil, pos, fmt.Errorf("unexpected end of data")
 	}
@@ -276,11 +439,28 @@ func decodeValue(b []byte, pos int) (any, int, error) {
 		v := b[pos] != 0
 		return v, pos + 1, nil
 	case TagInt:
-		if pos+8 > len(b) {
-			return nil, pos, fmt.Errorf("unexpected end of data for int")
+		if pos >= len(b) {
+			return nil, pos, fmt.Errorf("unexpected end of data for int width")
 		}
-		v := int64(binary.BigEndian.Uint64(b[pos : pos+8]))
-		return v, pos + 8, nil
+		width := int(b[pos])
+		pos++
+		if pos+width > len(b) {
+			return nil, pos, fmt.Errorf("unexpected end of data for int value")
+		}
+		var v int64
+		switch width {
+		case 1:
+			v = int64(b[pos])
+		case 2:
+			v = int64(binary.BigEndian.Uint16(b[pos : pos+2]))
+		case 4:
+			v = int64(binary.BigEndian.Uint32(b[pos : pos+4]))
+		case 8:
+			v = int64(binary.BigEndian.Uint64(b[pos : pos+8]))
+		default:
+			return nil, pos, fmt.Errorf("invalid int width: %d", width)
+		}
+		return v, pos + width, nil
 	case TagFloat:
 		if pos+8 > len(b) {
 			return nil, pos, fmt.Errorf("unexpected end of data for float")
@@ -288,20 +468,32 @@ func decodeValue(b []byte, pos int) (any, int, error) {
 		v := math.Float64frombits(binary.BigEndian.Uint64(b[pos : pos+8]))
 		return v, pos + 8, nil
 	case TagString:
-		if pos+4 > len(b) {
+		if pos >= len(b) {
 			return nil, pos, fmt.Errorf("unexpected end of data for string length")
 		}
-		length := int(binary.BigEndian.Uint32(b[pos : pos+4]))
-		pos += 4
+		var length int
+		if b[pos]&0x80 == 0 {
+			// Short string: 1-byte length (0-127)
+			length = int(b[pos])
+			pos++
+		} else {
+			// Long string: marker 0x80 + 4-byte length
+			pos++
+			if pos+4 > len(b) {
+				return nil, pos, fmt.Errorf("unexpected end of data for long string length")
+			}
+			length = int(binary.BigEndian.Uint32(b[pos : pos+4]))
+			pos += 4
+		}
 		if pos+length > len(b) {
 			return nil, pos, fmt.Errorf("unexpected end of data for string body")
 		}
 		v := string(b[pos : pos+length])
 		return v, pos + length, nil
 	case TagArray:
-		return decodeArray(b, pos)
+		return decodeArray(b, pos, dict)
 	case TagObject:
-		return decodeObject(b, pos)
+		return decodeObject(b, pos, dict)
 	case TagIntArray:
 		return decodeIntArray(b, pos)
 	case TagFloatArray:
@@ -311,7 +503,7 @@ func decodeValue(b []byte, pos int) (any, int, error) {
 	}
 }
 
-func decodeArray(b []byte, pos int) (any, int, error) {
+func decodeArray(b []byte, pos int, dict []string) (any, int, error) {
 	if pos+4 > len(b) {
 		return nil, pos, fmt.Errorf("unexpected end of data for array count")
 	}
@@ -319,7 +511,6 @@ func decodeArray(b []byte, pos int) (any, int, error) {
 	pos += 4
 
 	if count == 0 {
-		// Skip offset table (empty), data section starts immediately.
 		return []any{}, pos, nil
 	}
 
@@ -338,12 +529,11 @@ func decodeArray(b []byte, pos int) (any, int, error) {
 	dataStart := pos
 	result := make([]any, count)
 	for i := 0; i < count; i++ {
-		val, newPos, err := decodeValue(b, dataStart+int(offsets[i]))
+		val, newPos, err := decodeValue(b, dataStart+int(offsets[i]), dict)
 		if err != nil {
 			return nil, newPos, err
 		}
 		result[i] = val
-		// Track the furthest position read.
 		if newPos > pos {
 			pos = newPos
 		}
@@ -414,63 +604,59 @@ func decodeFloatArray(b []byte, pos int) (any, int, error) {
 	return result, pos + dataSize, nil
 }
 
-func decodeObject(b []byte, pos int) (any, int, error) {
-	if pos+4 > len(b) {
+// decodeObject decodes an object with dictionary key references and adaptive-width entry table.
+//
+// Format:
+//
+//	[count: uint16][keyIdxWidth: uint8][valOffWidth: uint8]
+//	[entry table: (keyIdx: keyIdxWidth, valOff: valOffWidth) × count]
+//	[value data]
+func decodeObject(b []byte, pos int, dict []string) (any, int, error) {
+	if pos+2 > len(b) {
 		return nil, pos, fmt.Errorf("unexpected end of data for object count")
 	}
-	count := int(binary.BigEndian.Uint32(b[pos : pos+4]))
-	pos += 4
+	count := int(binary.BigEndian.Uint16(b[pos : pos+2]))
+	pos += 2
 
 	if count == 0 {
 		return map[string]any{}, pos, nil
 	}
 
-	// Read entry table: [keyOffset, valOffset] per entry, each uint32.
-	entryTableSize := count * 8
+	if pos+2 > len(b) {
+		return nil, pos, fmt.Errorf("unexpected end of data for object widths")
+	}
+	keyIdxW := uint8(b[pos])
+	valOffW := uint8(b[pos+1])
+	pos += 2
+
+	entryWidth := int(keyIdxW) + int(valOffW)
+	entryTableSize := count * entryWidth
 	if pos+entryTableSize > len(b) {
 		return nil, pos, fmt.Errorf("unexpected end of data for object entry table")
 	}
-	keyOffsets := make([]uint32, count)
+
+	keyIndices := make([]uint32, count)
 	valOffsets := make([]uint32, count)
+	epos := pos
 	for i := 0; i < count; i++ {
-		keyOffsets[i] = binary.BigEndian.Uint32(b[pos+i*8 : pos+i*8+4])
-		valOffsets[i] = binary.BigEndian.Uint32(b[pos+i*8+4 : pos+i*8+8])
+		keyIndices[i], epos = readUintN(b, epos, keyIdxW)
+		valOffsets[i], epos = readUintN(b, epos, valOffW)
 	}
 	pos += entryTableSize
 
-	// Compute key data section start and total key data size.
-	// Key data size = last key offset + size of last key entry.
-	// We need to figure out the total key data size to find where value data starts.
-	// We can determine key section end by decoding all keys.
-	keyDataStart := pos
-
-	// Decode all keys to find key section size.
-	keys := make([]string, count)
-	maxKeyEnd := keyDataStart
-	for i := 0; i < count; i++ {
-		val, newPos, err := decodeValue(b, keyDataStart+int(keyOffsets[i]))
-		if err != nil {
-			return nil, newPos, err
-		}
-		s, ok := val.(string)
-		if !ok {
-			return nil, newPos, fmt.Errorf("object key must be string, got %T", val)
-		}
-		keys[i] = s
-		if newPos > maxKeyEnd {
-			maxKeyEnd = newPos
-		}
-	}
-
-	valDataStart := maxKeyEnd
+	valDataStart := pos
 	result := make(map[string]any, count)
 	furthest := valDataStart
 	for i := 0; i < count; i++ {
-		val, newPos, err := decodeValue(b, valDataStart+int(valOffsets[i]))
+		if int(keyIndices[i]) >= len(dict) {
+			return nil, pos, fmt.Errorf("key index %d out of range (dict size %d)", keyIndices[i], len(dict))
+		}
+		key := dict[keyIndices[i]]
+		val, newPos, err := decodeValue(b, valDataStart+int(valOffsets[i]), dict)
 		if err != nil {
 			return nil, newPos, err
 		}
-		result[keys[i]] = val
+		result[key] = val
 		if newPos > furthest {
 			furthest = newPos
 		}
@@ -478,122 +664,120 @@ func decodeObject(b []byte, pos int) (any, int, error) {
 	return result, furthest, nil
 }
 
+// --- Partial access ---
+
 // LookupKey performs a binary search on an encoded object to find the value for the given key
 // without fully deserializing the entire object.
+// The binary data must start with the dictionary header.
 func LookupKey(b []byte, key string) (any, bool, error) {
-	if len(b) == 0 || b[0] != TagObject {
-		return nil, false, fmt.Errorf("not an object")
-	}
-	pos := 1
-	if pos+4 > len(b) {
-		return nil, false, fmt.Errorf("unexpected end of data")
-	}
-	count := int(binary.BigEndian.Uint32(b[pos : pos+4]))
-	pos += 4
-
-	if count == 0 {
-		return nil, false, nil
-	}
-
-	// Read entry table.
-	entryTableStart := pos
-	entryTableSize := count * 8
-	if pos+entryTableSize > len(b) {
-		return nil, false, fmt.Errorf("unexpected end of data for entry table")
-	}
-	pos += entryTableSize
-	keyDataStart := pos
-
-	// Compute key data section size by finding the end of the last key.
-	// We need to figure out where value data starts.
-	// The last key offset + its encoded size = end of key data section.
-	// To avoid scanning all keys, let's find the max key end by reading the last key offset.
-	lastKeyOffset := int(binary.BigEndian.Uint32(b[entryTableStart+(count-1)*8 : entryTableStart+(count-1)*8+4]))
-	_, lastKeyEnd, err := decodeValue(b, keyDataStart+lastKeyOffset)
+	dict, bodyPos, err := readDictHeader(b)
 	if err != nil {
 		return nil, false, err
 	}
-	valDataStart := lastKeyEnd
 
-	// Binary search on sorted keys.
-	lo, hi := 0, count-1
+	// Binary search dictionary for the key.
+	targetIdx := -1
+	lo, hi := 0, len(dict)-1
 	for lo <= hi {
 		mid := (lo + hi) / 2
-		keyOff := int(binary.BigEndian.Uint32(b[entryTableStart+mid*8 : entryTableStart+mid*8+4]))
-		midKey, _, err := decodeValue(b, keyDataStart+keyOff)
-		if err != nil {
-			return nil, false, err
-		}
-		midKeyStr := midKey.(string)
-		cmp := strings.Compare(midKeyStr, key)
+		cmp := strings.Compare(dict[mid], key)
 		if cmp == 0 {
-			// Found. Decode value.
-			valOff := int(binary.BigEndian.Uint32(b[entryTableStart+mid*8+4 : entryTableStart+mid*8+8]))
-			val, _, err := decodeValue(b, valDataStart+valOff)
-			if err != nil {
-				return nil, false, err
-			}
-			return val, true, nil
+			targetIdx = mid
+			break
 		} else if cmp < 0 {
 			lo = mid + 1
 		} else {
 			hi = mid - 1
 		}
 	}
-	return nil, false, nil
+	if targetIdx < 0 {
+		return nil, false, nil // key not in dictionary at all
+	}
+
+	// Check the body is an object.
+	if bodyPos >= len(b) || b[bodyPos] != TagObject {
+		return nil, false, fmt.Errorf("not an object")
+	}
+	pos := bodyPos + 1
+
+	if pos+4 > len(b) {
+		return nil, false, fmt.Errorf("unexpected end of data")
+	}
+	count := int(binary.BigEndian.Uint16(b[pos : pos+2]))
+	pos += 2
+	keyIdxW := b[pos]
+	valOffW := b[pos+1]
+	pos += 2
+
+	if count == 0 {
+		return nil, false, nil
+	}
+
+	// Binary search entry table for targetIdx.
+	// Entry table: [keyIndex: keyIdxW, valOffset: valOffW] × count.
+	entrySize := int(keyIdxW) + int(valOffW)
+	entryTableStart := pos
+	lo, hi = 0, count-1
+	for lo <= hi {
+		mid := (lo + hi) / 2
+		entryPos := entryTableStart + mid*entrySize
+		midKeyIdx, _ := readUintN(b, entryPos, keyIdxW)
+		if int(midKeyIdx) == targetIdx {
+			valOff, _ := readUintN(b, entryPos+int(keyIdxW), valOffW)
+			valDataStart := entryTableStart + count*entrySize
+			val, _, err := decodeValue(b, valDataStart+int(valOff), dict)
+			if err != nil {
+				return nil, false, err
+			}
+			return val, true, nil
+		} else if int(midKeyIdx) < targetIdx {
+			lo = mid + 1
+		} else {
+			hi = mid - 1
+		}
+	}
+	return nil, false, nil // key in dictionary but not in this object
 }
 
 // LookupIndex retrieves the element at the given index from an encoded array
 // without fully deserializing the entire array.
+// The binary data must start with the dictionary header.
 func LookupIndex(b []byte, idx int) (any, bool, error) {
-	if len(b) == 0 {
+	dict, bodyPos, err := readDictHeader(b)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if bodyPos >= len(b) {
 		return nil, false, fmt.Errorf("not an array")
 	}
 
-	switch b[0] {
+	tag := b[bodyPos]
+	switch tag {
 	case TagIntArray:
-		return lookupIntArrayIndex(b, idx)
+		return lookupIntArrayIndex(b, bodyPos, idx)
 	case TagFloatArray:
-		return lookupFloatArrayIndex(b, idx)
+		return lookupFloatArrayIndex(b, bodyPos, idx)
 	case TagArray:
-		// Generic array with offset table.
-		pos := 1
-		if pos+4 > len(b) {
-			return nil, false, fmt.Errorf("unexpected end of data")
-		}
-		count := int(binary.BigEndian.Uint32(b[pos : pos+4]))
-		pos += 4
-
-		if idx < 0 || idx >= count {
-			return nil, false, nil
-		}
-
-		offsetPos := pos + idx*4
-		if offsetPos+4 > len(b) {
-			return nil, false, fmt.Errorf("unexpected end of data for offset")
-		}
-		offset := int(binary.BigEndian.Uint32(b[offsetPos : offsetPos+4]))
-		dataStart := pos + count*4
-		val, _, err := decodeValue(b, dataStart+offset)
-		if err != nil {
-			return nil, false, err
-		}
-		return val, true, nil
+		return lookupGenericArrayIndex(b, bodyPos, idx, dict)
 	default:
 		return nil, false, fmt.Errorf("not an array")
 	}
 }
 
-func lookupIntArrayIndex(b []byte, idx int) (any, bool, error) {
-	if len(b) < 6 { // tag + count + width
+func lookupIntArrayIndex(b []byte, start int, idx int) (any, bool, error) {
+	pos := start + 1 // skip tag
+	if pos+5 > len(b) {
 		return nil, false, fmt.Errorf("unexpected end of data")
 	}
-	count := int(binary.BigEndian.Uint32(b[1:5]))
+	count := int(binary.BigEndian.Uint32(b[pos : pos+4]))
+	pos += 4
 	if idx < 0 || idx >= count {
 		return nil, false, nil
 	}
-	width := int(b[5])
-	off := 6 + idx*width
+	width := int(b[pos])
+	pos++
+	off := pos + idx*width
 	if off+width > len(b) {
 		return nil, false, fmt.Errorf("unexpected end of data")
 	}
@@ -611,19 +795,44 @@ func lookupIntArrayIndex(b []byte, idx int) (any, bool, error) {
 	}
 }
 
-func lookupFloatArrayIndex(b []byte, idx int) (any, bool, error) {
-	if len(b) < 5 { // tag + count
+func lookupFloatArrayIndex(b []byte, start int, idx int) (any, bool, error) {
+	pos := start + 1 // skip tag
+	if pos+4 > len(b) {
 		return nil, false, fmt.Errorf("unexpected end of data")
 	}
-	count := int(binary.BigEndian.Uint32(b[1:5]))
+	count := int(binary.BigEndian.Uint32(b[pos : pos+4]))
 	if idx < 0 || idx >= count {
 		return nil, false, nil
 	}
-	off := 5 + idx*8
+	pos += 4
+	off := pos + idx*8
 	if off+8 > len(b) {
 		return nil, false, fmt.Errorf("unexpected end of data")
 	}
 	return math.Float64frombits(binary.BigEndian.Uint64(b[off : off+8])), true, nil
+}
+
+func lookupGenericArrayIndex(b []byte, start int, idx int, dict []string) (any, bool, error) {
+	pos := start + 1 // skip tag
+	if pos+4 > len(b) {
+		return nil, false, fmt.Errorf("unexpected end of data")
+	}
+	count := int(binary.BigEndian.Uint32(b[pos : pos+4]))
+	pos += 4
+	if idx < 0 || idx >= count {
+		return nil, false, nil
+	}
+	offsetPos := pos + idx*4
+	if offsetPos+4 > len(b) {
+		return nil, false, fmt.Errorf("unexpected end of data for offset")
+	}
+	offset := int(binary.BigEndian.Uint32(b[offsetPos : offsetPos+4]))
+	dataStart := pos + count*4
+	val, _, err := decodeValue(b, dataStart+offset, dict)
+	if err != nil {
+		return nil, false, err
+	}
+	return val, true, nil
 }
 
 // KeyExists checks whether a key exists in an encoded object using binary search.
@@ -631,6 +840,8 @@ func KeyExists(b []byte, key string) bool {
 	_, found, err := LookupKey(b, key)
 	return err == nil && found
 }
+
+// --- JSON conversion ---
 
 // FromJSON converts a JSON string to the custom JSONB binary format.
 func FromJSON(jsonStr string) ([]byte, error) {
@@ -649,7 +860,6 @@ func convertJSONNumbers(val any) any {
 	switch v := val.(type) {
 	case json.Number:
 		if i, err := v.Int64(); err == nil {
-			// Check if it's actually a float (has decimal point or exponent).
 			s := v.String()
 			if !strings.Contains(s, ".") && !strings.Contains(s, "e") && !strings.Contains(s, "E") {
 				return i
@@ -678,7 +888,6 @@ func ToJSON(b []byte) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// Convert int64 to json.Number for proper serialization, then marshal.
 	out, err := json.Marshal(convertForJSON(val))
 	if err != nil {
 		return "", err
@@ -686,12 +895,9 @@ func ToJSON(b []byte) (string, error) {
 	return string(out), nil
 }
 
-// convertForJSON converts int64 values to float64 for JSON marshaling compatibility,
-// since json.Marshal produces float64 by default for numbers.
 func convertForJSON(val any) any {
 	switch v := val.(type) {
 	case int64:
-		// Keep as int64; json.Marshal handles it correctly.
 		return v
 	case map[string]any:
 		m := make(map[string]any, len(v))
@@ -708,4 +914,14 @@ func convertForJSON(val any) any {
 	default:
 		return val
 	}
+}
+
+// BodyTag returns the type tag of the body (after the dictionary header).
+// Useful for testing to check the internal encoding format.
+func BodyTag(b []byte) byte {
+	_, bodyPos, err := readDictHeader(b)
+	if err != nil || bodyPos >= len(b) {
+		return TagInvalid
+	}
+	return b[bodyPos]
 }

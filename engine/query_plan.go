@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/walf443/oresql/ast"
+	"github.com/walf443/oresql/jsonb"
 	"github.com/walf443/oresql/storage"
 )
 
@@ -481,6 +482,13 @@ func (e *Executor) tryGinBitmapLookup(where ast.Expr, info *TableInfo) (*storage
 		return storage.RoaringFromInt64Slice(keys), ginIdx.GetInfo().Name, true
 	}
 
+	// Handle JSON_VALUE(col, '$.path') = 'value' with jsonb_path_ops GIN index
+	if binExpr, ok := where.(*ast.BinaryExpr); ok && binExpr.Op == "=" {
+		if rb, idxName, ok := e.tryGinJsonbPathOps(binExpr, info); ok {
+			return rb, idxName, true
+		}
+	}
+
 	// Handle equality (col = 'value') with bigram GIN index
 	if binExpr, ok := where.(*ast.BinaryExpr); ok && binExpr.Op == "=" {
 		var ident *ast.IdentExpr
@@ -546,6 +554,123 @@ func (e *Executor) tryGinBitmapLookup(where ast.Expr, info *TableInfo) (*storage
 	}
 
 	return nil, "", false
+}
+
+// tryGinJsonbPathOps checks if a binary expression matches the pattern
+// JSON_VALUE(col, '$.path') = 'value' and uses a jsonb_path_ops GIN index.
+func (e *Executor) tryGinJsonbPathOps(binExpr *ast.BinaryExpr, info *storage.TableInfo) (*storage.RoaringBitmap, string, bool) {
+	var call *ast.CallExpr
+	var litValue string
+	var litInt int64
+	var isInt bool
+
+	// Match JSON_VALUE(col, path) = literal or literal = JSON_VALUE(col, path)
+	if c, ok := binExpr.Left.(*ast.CallExpr); ok && strings.ToUpper(c.Name) == "JSON_VALUE" {
+		call = c
+		switch v := binExpr.Right.(type) {
+		case *ast.StringLitExpr:
+			litValue = v.Value
+		case *ast.IntLitExpr:
+			litInt = v.Value
+			isInt = true
+		default:
+			return nil, "", false
+		}
+	} else if c, ok := binExpr.Right.(*ast.CallExpr); ok && strings.ToUpper(c.Name) == "JSON_VALUE" {
+		call = c
+		switch v := binExpr.Left.(type) {
+		case *ast.StringLitExpr:
+			litValue = v.Value
+		case *ast.IntLitExpr:
+			litInt = v.Value
+			isInt = true
+		default:
+			return nil, "", false
+		}
+	} else {
+		return nil, "", false
+	}
+
+	// JSON_VALUE requires exactly 2 args: column and path
+	if len(call.Args) != 2 {
+		return nil, "", false
+	}
+	ident, ok := call.Args[0].(*ast.IdentExpr)
+	if !ok {
+		return nil, "", false
+	}
+	pathLit, ok := call.Args[1].(*ast.StringLitExpr)
+	if !ok {
+		return nil, "", false
+	}
+
+	col, err := info.FindColumn(ident.Name)
+	if err != nil {
+		return nil, "", false
+	}
+	ginIdx := e.db.storage.LookupGinIndex(info.Name, col.Index)
+	if ginIdx == nil || ginIdx.GetInfo().Tokenizer != "jsonb_path_ops" {
+		return nil, "", false
+	}
+
+	// Build a minimal JSON document for the query pattern, then tokenize it
+	// to get the hash token. E.g., path "$.status" + value "active"
+	// → {"status": "active"} → tokenize → hash token
+	token, err := jsonbPathOpsToken(pathLit.Value, litValue, litInt, isInt)
+	if err != nil {
+		return nil, "", false
+	}
+
+	rb := ginIdx.MatchTokenBitmap(token)
+	if rb == nil {
+		rb = storage.NewRoaringBitmap()
+	}
+	return rb, ginIdx.GetInfo().Name, true
+}
+
+// jsonbPathOpsToken builds a JSONB document from a JSON path and value,
+// then tokenizes it to produce the GIN lookup token.
+func jsonbPathOpsToken(path string, strVal string, intVal int64, isInt bool) (string, error) {
+	// Parse path: "$", "$.key", "$.key1.key2", etc.
+	pathStr := strings.TrimPrefix(path, "$")
+	pathStr = strings.TrimPrefix(pathStr, ".")
+	if pathStr == "" {
+		return "", nil
+	}
+	keys := strings.Split(pathStr, ".")
+
+	// Build nested JSON object from inside out
+	var val any
+	if isInt {
+		val = intVal
+	} else {
+		val = strVal
+	}
+
+	obj := make(map[string]any)
+	current := obj
+	for i, key := range keys {
+		if i == len(keys)-1 {
+			current[key] = val
+		} else {
+			child := make(map[string]any)
+			current[key] = child
+			current = child
+		}
+	}
+
+	b, err := jsonb.Encode(obj)
+	if err != nil {
+		return "", err
+	}
+	tokens, err := jsonb.PathOpsTokenize(b)
+	if err != nil {
+		return "", err
+	}
+	if len(tokens) != 1 {
+		return "", nil
+	}
+	return tokens[0], nil
 }
 
 // longestLiteralSegment extracts the longest contiguous run of non-wildcard

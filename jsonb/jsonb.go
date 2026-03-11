@@ -978,7 +978,7 @@ func LookupKey(b []byte, key string) (any, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	
+
 	// Binary search dictionary for the key.
 	targetIdx := -1
 	lo, hi := 0, len(dict)-1

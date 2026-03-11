@@ -744,6 +744,69 @@ func TestGinIndexBigramIN(t *testing.T) {
 	}
 }
 
+func TestGinIndexJSONBPathOps(t *testing.T) {
+	exec := setupGinTestExecutor(t, "memory")
+	run(t, exec, "CREATE TABLE docs (id INT PRIMARY KEY, data JSONB)")
+	run(t, exec, `INSERT INTO docs VALUES (1, '{"status": "active", "role": "admin"}')`)
+	run(t, exec, `INSERT INTO docs VALUES (2, '{"status": "inactive", "role": "user"}')`)
+	run(t, exec, `INSERT INTO docs VALUES (3, '{"status": "active", "role": "user"}')`)
+	run(t, exec, "CREATE INDEX idx_data_gin ON docs(data) USING GIN")
+
+	// JSON_VALUE equality should use GIN index
+	result := run(t, exec, `SELECT id FROM docs WHERE JSON_VALUE(data, '$.status') = 'active'`)
+	require.Len(t, result.Rows, 2)
+	assert.Equal(t, int64(1), result.Rows[0][0])
+	assert.Equal(t, int64(3), result.Rows[1][0])
+}
+
+func TestGinIndexJSONBPathOpsExplain(t *testing.T) {
+	exec := setupGinTestExecutor(t, "memory")
+	run(t, exec, "CREATE TABLE docs (id INT PRIMARY KEY, data JSONB)")
+	run(t, exec, `INSERT INTO docs VALUES (1, '{"status": "active"}')`)
+	run(t, exec, "CREATE INDEX idx_data_gin ON docs(data) USING GIN")
+
+	assertExplain(t, exec, `SELECT id FROM docs WHERE JSON_VALUE(data, '$.status') = 'active'`, []planRow{
+		{Table: "docs", Type: "fulltext", Key: "idx_data_gin"},
+	})
+}
+
+func TestGinIndexJSONBPathOpsInsertMaintenance(t *testing.T) {
+	exec := setupGinTestExecutor(t, "memory")
+	run(t, exec, "CREATE TABLE docs (id INT PRIMARY KEY, data JSONB)")
+	run(t, exec, "CREATE INDEX idx_data_gin ON docs(data) USING GIN")
+	run(t, exec, `INSERT INTO docs VALUES (1, '{"status": "active"}')`)
+	run(t, exec, `INSERT INTO docs VALUES (2, '{"status": "pending"}')`)
+
+	result := run(t, exec, `SELECT id FROM docs WHERE JSON_VALUE(data, '$.status') = 'active'`)
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, int64(1), result.Rows[0][0])
+}
+
+func TestGinIndexJSONBPathOpsDeleteMaintenance(t *testing.T) {
+	exec := setupGinTestExecutor(t, "memory")
+	run(t, exec, "CREATE TABLE docs (id INT PRIMARY KEY, data JSONB)")
+	run(t, exec, `INSERT INTO docs VALUES (1, '{"status": "active"}')`)
+	run(t, exec, `INSERT INTO docs VALUES (2, '{"status": "active"}')`)
+	run(t, exec, "CREATE INDEX idx_data_gin ON docs(data) USING GIN")
+
+	run(t, exec, "DELETE FROM docs WHERE id = 1")
+	result := run(t, exec, `SELECT id FROM docs WHERE JSON_VALUE(data, '$.status') = 'active'`)
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, int64(2), result.Rows[0][0])
+}
+
+func TestGinIndexJSONBPathOpsNestedPath(t *testing.T) {
+	exec := setupGinTestExecutor(t, "memory")
+	run(t, exec, "CREATE TABLE docs (id INT PRIMARY KEY, data JSONB)")
+	run(t, exec, `INSERT INTO docs VALUES (1, '{"user": {"name": "alice", "role": "admin"}}')`)
+	run(t, exec, `INSERT INTO docs VALUES (2, '{"user": {"name": "bob", "role": "user"}}')`)
+	run(t, exec, "CREATE INDEX idx_data_gin ON docs(data) USING GIN")
+
+	result := run(t, exec, `SELECT id FROM docs WHERE JSON_VALUE(data, '$.user.name') = 'alice'`)
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, int64(1), result.Rows[0][0])
+}
+
 func TestGinIndexStreamingLimit(t *testing.T) {
 	for _, st := range []string{"memory", "disk"} {
 		t.Run(st, func(t *testing.T) {

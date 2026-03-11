@@ -5,6 +5,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/walf443/oresql/jsonb"
 	"github.com/walf443/oresql/storage"
 )
 
@@ -124,15 +125,12 @@ func (gi *GinIndex) MatchPrefix(prefix string) []int64 {
 	return keys
 }
 
-// AddRow indexes all tokens from the TEXT value in the specified column.
+// AddRow indexes all tokens from the value in the specified column.
 func (gi *GinIndex) AddRow(key int64, row storage.Row) {
 	colIdx := gi.Info.ColumnIdxs[0]
 	val := row[colIdx]
-	text, ok := val.(string)
-	if !ok {
-		return // NULL or non-string values are not indexed
-	}
-	for _, tok := range gi.tokenizeText(text) {
+	tokens := gi.tokenizeValue(val)
+	for _, tok := range tokens {
 		if gi.tokens[tok] == nil {
 			gi.tokens[tok] = make(map[int64]struct{})
 		}
@@ -144,11 +142,8 @@ func (gi *GinIndex) AddRow(key int64, row storage.Row) {
 func (gi *GinIndex) RemoveRow(key int64, row storage.Row) {
 	colIdx := gi.Info.ColumnIdxs[0]
 	val := row[colIdx]
-	text, ok := val.(string)
-	if !ok {
-		return
-	}
-	for _, tok := range gi.tokenizeText(text) {
+	tokens := gi.tokenizeValue(val)
+	for _, tok := range tokens {
 		if keySet, exists := gi.tokens[tok]; exists {
 			delete(keySet, key)
 			if len(keySet) == 0 {
@@ -158,12 +153,30 @@ func (gi *GinIndex) RemoveRow(key int64, row storage.Row) {
 	}
 }
 
-// tokenizeText dispatches to the appropriate tokenizer based on the index configuration.
-func (gi *GinIndex) tokenizeText(text string) []string {
+// tokenizeValue dispatches to the appropriate tokenizer based on the index configuration.
+func (gi *GinIndex) tokenizeValue(val any) []string {
 	switch gi.Info.Tokenizer {
+	case "jsonb_path_ops":
+		b, ok := val.([]byte)
+		if !ok {
+			return nil
+		}
+		tokens, err := jsonb.PathOpsTokenize(b)
+		if err != nil {
+			return nil
+		}
+		return tokens
 	case "bigram":
+		text, ok := val.(string)
+		if !ok {
+			return nil
+		}
 		return bigramTokenize(text)
 	default:
+		text, ok := val.(string)
+		if !ok {
+			return nil
+		}
 		return tokenize(text)
 	}
 }

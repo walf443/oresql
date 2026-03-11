@@ -108,11 +108,11 @@ func (e *Executor) executeCreateIndex(stmt *ast.CreateIndexStmt) (*Result, error
 	indexType := "BTREE"
 	if stmt.IndexMethod == "GIN" {
 		indexType = "GIN"
-		// GIN indexes only support TEXT columns
+		// GIN indexes support TEXT and JSONB columns
 		for _, name := range stmt.ColumnNames {
 			col, _ := info.FindColumn(name)
-			if col.DataType != "TEXT" {
-				return nil, fmt.Errorf("GIN index only supports TEXT columns, column %q is %s", name, col.DataType)
+			if col.DataType != "TEXT" && col.DataType != "JSONB" {
+				return nil, fmt.Errorf("GIN index only supports TEXT or JSONB columns, column %q is %s", name, col.DataType)
 			}
 		}
 		if len(stmt.ColumnNames) != 1 {
@@ -121,7 +121,13 @@ func (e *Executor) executeCreateIndex(stmt *ast.CreateIndexStmt) (*Result, error
 	}
 	tokenizer := stmt.Tokenizer
 	if indexType == "GIN" && tokenizer == "" {
-		tokenizer = "word"
+		// Auto-select tokenizer based on column type
+		col, _ := info.FindColumn(stmt.ColumnNames[0])
+		if col.DataType == "JSONB" {
+			tokenizer = "jsonb_path_ops"
+		} else {
+			tokenizer = "word"
+		}
 	}
 	idxInfo := &IndexInfo{
 		Name:        stmt.IndexName,

@@ -171,197 +171,177 @@ func resolveGroupByColumnNames(columns []ast.Expr, eval ExprEvaluator) ([]string
 
 // evalAggregate evaluates a single aggregate function call against a set of rows.
 func evalAggregate(call *ast.CallExpr, rows []Row, info *TableInfo) (Value, string, error) {
+	colName := formatCallExpr(call)
 	switch call.Name {
 	case "COUNT":
-		colName := formatCallExpr(call)
-		// COUNT(DISTINCT col) counts unique non-NULL values
-		if call.Distinct {
-			if len(call.Args) != 1 {
-				return nil, "", fmt.Errorf("COUNT(DISTINCT ...) expects 1 argument, got %d", len(call.Args))
-			}
-			ident, ok := call.Args[0].(*ast.IdentExpr)
-			if !ok {
-				return nil, "", fmt.Errorf("COUNT(DISTINCT ...) expects column name, got %T", call.Args[0])
-			}
-			col, err := info.FindColumn(ident.Name)
-			if err != nil {
-				return nil, "", err
-			}
-			seen := map[interface{}]bool{}
-			for _, row := range rows {
-				v := row[col.Index]
-				if v == nil {
-					continue
-				}
-				seen[v] = true
-			}
-			return int64(len(seen)), colName, nil
-		}
-		// COUNT(*) counts all rows; COUNT(literal) counts all rows; COUNT(column) excludes NULLs
-		if len(call.Args) == 1 {
-			if _, ok := call.Args[0].(*ast.StarExpr); !ok {
-				// Literal values (e.g. COUNT(1)) count all rows like COUNT(*)
-				if _, ok := call.Args[0].(*ast.IntLitExpr); ok {
-					return int64(len(rows)), colName, nil
-				}
-				if _, ok := call.Args[0].(*ast.StringLitExpr); ok {
-					return int64(len(rows)), colName, nil
-				}
-				ident, ok := call.Args[0].(*ast.IdentExpr)
-				if !ok {
-					return nil, "", fmt.Errorf("COUNT expects * or column name, got %T", call.Args[0])
-				}
-				col, err := info.FindColumn(ident.Name)
-				if err != nil {
-					return nil, "", err
-				}
-				count := int64(0)
-				for _, row := range rows {
-					if row[col.Index] != nil {
-						count++
-					}
-				}
-				return count, colName, nil
-			}
-		}
-		return int64(len(rows)), colName, nil
+		val, err := evalAggCount(call, rows, info)
+		return val, colName, err
 	case "SUM":
-		colName := formatCallExpr(call)
-		if len(call.Args) != 1 {
-			return nil, "", fmt.Errorf("SUM expects 1 argument, got %d", len(call.Args))
-		}
-		if _, ok := call.Args[0].(*ast.StarExpr); ok {
-			return nil, "", fmt.Errorf("SUM(*) is not supported")
-		}
-		ident, ok := call.Args[0].(*ast.IdentExpr)
-		if !ok {
-			return nil, "", fmt.Errorf("SUM expects column name, got %T", call.Args[0])
-		}
-		col, err := info.FindColumn(ident.Name)
-		if err != nil {
-			return nil, "", err
-		}
-		var sumInt int64
-		var sumFloat float64
-		hasValue := false
-		isFloat := false
-		for _, row := range rows {
-			v := row[col.Index]
-			if v == nil {
-				continue
-			}
-			switch tv := v.(type) {
-			case int64:
-				sumInt += tv
-			case float64:
-				isFloat = true
-				sumFloat += tv
-			default:
-				return nil, "", fmt.Errorf("SUM requires numeric values, got %T", v)
-			}
-			hasValue = true
-		}
-		if !hasValue {
-			return nil, colName, nil
-		}
-		if isFloat {
-			return sumFloat + float64(sumInt), colName, nil
-		}
-		return sumInt, colName, nil
+		val, err := evalAggSum(call, rows, info)
+		return val, colName, err
 	case "AVG":
-		colName := formatCallExpr(call)
-		if len(call.Args) != 1 {
-			return nil, "", fmt.Errorf("AVG expects 1 argument, got %d", len(call.Args))
-		}
-		if _, ok := call.Args[0].(*ast.StarExpr); ok {
-			return nil, "", fmt.Errorf("AVG(*) is not supported")
-		}
-		ident, ok := call.Args[0].(*ast.IdentExpr)
-		if !ok {
-			return nil, "", fmt.Errorf("AVG expects column name, got %T", call.Args[0])
-		}
-		col, err := info.FindColumn(ident.Name)
-		if err != nil {
-			return nil, "", err
-		}
-		var sum float64
-		var count int64
-		for _, row := range rows {
-			v := row[col.Index]
-			if v == nil {
-				continue
-			}
-			switch tv := v.(type) {
-			case int64:
-				sum += float64(tv)
-			case float64:
-				sum += tv
-			default:
-				return nil, "", fmt.Errorf("AVG requires numeric values, got %T", v)
-			}
-			count++
-		}
-		if count == 0 {
-			return nil, colName, nil
-		}
-		return sum / float64(count), colName, nil
+		val, err := evalAggAvg(call, rows, info)
+		return val, colName, err
 	case "MIN":
-		colName := formatCallExpr(call)
-		if len(call.Args) != 1 {
-			return nil, "", fmt.Errorf("MIN expects 1 argument, got %d", len(call.Args))
-		}
-		if _, ok := call.Args[0].(*ast.StarExpr); ok {
-			return nil, "", fmt.Errorf("MIN(*) is not supported")
-		}
-		ident, ok := call.Args[0].(*ast.IdentExpr)
-		if !ok {
-			return nil, "", fmt.Errorf("MIN expects column name, got %T", call.Args[0])
-		}
-		col, err := info.FindColumn(ident.Name)
-		if err != nil {
-			return nil, "", err
-		}
-		var minVal Value
-		for _, row := range rows {
-			v := row[col.Index]
-			if v == nil {
-				continue
-			}
-			if minVal == nil || compareValues(v, minVal) < 0 {
-				minVal = v
-			}
-		}
-		return minVal, colName, nil
+		val, err := evalAggMinMax(call, rows, info, "MIN", func(a, b Value) bool { return compareValues(a, b) < 0 })
+		return val, colName, err
 	case "MAX":
-		colName := formatCallExpr(call)
-		if len(call.Args) != 1 {
-			return nil, "", fmt.Errorf("MAX expects 1 argument, got %d", len(call.Args))
-		}
-		if _, ok := call.Args[0].(*ast.StarExpr); ok {
-			return nil, "", fmt.Errorf("MAX(*) is not supported")
-		}
-		ident, ok := call.Args[0].(*ast.IdentExpr)
-		if !ok {
-			return nil, "", fmt.Errorf("MAX expects column name, got %T", call.Args[0])
-		}
-		col, err := info.FindColumn(ident.Name)
-		if err != nil {
-			return nil, "", err
-		}
-		var maxVal Value
-		for _, row := range rows {
-			v := row[col.Index]
-			if v == nil {
-				continue
-			}
-			if maxVal == nil || compareValues(v, maxVal) > 0 {
-				maxVal = v
-			}
-		}
-		return maxVal, colName, nil
+		val, err := evalAggMinMax(call, rows, info, "MAX", func(a, b Value) bool { return compareValues(a, b) > 0 })
+		return val, colName, err
 	default:
 		return nil, "", fmt.Errorf("unknown aggregate function: %s", call.Name)
 	}
+}
+
+// resolveAggColumn validates a single-column aggregate argument (rejects * and non-ident).
+func resolveAggColumn(call *ast.CallExpr, info *TableInfo, funcName string) (*ColumnInfo, error) {
+	if len(call.Args) != 1 {
+		return nil, fmt.Errorf("%s expects 1 argument, got %d", funcName, len(call.Args))
+	}
+	if _, ok := call.Args[0].(*ast.StarExpr); ok {
+		return nil, fmt.Errorf("%s(*) is not supported", funcName)
+	}
+	ident, ok := call.Args[0].(*ast.IdentExpr)
+	if !ok {
+		return nil, fmt.Errorf("%s expects column name, got %T", funcName, call.Args[0])
+	}
+	return info.FindColumn(ident.Name)
+}
+
+// evalAggCount evaluates COUNT(*), COUNT(col), COUNT(literal), COUNT(DISTINCT col).
+func evalAggCount(call *ast.CallExpr, rows []Row, info *TableInfo) (Value, error) {
+	if call.Distinct {
+		if len(call.Args) != 1 {
+			return nil, fmt.Errorf("COUNT(DISTINCT ...) expects 1 argument, got %d", len(call.Args))
+		}
+		ident, ok := call.Args[0].(*ast.IdentExpr)
+		if !ok {
+			return nil, fmt.Errorf("COUNT(DISTINCT ...) expects column name, got %T", call.Args[0])
+		}
+		col, err := info.FindColumn(ident.Name)
+		if err != nil {
+			return nil, err
+		}
+		seen := map[interface{}]bool{}
+		for _, row := range rows {
+			v := row[col.Index]
+			if v != nil {
+				seen[v] = true
+			}
+		}
+		return int64(len(seen)), nil
+	}
+	// COUNT(*) / COUNT(literal) counts all rows; COUNT(column) excludes NULLs
+	if len(call.Args) == 1 {
+		if _, ok := call.Args[0].(*ast.StarExpr); !ok {
+			if _, ok := call.Args[0].(*ast.IntLitExpr); ok {
+				return int64(len(rows)), nil
+			}
+			if _, ok := call.Args[0].(*ast.StringLitExpr); ok {
+				return int64(len(rows)), nil
+			}
+			ident, ok := call.Args[0].(*ast.IdentExpr)
+			if !ok {
+				return nil, fmt.Errorf("COUNT expects * or column name, got %T", call.Args[0])
+			}
+			col, err := info.FindColumn(ident.Name)
+			if err != nil {
+				return nil, err
+			}
+			count := int64(0)
+			for _, row := range rows {
+				if row[col.Index] != nil {
+					count++
+				}
+			}
+			return count, nil
+		}
+	}
+	return int64(len(rows)), nil
+}
+
+// evalAggSum evaluates SUM(col).
+func evalAggSum(call *ast.CallExpr, rows []Row, info *TableInfo) (Value, error) {
+	col, err := resolveAggColumn(call, info, "SUM")
+	if err != nil {
+		return nil, err
+	}
+	var sumInt int64
+	var sumFloat float64
+	hasValue := false
+	isFloat := false
+	for _, row := range rows {
+		v := row[col.Index]
+		if v == nil {
+			continue
+		}
+		switch tv := v.(type) {
+		case int64:
+			sumInt += tv
+		case float64:
+			isFloat = true
+			sumFloat += tv
+		default:
+			return nil, fmt.Errorf("SUM requires numeric values, got %T", v)
+		}
+		hasValue = true
+	}
+	if !hasValue {
+		return nil, nil
+	}
+	if isFloat {
+		return sumFloat + float64(sumInt), nil
+	}
+	return sumInt, nil
+}
+
+// evalAggAvg evaluates AVG(col).
+func evalAggAvg(call *ast.CallExpr, rows []Row, info *TableInfo) (Value, error) {
+	col, err := resolveAggColumn(call, info, "AVG")
+	if err != nil {
+		return nil, err
+	}
+	var sum float64
+	var count int64
+	for _, row := range rows {
+		v := row[col.Index]
+		if v == nil {
+			continue
+		}
+		switch tv := v.(type) {
+		case int64:
+			sum += float64(tv)
+		case float64:
+			sum += tv
+		default:
+			return nil, fmt.Errorf("AVG requires numeric values, got %T", v)
+		}
+		count++
+	}
+	if count == 0 {
+		return nil, nil
+	}
+	return sum / float64(count), nil
+}
+
+// evalAggMinMax evaluates MIN(col) or MAX(col) using the provided comparison function.
+// isBetter returns true if the new value should replace the current best.
+func evalAggMinMax(call *ast.CallExpr, rows []Row, info *TableInfo, funcName string, isBetter func(a, b Value) bool) (Value, error) {
+	col, err := resolveAggColumn(call, info, funcName)
+	if err != nil {
+		return nil, err
+	}
+	var best Value
+	for _, row := range rows {
+		v := row[col.Index]
+		if v == nil {
+			continue
+		}
+		if best == nil || isBetter(v, best) {
+			best = v
+		}
+	}
+	return best, nil
 }
 
 // aggAccumulator accumulates aggregate values for streaming GROUP BY optimization.

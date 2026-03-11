@@ -110,3 +110,77 @@ func BenchmarkJSONExists_WHERE_JSON_vs_JSONB(b *testing.B) {
 		benchQuery(b, exec, "SELECT id FROM docs WHERE JSON_EXISTS(data, '$.address.city')")
 	})
 }
+
+// --- JSON が有利なワークロード ---
+
+func BenchmarkInsert_JSON_vs_JSONB(b *testing.B) {
+	jsonData := `'{"name":"user","age":30,"tags":["go","sql","db"],"address":{"city":"Tokyo","zip":"100-0001"}}'`
+
+	b.Run("JSON", func(b *testing.B) {
+		exec := NewExecutor(NewDatabase("test"))
+		execSQL(exec, "CREATE TABLE docs (id INT PRIMARY KEY, data JSON)")
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			sql := fmt.Sprintf("INSERT INTO docs VALUES (%d, %s)", i, jsonData)
+			l := lexer.New(sql)
+			p := parser.New(l)
+			stmt, _ := p.Parse()
+			exec.Execute(stmt)
+		}
+	})
+
+	b.Run("JSONB", func(b *testing.B) {
+		exec := NewExecutor(NewDatabase("test"))
+		execSQL(exec, "CREATE TABLE docs (id INT PRIMARY KEY, data JSONB)")
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			sql := fmt.Sprintf("INSERT INTO docs VALUES (%d, %s)", i, jsonData)
+			l := lexer.New(sql)
+			p := parser.New(l)
+			stmt, _ := p.Parse()
+			exec.Execute(stmt)
+		}
+	})
+}
+
+func BenchmarkSelectAll_JSON_vs_JSONB(b *testing.B) {
+	const rows = 100
+
+	b.Run("JSON", func(b *testing.B) {
+		exec := setupJSONBench(b, "JSON", rows)
+		benchQuery(b, exec, "SELECT data FROM docs")
+	})
+
+	b.Run("JSONB", func(b *testing.B) {
+		exec := setupJSONBench(b, "JSONB", rows)
+		benchQuery(b, exec, "SELECT data FROM docs")
+	})
+}
+
+func BenchmarkSelectById_JSON_vs_JSONB(b *testing.B) {
+	const rows = 100
+
+	b.Run("JSON", func(b *testing.B) {
+		exec := setupJSONBench(b, "JSON", rows)
+		benchQuery(b, exec, "SELECT data FROM docs WHERE id = 50")
+	})
+
+	b.Run("JSONB", func(b *testing.B) {
+		exec := setupJSONBench(b, "JSONB", rows)
+		benchQuery(b, exec, "SELECT data FROM docs WHERE id = 50")
+	})
+}
+
+func BenchmarkSelectIdOnly_JSON_vs_JSONB(b *testing.B) {
+	const rows = 100
+
+	b.Run("JSON", func(b *testing.B) {
+		exec := setupJSONBench(b, "JSON", rows)
+		benchQuery(b, exec, "SELECT id FROM docs")
+	})
+
+	b.Run("JSONB", func(b *testing.B) {
+		exec := setupJSONBench(b, "JSONB", rows)
+		benchQuery(b, exec, "SELECT id FROM docs")
+	})
+}

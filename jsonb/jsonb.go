@@ -7,6 +7,8 @@ import (
 	"math"
 	"sort"
 	"strings"
+
+	"github.com/walf443/oresql/json_path"
 )
 
 // Type tags for the custom binary format.
@@ -904,30 +906,110 @@ func KeysExists(b []byte, path ...any) bool {
 	return err == nil && found
 }
 
-// lookupKeyPos returns the byte position of the value for the given key
-// in an object starting at pos, without decoding the value.
-func lookupKeyPos(b []byte, pos int, key string, dict []string) (int, bool, error) {
-	if b[pos] != TagObject {
-		return 0, false, fmt.Errorf("not an object")
+// QueryPath traverses JSONB binary data using a compiled json_path.Path
+// without full deserialization at intermediate levels.
+func QueryPath(b []byte, p *json_path.Path) (any, bool, error) {
+	args := make([]any, len(p.Steps))
+	for i, step := range p.Steps {
+		switch step.Kind {
+		case json_path.StepMember:
+			args[i] = step.Key
+		case json_path.StepIndex:
+			args[i] = step.Index
+		}
+	}
+	return LookupKeys(b, args...)
+}
+
+// ExistsPath checks whether a value exists at the given JSON path.
+// Optimized: resolves string keys to dictionary indices upfront and
+// skips value decoding at the final step.
+func ExistsPath(b []byte, p *json_path.Path) bool {
+	if len(p.Steps) == 0 {
+		return len(b) > 0
 	}
 
-	// Binary search dictionary for the key.
-	targetIdx := -1
+	dict, bodyPos, err := readDictHeader(b)
+	if err != nil {
+		return false
+	}
+
+	// Pre-resolve all StepMember keys to dictionary indices.
+	type resolvedStep struct {
+		isIndex  bool
+		dictIdx  int // for StepMember
+		arrayIdx int // for StepIndex
+	}
+	steps := make([]resolvedStep, len(p.Steps))
+	for i, step := range p.Steps {
+		switch step.Kind {
+		case json_path.StepMember:
+			idx := searchDict(dict, step.Key)
+			if idx < 0 {
+				return false // key not in dictionary at all
+			}
+			steps[i] = resolvedStep{isIndex: false, dictIdx: idx}
+		case json_path.StepIndex:
+			steps[i] = resolvedStep{isIndex: true, arrayIdx: step.Index}
+		}
+	}
+
+	pos := bodyPos
+	for i, step := range steps {
+		if pos >= len(b) {
+			return false
+		}
+		isLast := i == len(steps)-1
+		if step.isIndex {
+			if isLast {
+				tag := b[pos]
+				if tag == TagIntArray {
+					_, found, _ := lookupIntArrayIndex(b, pos, step.arrayIdx)
+					return found
+				}
+				if tag == TagFloatArray {
+					_, found, _ := lookupFloatArrayIndex(b, pos, step.arrayIdx)
+					return found
+				}
+			}
+			newPos, found, err := lookupIndexPos(b, pos, step.arrayIdx, dict)
+			if err != nil || !found {
+				return false
+			}
+			pos = newPos
+		} else {
+			newPos, found, err := lookupKeyPosByIdx(b, pos, step.dictIdx)
+			if err != nil || !found {
+				return false
+			}
+			pos = newPos
+		}
+	}
+	return true
+}
+
+// searchDict performs binary search on a sorted dictionary, returning the index or -1.
+func searchDict(dict []string, key string) int {
 	lo, hi := 0, len(dict)-1
 	for lo <= hi {
 		mid := (lo + hi) / 2
 		cmp := strings.Compare(dict[mid], key)
 		if cmp == 0 {
-			targetIdx = mid
-			break
+			return mid
 		} else if cmp < 0 {
 			lo = mid + 1
 		} else {
 			hi = mid - 1
 		}
 	}
-	if targetIdx < 0 {
-		return 0, false, nil
+	return -1
+}
+
+// lookupKeyPosByIdx finds a value's byte position in an object by pre-resolved dictionary index.
+// Skips the dictionary search step for better performance.
+func lookupKeyPosByIdx(b []byte, pos int, targetIdx int) (int, bool, error) {
+	if b[pos] != TagObject {
+		return 0, false, fmt.Errorf("not an object")
 	}
 
 	p := pos + 1
@@ -946,7 +1028,7 @@ func lookupKeyPos(b []byte, pos int, key string, dict []string) (int, bool, erro
 
 	entrySize := int(keyIdxW) + int(valOffW)
 	entryTableStart := p
-	lo, hi = 0, count-1
+	lo, hi := 0, count-1
 	for lo <= hi {
 		mid := (lo + hi) / 2
 		entryPos := entryTableStart + mid*entrySize
@@ -962,6 +1044,16 @@ func lookupKeyPos(b []byte, pos int, key string, dict []string) (int, bool, erro
 		}
 	}
 	return 0, false, nil
+}
+
+// lookupKeyPos returns the byte position of the value for the given key
+// in an object starting at pos, without decoding the value.
+func lookupKeyPos(b []byte, pos int, key string, dict []string) (int, bool, error) {
+	targetIdx := searchDict(dict, key)
+	if targetIdx < 0 {
+		return 0, false, nil
+	}
+	return lookupKeyPosByIdx(b, pos, targetIdx)
 }
 
 // lookupIndexPos returns the byte position of the element at the given index

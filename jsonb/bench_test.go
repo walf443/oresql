@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"testing"
+
+	"github.com/walf443/oresql/json_path"
 )
 
 // Test data generators for various JSON shapes.
@@ -228,6 +230,58 @@ func BenchmarkLookupKeys_vs_FullDecode(b *testing.B) {
 			items := m["items"].([]any)
 			obj := items[0].(map[string]any)
 			_ = obj["product"]
+		}
+	})
+}
+
+func BenchmarkQueryPath_vs_ExistsPath(b *testing.B) {
+	data, _ := FromJSON(largeObject())
+	path2, _ := json_path.Parse("$.address.city")
+	path3, _ := json_path.Parse("$.items[0].product")
+
+	b.Run("QueryPath_2level", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_, _, _ = QueryPath(data, path2)
+		}
+	})
+
+	b.Run("ExistsPath_2level", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = ExistsPath(data, path2)
+		}
+	})
+
+	b.Run("QueryPath_3level", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_, _, _ = QueryPath(data, path3)
+		}
+	})
+
+	b.Run("ExistsPath_3level", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = ExistsPath(data, path3)
+		}
+	})
+
+	// Comparison: json_path.Execute on fully decoded value
+	decoded, _ := Decode(data)
+	b.Run("json_path.Execute_3level", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = path3.Execute(decoded)
+		}
+	})
+
+	b.Run("json_path.Exists_3level", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = path3.Exists(decoded)
+		}
+	})
+
+	// Full decode + path execution (what happens per row without JSONB optimization)
+	b.Run("FullDecode+Execute_3level", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			val, _ := Decode(data)
+			_ = path3.Execute(val)
 		}
 	})
 }

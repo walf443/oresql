@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/walf443/oresql/json_path"
 )
 
 func TestEncodeDecodeNull(t *testing.T) {
@@ -949,11 +950,12 @@ func TestLookupKeysNotFound(t *testing.T) {
 }
 
 func TestLookupKeysTypeMismatch(t *testing.T) {
-	data := map[string]any{"x": int64(42)}
+	// "x" is a scalar, "y" exists in dictionary but traversing "x" then "y" is a type mismatch
+	data := map[string]any{"x": int64(42), "y": int64(99)}
 	b, err := Encode(data)
 	require.NoError(t, err)
 
-	// try to index into a scalar
+	// try to traverse into a scalar value
 	_, _, err = LookupKeys(b, "x", "y")
 	assert.Error(t, err)
 }
@@ -1025,4 +1027,136 @@ func TestKeysExistsWithArrayIndex(t *testing.T) {
 
 	assert.True(t, KeysExists(b, "items", 1))
 	assert.False(t, KeysExists(b, "items", 5))
+}
+
+// --- QueryPath tests ---
+
+func TestQueryPathSimpleKey(t *testing.T) {
+	data := map[string]any{"name": "alice"}
+	b, err := Encode(data)
+	require.NoError(t, err)
+
+	p, err := json_path.Parse("$.name")
+	require.NoError(t, err)
+
+	val, found, err := QueryPath(b, p)
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, "alice", val)
+}
+
+func TestQueryPathNested(t *testing.T) {
+	data := map[string]any{
+		"address": map[string]any{
+			"city": "Tokyo",
+		},
+	}
+	b, err := Encode(data)
+	require.NoError(t, err)
+
+	p, err := json_path.Parse("$.address.city")
+	require.NoError(t, err)
+
+	val, found, err := QueryPath(b, p)
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, "Tokyo", val)
+}
+
+func TestQueryPathArrayIndex(t *testing.T) {
+	data := map[string]any{
+		"items": []any{
+			map[string]any{"name": "apple"},
+			map[string]any{"name": "banana"},
+		},
+	}
+	b, err := Encode(data)
+	require.NoError(t, err)
+
+	p, err := json_path.Parse("$.items[1].name")
+	require.NoError(t, err)
+
+	val, found, err := QueryPath(b, p)
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, "banana", val)
+}
+
+func TestQueryPathRoot(t *testing.T) {
+	data := map[string]any{"x": int64(1)}
+	b, err := Encode(data)
+	require.NoError(t, err)
+
+	p, err := json_path.Parse("$")
+	require.NoError(t, err)
+
+	val, found, err := QueryPath(b, p)
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, map[string]any{"x": int64(1)}, val)
+}
+
+func TestQueryPathNotFound(t *testing.T) {
+	data := map[string]any{"a": int64(1)}
+	b, err := Encode(data)
+	require.NoError(t, err)
+
+	p, err := json_path.Parse("$.z")
+	require.NoError(t, err)
+
+	val, found, err := QueryPath(b, p)
+	require.NoError(t, err)
+	assert.False(t, found)
+	assert.Nil(t, val)
+}
+
+func TestExistsPathFound(t *testing.T) {
+	data := map[string]any{
+		"a": map[string]any{"b": int64(1)},
+	}
+	b, err := Encode(data)
+	require.NoError(t, err)
+
+	p, _ := json_path.Parse("$.a.b")
+	assert.True(t, ExistsPath(b, p))
+}
+
+func TestExistsPathNotFound(t *testing.T) {
+	data := map[string]any{
+		"a": map[string]any{"b": int64(1)},
+	}
+	b, err := Encode(data)
+	require.NoError(t, err)
+
+	p, _ := json_path.Parse("$.a.z")
+	assert.False(t, ExistsPath(b, p))
+
+	p2, _ := json_path.Parse("$.missing")
+	assert.False(t, ExistsPath(b, p2))
+}
+
+func TestExistsPathArrayIndex(t *testing.T) {
+	data := map[string]any{
+		"items": []any{
+			map[string]any{"name": "apple"},
+			map[string]any{"name": "banana"},
+		},
+	}
+	b, err := Encode(data)
+	require.NoError(t, err)
+
+	p, _ := json_path.Parse("$.items[1].name")
+	assert.True(t, ExistsPath(b, p))
+
+	p2, _ := json_path.Parse("$.items[5]")
+	assert.False(t, ExistsPath(b, p2))
+}
+
+func TestExistsPathRoot(t *testing.T) {
+	data := map[string]any{"x": int64(1)}
+	b, err := Encode(data)
+	require.NoError(t, err)
+
+	p, _ := json_path.Parse("$")
+	assert.True(t, ExistsPath(b, p))
 }

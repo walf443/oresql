@@ -80,171 +80,165 @@ func (e *Executor) scanFullOrder(
 	stmt *ast.SelectStmt, db *Database, info *TableInfo, ior *indexOrderResult,
 	eval ExprEvaluator, needed int,
 ) ([]Row, ExprEvaluator, error) {
+	var rows []Row
+	if ior.usePK {
+		rows, eval = e.scanFullOrderPK(stmt, db, info, ior, eval, needed)
+	} else {
+		rows = e.scanFullOrderSecondary(stmt, db, info, ior, eval, needed)
+	}
+
+	// For non-PK, nullable columns: move NULLs to end
+	if !ior.usePK && ior.index != nil {
+		rows = moveNullsToEnd(rows, ior.index, info)
+	}
+
+	return rows, eval, nil
+}
+
+// moveNullsToEnd moves rows with NULL in the index column to the end of the slice.
+func moveNullsToEnd(rows []Row, index IndexReader, info *TableInfo) []Row {
+	colIdx := index.GetInfo().ColumnIdxs[0]
+	col := info.Columns[colIdx]
+	if col.NotNull || col.PrimaryKey {
+		return rows
+	}
+	var nonNull, nullRows []Row
+	for _, row := range rows {
+		if row[colIdx] == nil {
+			nullRows = append(nullRows, row)
+		} else {
+			nonNull = append(nonNull, row)
+		}
+	}
+	return append(nonNull, nullRows...)
+}
+
+// evalWhereFilter evaluates a WHERE expression and returns true if the row passes.
+func evalWhereFilter(where ast.Expr, row Row, eval ExprEvaluator) bool {
+	val, err := eval.Eval(where, row)
+	if err != nil {
+		return false
+	}
+	b, ok := val.(bool)
+	return ok && b
+}
+
+// scanFullOrderPK scans rows in PK order with optional WHERE filtering.
+func (e *Executor) scanFullOrderPK(
+	stmt *ast.SelectStmt, db *Database, info *TableInfo, ior *indexOrderResult,
+	eval ExprEvaluator, needed int,
+) ([]Row, ExprEvaluator) {
 	cap := 64
 	if needed > 0 {
 		cap = needed
 	}
 	rows := make([]Row, 0, cap)
 
-	if ior.usePK {
-		// PK order scan
-		// When there's no WHERE, we can limit collection to exactly needed rows.
-		// With WHERE, we must collect all rows because filtering may skip some.
-		forEachLimit := 0
-		if stmt.Where == nil && needed > 0 {
-			forEachLimit = needed
-		}
+	forEachLimit := 0
+	if stmt.Where == nil && needed > 0 {
+		forEachLimit = needed
+	}
 
-		// PK Covering: if only PK column (or no columns) are needed, skip row decoding
-		neededCols := collectNeededColumns(stmt.Columns, stmt.Where, stmt.OrderBy, info)
-		if isPKOnlyCovering(neededCols, info.PrimaryKeyCol) {
-			if stmt.Where != nil {
-				// WHERE requires full-width Row for evaluation
-				numCols := len(info.Columns)
-				pkIdx := info.PrimaryKeyCol
-				db.storage.ForEachRowKeyOnly(info.Name, ior.reverse, func(key int64) bool {
-					row := buildPKOnlyRow(key, numCols, pkIdx)
-					val, err := eval.Eval(stmt.Where, row)
-					if err != nil {
-						return false
-					}
-					b, ok := val.(bool)
-					if !ok || !b {
-						return true
-					}
-					rows = append(rows, row)
-					if needed > 0 && len(rows) >= needed {
-						return false
-					}
-					return true
-				}, forEachLimit)
-			} else {
-				// No WHERE: use compact 1-element rows with pkOnlyEvaluator
-				eval = newPKOnlyEvaluator(e, info)
-				db.storage.ForEachRowKeyOnly(info.Name, ior.reverse, func(key int64) bool {
-					rows = append(rows, Row{key})
-					if needed > 0 && len(rows) >= needed {
-						return false
-					}
-					return true
-				}, forEachLimit)
-			}
-		} else if stmt.Where != nil && !containsSubquery(stmt.Where) && !columnsContainSubquery(stmt.Columns) {
-			// WHERE + no subquery: use ScanEachWithKey for Row reuse (alloc on match only)
-			db.storage.ScanEachWithKey(info.Name, ior.reverse, func(key int64, row Row) bool {
-				val, err := eval.Eval(stmt.Where, row)
-				if err != nil {
-					return false
-				}
-				b, ok := val.(bool)
-				if !ok || !b {
-					return true // filtered out: Row reused, no alloc
-				}
-				// Match: copy row to retain beyond callback
-				kept := make(Row, len(row))
-				copy(kept, row)
-				rows = append(rows, kept)
-				if needed > 0 && len(rows) >= needed {
-					return false
-				}
+	neededCols := collectNeededColumns(stmt.Columns, stmt.Where, stmt.OrderBy, info)
+	if isPKOnlyCovering(neededCols, info.PrimaryKeyCol) {
+		return e.scanPKCovering(stmt, db, info, ior, eval, needed, forEachLimit, rows)
+	}
+
+	if stmt.Where != nil && !containsSubquery(stmt.Where) && !columnsContainSubquery(stmt.Columns) {
+		// WHERE + no subquery: use ScanEachWithKey for Row reuse
+		db.storage.ScanEachWithKey(info.Name, ior.reverse, func(key int64, row Row) bool {
+			if !evalWhereFilter(stmt.Where, row, eval) {
 				return true
-			}, forEachLimit)
-		} else {
-			// WHERE なし or subquery あり: use ForEachRow (collect-then-iterate)
-			db.storage.ForEachRow(info.Name, ior.reverse, func(key int64, row Row) bool {
-				if stmt.Where != nil {
-					val, err := eval.Eval(stmt.Where, row)
-					if err != nil {
-						return false
-					}
-					b, ok := val.(bool)
-					if !ok || !b {
-						return true
-					}
+			}
+			kept := make(Row, len(row))
+			copy(kept, row)
+			rows = append(rows, kept)
+			return needed <= 0 || len(rows) < needed
+		}, forEachLimit)
+	} else {
+		// No WHERE or subquery: use ForEachRow
+		db.storage.ForEachRow(info.Name, ior.reverse, func(key int64, row Row) bool {
+			if stmt.Where != nil && !evalWhereFilter(stmt.Where, row, eval) {
+				return true
+			}
+			rows = append(rows, row)
+			return needed <= 0 || len(rows) < needed
+		}, forEachLimit)
+	}
+	return rows, eval
+}
+
+// scanPKCovering handles PK-only covering scans where row decoding is skipped.
+func (e *Executor) scanPKCovering(
+	stmt *ast.SelectStmt, db *Database, info *TableInfo, ior *indexOrderResult,
+	eval ExprEvaluator, needed, forEachLimit int, rows []Row,
+) ([]Row, ExprEvaluator) {
+	if stmt.Where != nil {
+		numCols := len(info.Columns)
+		pkIdx := info.PrimaryKeyCol
+		db.storage.ForEachRowKeyOnly(info.Name, ior.reverse, func(key int64) bool {
+			row := buildPKOnlyRow(key, numCols, pkIdx)
+			if !evalWhereFilter(stmt.Where, row, eval) {
+				return true
+			}
+			rows = append(rows, row)
+			return needed <= 0 || len(rows) < needed
+		}, forEachLimit)
+	} else {
+		eval = newPKOnlyEvaluator(e, info)
+		db.storage.ForEachRowKeyOnly(info.Name, ior.reverse, func(key int64) bool {
+			rows = append(rows, Row{key})
+			return needed <= 0 || len(rows) < needed
+		}, forEachLimit)
+	}
+	return rows, eval
+}
+
+// scanFullOrderSecondary scans rows using a secondary index order.
+func (e *Executor) scanFullOrderSecondary(
+	stmt *ast.SelectStmt, db *Database, info *TableInfo, ior *indexOrderResult,
+	eval ExprEvaluator, needed int,
+) []Row {
+	cap := 64
+	if needed > 0 {
+		cap = needed
+	}
+	rows := make([]Row, 0, cap)
+
+	neededCols := collectNeededColumns(stmt.Columns, stmt.Where, stmt.OrderBy, info)
+	cir, isCovering := ior.index.(CoveringIndexReader)
+	if isCovering && isIndexCovering(ior.index, neededCols, info.PrimaryKeyCol) {
+		cir.OrderedCoveringScan(
+			ior.fromVal, ior.fromInclusive,
+			ior.toVal, ior.toInclusive,
+			ior.reverse, len(info.Columns), info.PrimaryKeyCol,
+			func(rowKey int64, row Row) bool {
+				if stmt.Where != nil && !evalWhereFilter(stmt.Where, row, eval) {
+					return true
 				}
 				rows = append(rows, row)
-				if needed > 0 && len(rows) >= needed {
-					return false
-				}
-				return true
-			}, forEachLimit)
-		}
+				return needed <= 0 || len(rows) < needed
+			},
+		)
 	} else {
-		// Secondary index order scan — try covering first
-		neededCols := collectNeededColumns(stmt.Columns, stmt.Where, stmt.OrderBy, info)
-		cir, isCovering := ior.index.(CoveringIndexReader)
-		if isCovering && isIndexCovering(ior.index, neededCols, info.PrimaryKeyCol) {
-			cir.OrderedCoveringScan(
-				ior.fromVal, ior.fromInclusive,
-				ior.toVal, ior.toInclusive,
-				ior.reverse, len(info.Columns), info.PrimaryKeyCol,
-				func(rowKey int64, row Row) bool {
-					if stmt.Where != nil {
-						wVal, err := eval.Eval(stmt.Where, row)
-						if err != nil {
-							return false
-						}
-						b, ok := wVal.(bool)
-						if !ok || !b {
-							return true
-						}
-					}
-					rows = append(rows, row)
-					if needed > 0 && len(rows) >= needed {
-						return false
-					}
+		ior.index.OrderedRangeScan(
+			ior.fromVal, ior.fromInclusive,
+			ior.toVal, ior.toInclusive,
+			ior.reverse,
+			func(rowKey int64) bool {
+				row, found := db.storage.GetRow(info.Name, rowKey)
+				if !found {
 					return true
-				},
-			)
-		} else {
-			ior.index.OrderedRangeScan(
-				ior.fromVal, ior.fromInclusive,
-				ior.toVal, ior.toInclusive,
-				ior.reverse,
-				func(rowKey int64) bool {
-					row, found := db.storage.GetRow(info.Name, rowKey)
-					if !found {
-						return true
-					}
-					if stmt.Where != nil {
-						wVal, err := eval.Eval(stmt.Where, row)
-						if err != nil {
-							return false
-						}
-						b, ok := wVal.(bool)
-						if !ok || !b {
-							return true
-						}
-					}
-					rows = append(rows, row)
-					if needed > 0 && len(rows) >= needed {
-						return false
-					}
-					return true
-				},
-			)
-		}
-	}
-
-	// For non-PK, nullable columns without LIMIT: move NULLs to end
-	if !ior.usePK && ior.index != nil {
-		colIdx := ior.index.GetInfo().ColumnIdxs[0]
-		col := info.Columns[colIdx]
-		if !col.NotNull && !col.PrimaryKey {
-			// Move NULL rows to end
-			var nonNull, nullRows []Row
-			for _, row := range rows {
-				if row[colIdx] == nil {
-					nullRows = append(nullRows, row)
-				} else {
-					nonNull = append(nonNull, row)
 				}
-			}
-			rows = append(nonNull, nullRows...)
-		}
+				if stmt.Where != nil && !evalWhereFilter(stmt.Where, row, eval) {
+					return true
+				}
+				rows = append(rows, row)
+				return needed <= 0 || len(rows) < needed
+			},
+		)
 	}
-
-	return rows, eval, nil
+	return rows
 }
 
 // scanPartialOrder handles ORDER BY with multiple columns where only the first has an index.

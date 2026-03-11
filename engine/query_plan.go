@@ -385,182 +385,197 @@ func (e *Executor) planWhereIndex(plan *SelectPlan, where ast.Expr, info *TableI
 // And/Or operations without intermediate []int64 conversion.
 // enabling efficient And/Or operations without intermediate []int64 conversion.
 func (e *Executor) tryGinBitmapLookup(where ast.Expr, info *TableInfo) (*storage.RoaringBitmap, string, bool) {
-	// Handle AND/OR: use RoaringBitmap And/Or directly
-	if logExpr, ok := where.(*ast.LogicalExpr); ok {
-		leftBM, leftIdx, leftOk := e.tryGinBitmapLookup(logExpr.Left, info)
-		rightBM, rightIdx, rightOk := e.tryGinBitmapLookup(logExpr.Right, info)
-
-		indexName := leftIdx
-		if indexName == "" {
-			indexName = rightIdx
+	switch expr := where.(type) {
+	case *ast.LogicalExpr:
+		return e.tryGinLogical(expr, info)
+	case *ast.MatchExpr:
+		return e.tryGinMatch(expr, info)
+	case *ast.LikeExpr:
+		if !expr.Not {
+			return e.tryGinLike(expr, info)
 		}
-
-		switch logExpr.Op {
-		case "AND":
-			if leftOk && rightOk {
-				return leftBM.And(rightBM), indexName, true
-			}
-			if leftOk {
-				return leftBM, leftIdx, true
-			}
-			if rightOk {
-				return rightBM, rightIdx, true
-			}
-		case "OR":
-			if leftOk && rightOk {
-				return leftBM.Or(rightBM), indexName, true
-			}
+	case *ast.BinaryExpr:
+		if expr.Op == "=" {
+			return e.tryGinEquality(expr, info)
 		}
+	case *ast.InExpr:
+		if !expr.Not {
+			return e.tryGinIn(expr, info)
+		}
+	}
+	return nil, "", false
+}
+
+// tryGinLogical handles AND/OR by combining child bitmap results.
+func (e *Executor) tryGinLogical(expr *ast.LogicalExpr, info *TableInfo) (*storage.RoaringBitmap, string, bool) {
+	leftBM, leftIdx, leftOk := e.tryGinBitmapLookup(expr.Left, info)
+	rightBM, rightIdx, rightOk := e.tryGinBitmapLookup(expr.Right, info)
+
+	indexName := leftIdx
+	if indexName == "" {
+		indexName = rightIdx
+	}
+
+	switch expr.Op {
+	case "AND":
+		if leftOk && rightOk {
+			return leftBM.And(rightBM), indexName, true
+		}
+		if leftOk {
+			return leftBM, leftIdx, true
+		}
+		if rightOk {
+			return rightBM, rightIdx, true
+		}
+	case "OR":
+		if leftOk && rightOk {
+			return leftBM.Or(rightBM), indexName, true
+		}
+	}
+	return nil, "", false
+}
+
+// tryGinMatch handles the @@ full-text match operator.
+func (e *Executor) tryGinMatch(expr *ast.MatchExpr, info *TableInfo) (*storage.RoaringBitmap, string, bool) {
+	ident, ok := expr.Expr.(*ast.IdentExpr)
+	if !ok {
+		return nil, "", false
+	}
+	col, err := info.FindColumn(ident.Name)
+	if err != nil {
+		return nil, "", false
+	}
+	ginIdx := e.db.storage.LookupGinIndex(info.Name, col.Index)
+	if ginIdx == nil {
+		return nil, "", false
+	}
+	expr.Tokenizer = ginIdx.GetInfo().Tokenizer
+	rb := ginIdx.MatchTokenBitmap(expr.Pattern)
+	if rb == nil {
+		rb = storage.NewRoaringBitmap()
+	}
+	return rb, ginIdx.GetInfo().Name, true
+}
+
+// tryGinLike handles LIKE patterns with bigram or word tokenizer GIN indexes.
+func (e *Executor) tryGinLike(expr *ast.LikeExpr, info *TableInfo) (*storage.RoaringBitmap, string, bool) {
+	ident, ok := expr.Left.(*ast.IdentExpr)
+	if !ok {
+		return nil, "", false
+	}
+	patLit, ok := expr.Pattern.(*ast.StringLitExpr)
+	if !ok {
+		return nil, "", false
+	}
+	col, err := info.FindColumn(ident.Name)
+	if err != nil {
+		return nil, "", false
+	}
+	ginIdx := e.db.storage.LookupGinIndex(info.Name, col.Index)
+	if ginIdx == nil {
 		return nil, "", false
 	}
 
-	// Handle @@ operator
-	if matchExpr, ok := where.(*ast.MatchExpr); ok {
-		ident, ok := matchExpr.Expr.(*ast.IdentExpr)
-		if !ok {
+	pat := patLit.Value
+	if ginIdx.GetInfo().Tokenizer == "bigram" {
+		longest := longestLiteralSegment(pat)
+		if len([]rune(longest)) < 2 {
 			return nil, "", false
 		}
-		col, err := info.FindColumn(ident.Name)
-		if err != nil {
-			return nil, "", false
-		}
-		ginIdx := e.db.storage.LookupGinIndex(info.Name, col.Index)
-		if ginIdx == nil {
-			return nil, "", false
-		}
-		matchExpr.Tokenizer = ginIdx.GetInfo().Tokenizer
-		rb := ginIdx.MatchTokenBitmap(matchExpr.Pattern)
+		rb := ginIdx.MatchTokenBitmap(longest)
 		if rb == nil {
 			rb = storage.NewRoaringBitmap()
 		}
 		return rb, ginIdx.GetInfo().Name, true
 	}
 
-	// Handle LIKE patterns
-	if likeExpr, ok := where.(*ast.LikeExpr); ok && !likeExpr.Not {
-		ident, ok := likeExpr.Left.(*ast.IdentExpr)
+	// Word tokenizer: only 'word%' prefix pattern
+	if len(pat) < 2 || pat[0] == '%' || pat[len(pat)-1] != '%' {
+		return nil, "", false
+	}
+	prefix := pat[:len(pat)-1]
+	if strings.ContainsAny(prefix, "%_") {
+		return nil, "", false
+	}
+	keys := ginIdx.MatchPrefix(prefix)
+	return storage.RoaringFromInt64Slice(keys), ginIdx.GetInfo().Name, true
+}
+
+// tryGinEquality handles col = 'value' with bigram GIN or jsonb_path_ops GIN index.
+func (e *Executor) tryGinEquality(binExpr *ast.BinaryExpr, info *TableInfo) (*storage.RoaringBitmap, string, bool) {
+	// Try jsonb_path_ops first
+	if rb, idxName, ok := e.tryGinJsonbPathOps(binExpr, info); ok {
+		return rb, idxName, true
+	}
+
+	// Try bigram GIN on string equality
+	var ident *ast.IdentExpr
+	var val string
+	if id, ok := binExpr.Left.(*ast.IdentExpr); ok {
+		if s, ok := binExpr.Right.(*ast.StringLitExpr); ok {
+			ident, val = id, s.Value
+		}
+	} else if id, ok := binExpr.Right.(*ast.IdentExpr); ok {
+		if s, ok := binExpr.Left.(*ast.StringLitExpr); ok {
+			ident, val = id, s.Value
+		}
+	}
+	if ident == nil || val == "" {
+		return nil, "", false
+	}
+	col, err := info.FindColumn(ident.Name)
+	if err != nil {
+		return nil, "", false
+	}
+	ginIdx := e.db.storage.LookupGinIndex(info.Name, col.Index)
+	if ginIdx == nil || ginIdx.GetInfo().Tokenizer != "bigram" {
+		return nil, "", false
+	}
+	if len([]rune(val)) < 2 {
+		return nil, "", false
+	}
+	rb := ginIdx.MatchTokenBitmap(val)
+	if rb == nil {
+		rb = storage.NewRoaringBitmap()
+	}
+	return rb, ginIdx.GetInfo().Name, true
+}
+
+// tryGinIn handles col IN ('a', 'b', ...) with bigram GIN or jsonb_path_ops GIN index.
+func (e *Executor) tryGinIn(inExpr *ast.InExpr, info *TableInfo) (*storage.RoaringBitmap, string, bool) {
+	// Try jsonb_path_ops first
+	if rb, idxName, ok := e.tryGinJsonbPathOpsIN(inExpr, info); ok {
+		return rb, idxName, true
+	}
+
+	// Try bigram GIN
+	ident, ok := inExpr.Left.(*ast.IdentExpr)
+	if !ok {
+		return nil, "", false
+	}
+	col, err := info.FindColumn(ident.Name)
+	if err != nil {
+		return nil, "", false
+	}
+	ginIdx := e.db.storage.LookupGinIndex(info.Name, col.Index)
+	if ginIdx == nil || ginIdx.GetInfo().Tokenizer != "bigram" {
+		return nil, "", false
+	}
+	result := storage.NewRoaringBitmap()
+	for _, valExpr := range inExpr.Values {
+		strLit, ok := valExpr.(*ast.StringLitExpr)
 		if !ok {
 			return nil, "", false
 		}
-		patLit, ok := likeExpr.Pattern.(*ast.StringLitExpr)
-		if !ok {
+		if len([]rune(strLit.Value)) < 2 {
 			return nil, "", false
 		}
-		col, err := info.FindColumn(ident.Name)
-		if err != nil {
-			return nil, "", false
-		}
-		ginIdx := e.db.storage.LookupGinIndex(info.Name, col.Index)
-		if ginIdx == nil {
-			return nil, "", false
-		}
-
-		pat := patLit.Value
-		tokenizer := ginIdx.GetInfo().Tokenizer
-
-		if tokenizer == "bigram" {
-			longest := longestLiteralSegment(pat)
-			if len([]rune(longest)) < 2 {
-				return nil, "", false
-			}
-			rb := ginIdx.MatchTokenBitmap(longest)
-			if rb == nil {
-				rb = storage.NewRoaringBitmap()
-			}
-			return rb, ginIdx.GetInfo().Name, true
-		}
-
-		// Word tokenizer: only 'word%' prefix pattern
-		if len(pat) < 2 || pat[0] == '%' || pat[len(pat)-1] != '%' {
-			return nil, "", false
-		}
-		prefix := pat[:len(pat)-1]
-		if strings.ContainsAny(prefix, "%_") {
-			return nil, "", false
-		}
-		keys := ginIdx.MatchPrefix(prefix)
-		return storage.RoaringFromInt64Slice(keys), ginIdx.GetInfo().Name, true
-	}
-
-	// Handle JSON_VALUE(col, '$.path') = 'value' with jsonb_path_ops GIN index
-	if binExpr, ok := where.(*ast.BinaryExpr); ok && binExpr.Op == "=" {
-		if rb, idxName, ok := e.tryGinJsonbPathOps(binExpr, info); ok {
-			return rb, idxName, true
+		rb := ginIdx.MatchTokenBitmap(strLit.Value)
+		if rb != nil {
+			result = result.Or(rb)
 		}
 	}
-
-	// Handle equality (col = 'value') with bigram GIN index
-	if binExpr, ok := where.(*ast.BinaryExpr); ok && binExpr.Op == "=" {
-		var ident *ast.IdentExpr
-		var val string
-		if id, ok := binExpr.Left.(*ast.IdentExpr); ok {
-			if s, ok := binExpr.Right.(*ast.StringLitExpr); ok {
-				ident, val = id, s.Value
-			}
-		} else if id, ok := binExpr.Right.(*ast.IdentExpr); ok {
-			if s, ok := binExpr.Left.(*ast.StringLitExpr); ok {
-				ident, val = id, s.Value
-			}
-		}
-		if ident != nil && val != "" {
-			col, err := info.FindColumn(ident.Name)
-			if err != nil {
-				return nil, "", false
-			}
-			ginIdx := e.db.storage.LookupGinIndex(info.Name, col.Index)
-			if ginIdx == nil || ginIdx.GetInfo().Tokenizer != "bigram" {
-				return nil, "", false
-			}
-			if len([]rune(val)) < 2 {
-				return nil, "", false
-			}
-			rb := ginIdx.MatchTokenBitmap(val)
-			if rb == nil {
-				rb = storage.NewRoaringBitmap()
-			}
-			return rb, ginIdx.GetInfo().Name, true
-		}
-	}
-
-	// Handle JSON_VALUE(col, '$.path') IN ('a', 'b', ...) with jsonb_path_ops GIN index
-	if inExpr, ok := where.(*ast.InExpr); ok && !inExpr.Not {
-		if rb, idxName, ok := e.tryGinJsonbPathOpsIN(inExpr, info); ok {
-			return rb, idxName, true
-		}
-	}
-
-	// Handle IN (col IN ('a', 'b', ...)) with bigram GIN index
-	if inExpr, ok := where.(*ast.InExpr); ok && !inExpr.Not {
-		ident, ok := inExpr.Left.(*ast.IdentExpr)
-		if !ok {
-			return nil, "", false
-		}
-		col, err := info.FindColumn(ident.Name)
-		if err != nil {
-			return nil, "", false
-		}
-		ginIdx := e.db.storage.LookupGinIndex(info.Name, col.Index)
-		if ginIdx == nil || ginIdx.GetInfo().Tokenizer != "bigram" {
-			return nil, "", false
-		}
-		result := storage.NewRoaringBitmap()
-		for _, valExpr := range inExpr.Values {
-			strLit, ok := valExpr.(*ast.StringLitExpr)
-			if !ok {
-				return nil, "", false
-			}
-			if len([]rune(strLit.Value)) < 2 {
-				return nil, "", false
-			}
-			rb := ginIdx.MatchTokenBitmap(strLit.Value)
-			if rb != nil {
-				result = result.Or(rb)
-			}
-		}
-		return result, ginIdx.GetInfo().Name, true
-	}
-
-	return nil, "", false
+	return result, ginIdx.GetInfo().Name, true
 }
 
 // tryGinJsonbPathOps checks if a binary expression matches the pattern

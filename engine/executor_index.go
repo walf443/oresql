@@ -711,73 +711,20 @@ func collectColumnRefs(expr ast.Expr, info *TableInfo, needed map[int]bool) {
 			needed[col.Index] = true
 		}
 	case *ast.StarExpr:
-		// SELECT * needs all columns
 		for i := range info.Columns {
 			needed[i] = true
 		}
-	case *ast.AliasExpr:
-		collectColumnRefs(e.Expr, info, needed)
-	case *ast.BinaryExpr:
-		collectColumnRefs(e.Left, info, needed)
-		collectColumnRefs(e.Right, info, needed)
-	case *ast.LogicalExpr:
-		collectColumnRefs(e.Left, info, needed)
-		collectColumnRefs(e.Right, info, needed)
-	case *ast.ArithmeticExpr:
-		collectColumnRefs(e.Left, info, needed)
-		collectColumnRefs(e.Right, info, needed)
-	case *ast.NotExpr:
-		collectColumnRefs(e.Expr, info, needed)
-	case *ast.IsNullExpr:
-		collectColumnRefs(e.Expr, info, needed)
-	case *ast.InExpr:
-		collectColumnRefs(e.Left, info, needed)
-		for _, v := range e.Values {
-			collectColumnRefs(v, info, needed)
-		}
-	case *ast.BetweenExpr:
-		collectColumnRefs(e.Left, info, needed)
-		collectColumnRefs(e.Low, info, needed)
-		collectColumnRefs(e.High, info, needed)
-	case *ast.LikeExpr:
-		collectColumnRefs(e.Left, info, needed)
-		collectColumnRefs(e.Pattern, info, needed)
-	case *ast.CaseExpr:
-		if e.Operand != nil {
-			collectColumnRefs(e.Operand, info, needed)
-		}
-		for _, w := range e.Whens {
-			collectColumnRefs(w.When, info, needed)
-			collectColumnRefs(w.Then, info, needed)
-		}
-		if e.Else != nil {
-			collectColumnRefs(e.Else, info, needed)
-		}
 	case *ast.CallExpr:
+		// Aggregate functions with * (e.g. COUNT(*)) don't need column data
 		for _, arg := range e.Args {
-			// Aggregate functions with * (e.g. COUNT(*)) don't need column data
-			if _, isStar := arg.(*ast.StarExpr); isStar {
-				continue
+			if _, isStar := arg.(*ast.StarExpr); !isStar {
+				collectColumnRefs(arg, info, needed)
 			}
-			collectColumnRefs(arg, info, needed)
 		}
-	case *ast.CastExpr:
-		collectColumnRefs(e.Expr, info, needed)
-	case *ast.WindowExpr:
-		for _, arg := range e.Args {
-			collectColumnRefs(arg, info, needed)
-		}
-		for _, p := range e.PartitionBy {
-			collectColumnRefs(p, info, needed)
-		}
-		for _, ob := range e.OrderBy {
-			collectColumnRefs(ob.Expr, info, needed)
-		}
-	// Literals and subqueries don't reference columns in the current table
-	case *ast.IntLitExpr, *ast.FloatLitExpr, *ast.StringLitExpr, *ast.BoolLitExpr, *ast.NullLitExpr:
-		// no columns
-	case *ast.ScalarExpr, *ast.ExistsExpr:
-		// subquery — not handled for covering
+	default:
+		forEachChildExpr(expr, func(child ast.Expr) {
+			collectColumnRefs(child, info, needed)
+		})
 	}
 }
 

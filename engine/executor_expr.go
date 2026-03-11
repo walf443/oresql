@@ -601,3 +601,74 @@ func matchFullText(text, searchTerm, tokenizer string) bool {
 func isLetterOrDigit(r rune) bool {
 	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r >= 0x80
 }
+
+// forEachChildExpr calls fn on each direct child expression of expr.
+// It handles all compound AST node types; leaf nodes produce no calls.
+// Subqueries (ScalarExpr, ExistsExpr) are NOT traversed.
+func forEachChildExpr(expr ast.Expr, fn func(ast.Expr)) {
+	switch e := expr.(type) {
+	case *ast.BinaryExpr:
+		fn(e.Left)
+		fn(e.Right)
+	case *ast.LogicalExpr:
+		fn(e.Left)
+		fn(e.Right)
+	case *ast.ArithmeticExpr:
+		fn(e.Left)
+		fn(e.Right)
+	case *ast.NotExpr:
+		fn(e.Expr)
+	case *ast.IsNullExpr:
+		fn(e.Expr)
+	case *ast.IsJSONExpr:
+		fn(e.Expr)
+	case *ast.InExpr:
+		fn(e.Left)
+		for _, v := range e.Values {
+			fn(v)
+		}
+	case *ast.BetweenExpr:
+		fn(e.Left)
+		fn(e.Low)
+		fn(e.High)
+	case *ast.LikeExpr:
+		fn(e.Left)
+		fn(e.Pattern)
+	case *ast.MatchExpr:
+		fn(e.Expr)
+	case *ast.AliasExpr:
+		fn(e.Expr)
+	case *ast.CastExpr:
+		fn(e.Expr)
+	case *ast.CallExpr:
+		for _, arg := range e.Args {
+			fn(arg)
+		}
+	case *ast.CaseExpr:
+		if e.Operand != nil {
+			fn(e.Operand)
+		}
+		for _, w := range e.Whens {
+			fn(w.When)
+			fn(w.Then)
+		}
+		if e.Else != nil {
+			fn(e.Else)
+		}
+	case *ast.WindowExpr:
+		for _, arg := range e.Args {
+			fn(arg)
+		}
+		for _, p := range e.PartitionBy {
+			fn(p)
+		}
+		for _, ob := range e.OrderBy {
+			fn(ob.Expr)
+		}
+	// Leaf nodes and subqueries: no children to traverse
+	case *ast.IdentExpr, *ast.StarExpr,
+		*ast.IntLitExpr, *ast.FloatLitExpr, *ast.StringLitExpr, *ast.BoolLitExpr, *ast.NullLitExpr,
+		*ast.ScalarExpr, *ast.ExistsExpr:
+		// no children
+	}
+}

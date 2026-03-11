@@ -696,7 +696,34 @@ func (ce *correlatedEvaluator) ColumnList() []ColumnInfo {
 // It collects inner table names and walks the AST to find IdentExpr with Table qualifiers
 // that are not inner tables but can be resolved by the outer evaluator.
 func hasOuterReferences(stmt *ast.SelectStmt, outerEval ExprEvaluator) bool {
-	// Collect inner table names/aliases
+	innerTables := collectInnerTableNames(stmt)
+
+	var found bool
+	var walk func(expr ast.Expr)
+	walk = func(expr ast.Expr) {
+		if expr == nil || found {
+			return
+		}
+		if e, ok := expr.(*ast.IdentExpr); ok {
+			if e.Table != "" && !innerTables[strings.ToLower(e.Table)] {
+				if _, err := outerEval.ResolveColumn(e.Table, e.Name); err == nil {
+					found = true
+				}
+			}
+		}
+		forEachChildExpr(expr, walk)
+	}
+
+	walk(stmt.Where)
+	for _, col := range stmt.Columns {
+		walk(col)
+	}
+	walk(stmt.Having)
+	return found
+}
+
+// collectInnerTableNames collects table names and aliases from a SELECT statement.
+func collectInnerTableNames(stmt *ast.SelectStmt) map[string]bool {
 	innerTables := make(map[string]bool)
 	if stmt.TableName != "" {
 		innerTables[strings.ToLower(stmt.TableName)] = true
@@ -712,80 +739,7 @@ func hasOuterReferences(stmt *ast.SelectStmt, outerEval ExprEvaluator) bool {
 			innerTables[strings.ToLower(j.TableAlias)] = true
 		}
 	}
-
-	// Walk AST to find outer references
-	var found bool
-	var walk func(expr ast.Expr)
-	walk = func(expr ast.Expr) {
-		if expr == nil || found {
-			return
-		}
-		switch e := expr.(type) {
-		case *ast.IdentExpr:
-			if e.Table != "" && !innerTables[strings.ToLower(e.Table)] {
-				// Table qualifier not in inner tables — check if outer can resolve
-				if _, err := outerEval.ResolveColumn(e.Table, e.Name); err == nil {
-					found = true
-				}
-			}
-		case *ast.BinaryExpr:
-			walk(e.Left)
-			walk(e.Right)
-		case *ast.LogicalExpr:
-			walk(e.Left)
-			walk(e.Right)
-		case *ast.NotExpr:
-			walk(e.Expr)
-		case *ast.IsNullExpr:
-			walk(e.Expr)
-		case *ast.InExpr:
-			walk(e.Left)
-			for _, v := range e.Values {
-				walk(v)
-			}
-		case *ast.BetweenExpr:
-			walk(e.Left)
-			walk(e.Low)
-			walk(e.High)
-		case *ast.LikeExpr:
-			walk(e.Left)
-			walk(e.Pattern)
-		case *ast.MatchExpr:
-			walk(e.Expr)
-		case *ast.ArithmeticExpr:
-			walk(e.Left)
-			walk(e.Right)
-		case *ast.AliasExpr:
-			walk(e.Expr)
-		case *ast.CallExpr:
-			for _, arg := range e.Args {
-				walk(arg)
-			}
-		case *ast.CaseExpr:
-			walk(e.Operand)
-			for _, w := range e.Whens {
-				walk(w.When)
-				walk(w.Then)
-			}
-			walk(e.Else)
-		case *ast.CastExpr:
-			walk(e.Expr)
-		case *ast.BoolLitExpr:
-			// leaf — no children
-		case *ast.ExistsExpr:
-			// Don't recurse into nested subqueries
-		case *ast.ScalarExpr:
-			// Don't recurse into nested subqueries
-		}
-	}
-
-	// Walk WHERE, Columns, Having
-	walk(stmt.Where)
-	for _, col := range stmt.Columns {
-		walk(col)
-	}
-	walk(stmt.Having)
-	return found
+	return innerTables
 }
 
 // evalScalarFuncGeneric evaluates a scalar function call using the generic evaluator.

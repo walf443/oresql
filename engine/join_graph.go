@@ -760,6 +760,7 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 	var drivingRows []Row
 	var err error
 
+	drivingEval := newTableEvaluator(e, drivingNode.Info)
 	if drivingNode.Rows != nil {
 		// Pre-materialized rows (FROM subquery)
 		drivingRows = drivingNode.Rows
@@ -768,7 +769,7 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 			stripped := stripTableQualifier(combined, drivingNode.TableName, drivingNode.Alias)
 			var filtered []Row
 			for _, row := range drivingRows {
-				match, mErr := evalWhere(stripped, row, drivingNode.Info)
+				match, mErr := evalWhereWith(stripped, row, drivingEval)
 				if mErr != nil {
 					return nil, nil, mErr
 				}
@@ -797,7 +798,7 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 		// Filter by WHERE
 		var filtered []Row
 		for _, row := range drivingRows {
-			match, mErr := evalWhere(stripped, row, drivingNode.Info)
+			match, mErr := evalWhereWith(stripped, row, drivingEval)
 			if mErr != nil {
 				return nil, nil, mErr
 			}
@@ -891,8 +892,10 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 
 		// Build JoinContext for ON/WHERE evaluation on the merged row
 		jc := buildJoinContextFromGraph(graph)
+		joinEval := newJoinEvaluator(e, jc)
 
 		// Prepare pre-filtered inner rows for non-index path
+		nextEval := newTableEvaluator(e, nextNode.Info)
 		var preFilteredInner []Row
 		if nextIdx == nil {
 			if nextNode.Rows != nil {
@@ -903,7 +906,7 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 					stripped := stripTableQualifier(combined, nextNode.TableName, nextNode.Alias)
 					var filtered []Row
 					for _, row := range preFilteredInner {
-						match, mErr := evalWhere(stripped, row, nextNode.Info)
+						match, mErr := evalWhereWith(stripped, row, nextEval)
 						if mErr != nil {
 							return nil, nil, mErr
 						}
@@ -929,7 +932,7 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 				// Apply LocalWhere filter (index may cover only part of the condition)
 				var filtered []Row
 				for _, row := range preFilteredInner {
-					match, mErr := evalWhere(stripped, row, nextNode.Info)
+					match, mErr := evalWhereWith(stripped, row, nextEval)
 					if mErr != nil {
 						return nil, nil, mErr
 					}
@@ -1045,7 +1048,7 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 						if innerWhereStripped != nil {
 							var filtered []Row
 							for _, row := range innerCandidates {
-								match, mErr := evalWhere(innerWhereStripped, row, nextNode.Info)
+								match, mErr := evalWhereWith(innerWhereStripped, row, nextEval)
 								if mErr != nil {
 									return nil, nil, mErr
 								}
@@ -1100,7 +1103,7 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 					if nextIdx != nil || hashTable != nil {
 						// Index or hash join: equi-join already satisfied, evaluate residual only
 						if edge.ResidualOn != nil {
-							match, mErr := evalWhereJoin(edge.ResidualOn, mergedRow, jc)
+							match, mErr := evalWhereWith(edge.ResidualOn, mergedRow, joinEval)
 							if mErr != nil {
 								return nil, nil, mErr
 							}
@@ -1110,7 +1113,7 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 						}
 					} else {
 						// Full nested loop: evaluate full ON condition
-						match, mErr := evalWhereJoin(edge.OnExpr, mergedRow, jc)
+						match, mErr := evalWhereWith(edge.OnExpr, mergedRow, joinEval)
 						if mErr != nil {
 							return nil, nil, mErr
 						}

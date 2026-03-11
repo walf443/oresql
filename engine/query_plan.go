@@ -181,37 +181,13 @@ func (e *Executor) planSelect(stmt *ast.SelectStmt) *SelectPlan {
 	plan.info = info
 
 	// 1. Try ORDER BY index optimization
-	if len(stmt.OrderBy) > 0 && len(stmt.Joins) == 0 && stmt.TableAlias == "" &&
-		stmt.FromSubquery == nil &&
-		len(stmt.GroupBy) == 0 && !hasAggregate(stmt.Columns) && !stmt.Distinct &&
-		!hasWindowFunction(stmt.Columns) {
-		if ior := e.tryIndexOrder(stmt.OrderBy, stmt.Where, info, stmt.Limit != nil); ior != nil {
-			plan.Type = PlanIndexOrderScan
-			plan.IndexOrder = ior
-			return plan
-		}
+	if e.planOrderByIndex(plan, stmt, info) {
+		return plan
 	}
 
 	// 2. Try GROUP BY index optimization
-	if len(stmt.GroupBy) == 1 && len(stmt.Joins) == 0 && stmt.FromSubquery == nil &&
-		stmt.TableAlias == "" && stmt.Having == nil && !stmt.Distinct &&
-		!hasWindowFunction(stmt.Columns) && !containsSubquery(stmt.Where) {
-		if gbIdent, ok := stmt.GroupBy[0].(*ast.IdentExpr); ok {
-			col, err := info.FindColumn(gbIdent.Name)
-			if err == nil {
-				isPK := col.Index == info.PrimaryKeyCol
-				idx := db.storage.LookupSingleColumnIndex(info.Name, col.Index)
-				if isPK || idx != nil {
-					plan.Type = PlanGroupByIndex
-					if isPK {
-						plan.WhereIndexName = "PRIMARY"
-					} else {
-						plan.WhereIndexName = idx.GetInfo().Name
-					}
-					return plan
-				}
-			}
-		}
+	if e.planGroupByIndex(plan, stmt, info, db) {
+		return plan
 	}
 
 	// 3. Try COUNT(*) optimization
@@ -230,43 +206,8 @@ func (e *Executor) planSelect(stmt *ast.SelectStmt) *SelectPlan {
 	e.planWhereIndex(plan, stmt.Where, info)
 
 	// 5. Check streaming path eligibility
-	canEarlyLimit := stmt.Limit != nil &&
-		len(stmt.OrderBy) == 0 &&
-		len(stmt.GroupBy) == 0 &&
-		!hasAggregate(stmt.Columns) &&
-		!hasWindowFunction(stmt.Columns)
-
-	if canEarlyLimit && (stmt.Distinct || stmt.Where != nil) &&
-		stmt.FromSubquery == nil && len(stmt.Joins) == 0 && stmt.TableAlias == "" &&
-		!containsSubquery(stmt.Where) && !columnsContainSubquery(stmt.Columns) {
-		if _, _, cteOk := e.lookupCTE(stmt.TableName); !cteOk {
-			if stmt.Where != nil {
-				if params, ok := e.tryIndexScanParams(stmt.Where, info); ok {
-					plan.Type = PlanStreamingIndex
-					plan.streamingParams = params
-					// indexScanParams may represent equality or range; set WhereIndex from params
-					if plan.WhereIndex == WhereNoIndex {
-						plan.WhereIndex = WhereRangeScan
-						if params.fromVal != nil && params.toVal != nil &&
-							*params.fromVal == *params.toVal {
-							plan.WhereIndex = WhereIndexLookup
-						}
-						plan.WhereIndexName = findIndexNameForScanParams(params, info, db)
-					}
-					return plan
-				}
-			}
-			if plan.batchKeys != nil {
-				// batchKeys already set by planWhereIndex (e.g., GIN lookup)
-				plan.Type = PlanStreamingBatch
-			} else if keys, indexUsed := e.tryIndexScan(stmt.Where, info); indexUsed {
-				plan.Type = PlanStreamingBatch
-				plan.batchKeys = keys
-			} else {
-				plan.Type = PlanStreamingFullScan
-			}
-			return plan
-		}
+	if e.planStreamingPath(plan, stmt, info) {
+		return plan
 	}
 
 	// 6. Batch path
@@ -277,6 +218,105 @@ func (e *Executor) planSelect(stmt *ast.SelectStmt) *SelectPlan {
 	}
 
 	return plan
+}
+
+// planOrderByIndex tries to use an index for ORDER BY. Returns true if a plan was set.
+func (e *Executor) planOrderByIndex(plan *SelectPlan, stmt *ast.SelectStmt, info *TableInfo) bool {
+	if len(stmt.OrderBy) == 0 || len(stmt.Joins) > 0 || stmt.TableAlias != "" ||
+		stmt.FromSubquery != nil ||
+		len(stmt.GroupBy) > 0 || hasAggregate(stmt.Columns) || stmt.Distinct ||
+		hasWindowFunction(stmt.Columns) {
+		return false
+	}
+	ior := e.tryIndexOrder(stmt.OrderBy, stmt.Where, info, stmt.Limit != nil)
+	if ior == nil {
+		return false
+	}
+	plan.Type = PlanIndexOrderScan
+	plan.IndexOrder = ior
+	return true
+}
+
+// planGroupByIndex tries to use an index for GROUP BY. Returns true if a plan was set.
+func (e *Executor) planGroupByIndex(plan *SelectPlan, stmt *ast.SelectStmt, info *TableInfo, db *Database) bool {
+	if len(stmt.GroupBy) != 1 || len(stmt.Joins) > 0 || stmt.FromSubquery != nil ||
+		stmt.TableAlias != "" || stmt.Having != nil || stmt.Distinct ||
+		hasWindowFunction(stmt.Columns) || containsSubquery(stmt.Where) {
+		return false
+	}
+	gbIdent, ok := stmt.GroupBy[0].(*ast.IdentExpr)
+	if !ok {
+		return false
+	}
+	col, err := info.FindColumn(gbIdent.Name)
+	if err != nil {
+		return false
+	}
+	isPK := col.Index == info.PrimaryKeyCol
+	idx := db.storage.LookupSingleColumnIndex(info.Name, col.Index)
+	if !isPK && idx == nil {
+		return false
+	}
+	plan.Type = PlanGroupByIndex
+	if isPK {
+		plan.WhereIndexName = "PRIMARY"
+	} else {
+		plan.WhereIndexName = idx.GetInfo().Name
+	}
+	return true
+}
+
+// canStreamEarlyLimit checks whether the query shape allows streaming with early LIMIT.
+func canStreamEarlyLimit(stmt *ast.SelectStmt) bool {
+	return stmt.Limit != nil &&
+		len(stmt.OrderBy) == 0 &&
+		len(stmt.GroupBy) == 0 &&
+		!hasAggregate(stmt.Columns) &&
+		!hasWindowFunction(stmt.Columns) &&
+		(stmt.Distinct || stmt.Where != nil) &&
+		stmt.FromSubquery == nil &&
+		len(stmt.Joins) == 0 &&
+		stmt.TableAlias == "" &&
+		!containsSubquery(stmt.Where) &&
+		!columnsContainSubquery(stmt.Columns)
+}
+
+// planStreamingPath tries to set a streaming plan type. Returns true if a plan was set.
+func (e *Executor) planStreamingPath(plan *SelectPlan, stmt *ast.SelectStmt, info *TableInfo) bool {
+	if !canStreamEarlyLimit(stmt) {
+		return false
+	}
+	if _, _, cteOk := e.lookupCTE(stmt.TableName); cteOk {
+		return false
+	}
+
+	// Try streaming index scan
+	if stmt.Where != nil {
+		if params, ok := e.tryIndexScanParams(stmt.Where, info); ok {
+			plan.Type = PlanStreamingIndex
+			plan.streamingParams = params
+			if plan.WhereIndex == WhereNoIndex {
+				plan.WhereIndex = WhereRangeScan
+				if params.fromVal != nil && params.toVal != nil &&
+					*params.fromVal == *params.toVal {
+					plan.WhereIndex = WhereIndexLookup
+				}
+				plan.WhereIndexName = findIndexNameForScanParams(params, info, plan.db)
+			}
+			return true
+		}
+	}
+
+	// Try streaming batch or full scan
+	if plan.batchKeys != nil {
+		plan.Type = PlanStreamingBatch
+	} else if keys, indexUsed := e.tryIndexScan(stmt.Where, info); indexUsed {
+		plan.Type = PlanStreamingBatch
+		plan.batchKeys = keys
+	} else {
+		plan.Type = PlanStreamingFullScan
+	}
+	return true
 }
 
 // enrichPlanForExplain populates display-only metadata on an existing SelectPlan.

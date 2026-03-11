@@ -432,85 +432,97 @@ func computeCumulativeAggregate(
 func computeAggValue(name string, vals []Value, isCountStar bool) Value {
 	switch name {
 	case "SUM":
-		var sumInt int64
-		var sumFloat float64
-		hasValue := false
-		isFloat := false
-		for _, v := range vals {
-			if v == nil {
-				continue
-			}
-			switch tv := v.(type) {
-			case int64:
-				sumInt += tv
-			case float64:
-				isFloat = true
-				sumFloat += tv
-			}
-			hasValue = true
-		}
-		if !hasValue {
-			return nil
-		}
-		if isFloat {
-			return sumFloat + float64(sumInt)
-		}
-		return sumInt
+		return windowAggSum(vals)
 	case "COUNT":
-		if isCountStar {
-			return int64(len(vals))
-		}
-		count := int64(0)
-		for _, v := range vals {
-			if v != nil {
-				count++
-			}
-		}
-		return count
+		return windowAggCount(vals, isCountStar)
 	case "AVG":
-		var sum float64
-		count := int64(0)
-		for _, v := range vals {
-			if v == nil {
-				continue
-			}
-			switch tv := v.(type) {
-			case int64:
-				sum += float64(tv)
-			case float64:
-				sum += tv
-			}
-			count++
-		}
-		if count == 0 {
-			return nil
-		}
-		return sum / float64(count)
+		return windowAggAvg(vals)
 	case "MIN":
-		var minVal Value
-		for _, v := range vals {
-			if v == nil {
-				continue
-			}
-			if minVal == nil || compareValues(v, minVal) < 0 {
-				minVal = v
-			}
-		}
-		return minVal
+		return windowAggMinMax(vals, func(cmp int) bool { return cmp < 0 })
 	case "MAX":
-		var maxVal Value
-		for _, v := range vals {
-			if v == nil {
-				continue
-			}
-			if maxVal == nil || compareValues(v, maxVal) > 0 {
-				maxVal = v
-			}
-		}
-		return maxVal
+		return windowAggMinMax(vals, func(cmp int) bool { return cmp > 0 })
 	default:
 		return nil
 	}
+}
+
+// windowAggSum computes SUM over values, returning int64 or float64.
+func windowAggSum(vals []Value) Value {
+	var sumInt int64
+	var sumFloat float64
+	hasValue := false
+	isFloat := false
+	for _, v := range vals {
+		if v == nil {
+			continue
+		}
+		switch tv := v.(type) {
+		case int64:
+			sumInt += tv
+		case float64:
+			isFloat = true
+			sumFloat += tv
+		}
+		hasValue = true
+	}
+	if !hasValue {
+		return nil
+	}
+	if isFloat {
+		return sumFloat + float64(sumInt)
+	}
+	return sumInt
+}
+
+// windowAggCount computes COUNT or COUNT(*) over values.
+func windowAggCount(vals []Value, isCountStar bool) Value {
+	if isCountStar {
+		return int64(len(vals))
+	}
+	count := int64(0)
+	for _, v := range vals {
+		if v != nil {
+			count++
+		}
+	}
+	return count
+}
+
+// windowAggAvg computes AVG over values.
+func windowAggAvg(vals []Value) Value {
+	var sum float64
+	count := int64(0)
+	for _, v := range vals {
+		if v == nil {
+			continue
+		}
+		switch tv := v.(type) {
+		case int64:
+			sum += float64(tv)
+		case float64:
+			sum += tv
+		}
+		count++
+	}
+	if count == 0 {
+		return nil
+	}
+	return sum / float64(count)
+}
+
+// windowAggMinMax computes MIN or MAX using the provided comparison function.
+// isBetter(cmp) returns true when the candidate should replace the current best.
+func windowAggMinMax(vals []Value, isBetter func(int) bool) Value {
+	var best Value
+	for _, v := range vals {
+		if v == nil {
+			continue
+		}
+		if best == nil || isBetter(compareValues(v, best)) {
+			best = v
+		}
+	}
+	return best
 }
 
 // resolveNamedWindows resolves named window references in WindowExpr.

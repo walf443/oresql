@@ -1420,45 +1420,30 @@ func evalFuncJSONValue(args []Value, compiledPath *json_path.Path) (Value, error
 	if args[0] == nil {
 		return nil, nil
 	}
-	jsonStr, err := jsonStringFromValue("JSON_VALUE", args[0])
-	if err != nil {
-		return nil, err
-	}
 	pathStr, ok := args[1].(string)
 	if compiledPath == nil && !ok {
 		return nil, fmt.Errorf("JSON_VALUE second argument (path) must be a string, got %T", args[1])
+	}
+
+	// JSONB optimization: traverse binary directly without decode→JSON→parse round-trip
+	if b, isBinary := args[0].([]byte); isBinary {
+		result, err := jsonbTraverse("JSON_VALUE", b, pathStr, compiledPath)
+		if err != nil {
+			return nil, err
+		}
+		return jsonValueResult(result)
+	}
+
+	jsonStr, err := jsonStringFromValue("JSON_VALUE", args[0])
+	if err != nil {
+		return nil, err
 	}
 
 	result, err := parseJSONAndTraverse("JSON_VALUE", jsonStr, pathStr, compiledPath)
 	if err != nil {
 		return nil, err
 	}
-	if result == nil {
-		return nil, nil
-	}
-
-	// JSON_VALUE returns only scalar values; object/array returns NULL
-	switch v := result.(type) {
-	case map[string]any, []any:
-		return nil, nil
-	case float64:
-		// Convert to int64 if it's a whole number
-		if v == float64(int64(v)) {
-			return int64(v), nil
-		}
-		return v, nil
-	case string:
-		return v, nil
-	case bool:
-		if v {
-			return "true", nil
-		}
-		return "false", nil
-	case nil:
-		return nil, nil
-	default:
-		return nil, fmt.Errorf("JSON_VALUE: unexpected type %T", result)
-	}
+	return jsonValueResult(result)
 }
 
 // evalFuncJSONQuery extracts a JSON object or array from a JSON string using a path expression.
@@ -1472,34 +1457,30 @@ func evalFuncJSONQuery(args []Value, compiledPath *json_path.Path) (Value, error
 	if args[0] == nil {
 		return nil, nil
 	}
-	jsonStr, err := jsonStringFromValue("JSON_QUERY", args[0])
-	if err != nil {
-		return nil, err
-	}
 	pathStr, ok := args[1].(string)
 	if compiledPath == nil && !ok {
 		return nil, fmt.Errorf("JSON_QUERY second argument (path) must be a string, got %T", args[1])
+	}
+
+	// JSONB optimization
+	if b, isBinary := args[0].([]byte); isBinary {
+		result, err := jsonbTraverse("JSON_QUERY", b, pathStr, compiledPath)
+		if err != nil {
+			return nil, err
+		}
+		return jsonQueryResult(result)
+	}
+
+	jsonStr, err := jsonStringFromValue("JSON_QUERY", args[0])
+	if err != nil {
+		return nil, err
 	}
 
 	result, err := parseJSONAndTraverse("JSON_QUERY", jsonStr, pathStr, compiledPath)
 	if err != nil {
 		return nil, err
 	}
-	if result == nil {
-		return nil, nil
-	}
-
-	// JSON_QUERY returns only object/array; scalar returns NULL
-	switch result.(type) {
-	case map[string]any, []any:
-		b, err := json.Marshal(result)
-		if err != nil {
-			return nil, fmt.Errorf("JSON_QUERY: failed to serialize result: %w", err)
-		}
-		return string(b), nil
-	default:
-		return nil, nil
-	}
+	return jsonQueryResult(result)
 }
 
 // evalFuncJSONExists checks whether a path exists in a JSON string.
@@ -1513,13 +1494,26 @@ func evalFuncJSONExists(args []Value, compiledPath *json_path.Path) (Value, erro
 	if args[0] == nil {
 		return nil, nil
 	}
-	jsonStr, err := jsonStringFromValue("JSON_EXISTS", args[0])
-	if err != nil {
-		return nil, err
-	}
 	pathStr, ok := args[1].(string)
 	if compiledPath == nil && !ok {
 		return nil, fmt.Errorf("JSON_EXISTS second argument (path) must be a string, got %T", args[1])
+	}
+
+	// JSONB optimization: use ExistsPath directly
+	if b, isBinary := args[0].([]byte); isBinary {
+		if compiledPath != nil {
+			return jsonb.ExistsPath(b, compiledPath), nil
+		}
+		p, err := json_path.Parse(pathStr)
+		if err != nil {
+			return nil, err
+		}
+		return jsonb.ExistsPath(b, p), nil
+	}
+
+	jsonStr, err := jsonStringFromValue("JSON_EXISTS", args[0])
+	if err != nil {
+		return nil, err
 	}
 
 	var raw any
@@ -1536,6 +1530,79 @@ func evalFuncJSONExists(args []Value, compiledPath *json_path.Path) (Value, erro
 		return nil, err
 	}
 	return p.Exists(raw), nil
+}
+
+// jsonbTraverse traverses JSONB binary data using a path expression directly,
+// avoiding the decode→JSON→parse round-trip.
+func jsonbTraverse(funcName string, b []byte, pathStr string, compiledPath *json_path.Path) (any, error) {
+	if compiledPath != nil {
+		val, found, err := jsonb.QueryPath(b, compiledPath)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", funcName, err)
+		}
+		if !found {
+			return nil, nil
+		}
+		return val, nil
+	}
+	p, err := json_path.Parse(pathStr)
+	if err != nil {
+		return nil, err
+	}
+	val, found, err := jsonb.QueryPath(b, p)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", funcName, err)
+	}
+	if !found {
+		return nil, nil
+	}
+	return val, nil
+}
+
+// jsonValueResult converts a traversal result to JSON_VALUE semantics:
+// scalars are returned, objects/arrays return NULL.
+func jsonValueResult(result any) (Value, error) {
+	if result == nil {
+		return nil, nil
+	}
+	switch v := result.(type) {
+	case map[string]any, []any:
+		return nil, nil
+	case float64:
+		if v == float64(int64(v)) {
+			return int64(v), nil
+		}
+		return v, nil
+	case int64:
+		return v, nil
+	case string:
+		return v, nil
+	case bool:
+		if v {
+			return "true", nil
+		}
+		return "false", nil
+	default:
+		return nil, fmt.Errorf("JSON_VALUE: unexpected type %T", result)
+	}
+}
+
+// jsonQueryResult converts a traversal result to JSON_QUERY semantics:
+// objects/arrays are serialized to JSON string, scalars return NULL.
+func jsonQueryResult(result any) (Value, error) {
+	if result == nil {
+		return nil, nil
+	}
+	switch result.(type) {
+	case map[string]any, []any:
+		b, err := json.Marshal(result)
+		if err != nil {
+			return nil, fmt.Errorf("JSON_QUERY: failed to serialize result: %w", err)
+		}
+		return string(b), nil
+	default:
+		return nil, nil
+	}
 }
 
 // isValidJSON returns true if val is a string containing valid JSON.

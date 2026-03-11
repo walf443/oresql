@@ -393,6 +393,94 @@ func encodeObject(buf []byte, obj map[string]any, dict map[string]uint16) ([]byt
 
 // readDictHeader reads the key dictionary from the header.
 // Returns the dictionary keys, the body start position, and any error.
+// readDictOffsets reads the dictionary header and returns byte offsets
+// (position of each key's string body in b) and lengths, without decoding to Go strings.
+// Each entry is {offset, length} pair pointing to the raw key bytes in b.
+type dictEntry struct {
+	offset int
+	length int
+}
+
+func readDictOffsets(b []byte) ([]dictEntry, int, error) {
+	if len(b) < 2 {
+		return nil, 0, fmt.Errorf("unexpected end of data for dictionary header")
+	}
+	keyCount := int(binary.BigEndian.Uint16(b[0:2]))
+	pos := 2
+	entries := make([]dictEntry, keyCount)
+	for i := 0; i < keyCount; i++ {
+		if pos >= len(b) || b[pos] != TagString {
+			return nil, 0, fmt.Errorf("dictionary entry must be a string")
+		}
+		pos++
+		if pos >= len(b) {
+			return nil, 0, fmt.Errorf("unexpected end of data for dictionary string length")
+		}
+		var length int
+		if b[pos]&0x80 == 0 {
+			length = int(b[pos])
+			pos++
+		} else {
+			pos++
+			if pos+4 > len(b) {
+				return nil, 0, fmt.Errorf("unexpected end of data for dictionary long string length")
+			}
+			length = int(binary.BigEndian.Uint32(b[pos : pos+4]))
+			pos += 4
+		}
+		if pos+length > len(b) {
+			return nil, 0, fmt.Errorf("unexpected end of data for dictionary string body")
+		}
+		entries[i] = dictEntry{offset: pos, length: length}
+		pos += length
+	}
+	return entries, pos, nil
+}
+
+// searchDictBytes performs binary search on dictionary entries by comparing
+// raw bytes directly, avoiding string allocation.
+func searchDictBytes(b []byte, entries []dictEntry, key string) int {
+	keyBytes := []byte(key)
+	lo, hi := 0, len(entries)-1
+	for lo <= hi {
+		mid := (lo + hi) / 2
+		e := entries[mid]
+		cmp := bytesCompare(b[e.offset:e.offset+e.length], keyBytes)
+		if cmp == 0 {
+			return mid
+		} else if cmp < 0 {
+			lo = mid + 1
+		} else {
+			hi = mid - 1
+		}
+	}
+	return -1
+}
+
+// bytesCompare compares two byte slices lexicographically.
+// Returns -1 if a < b, 0 if a == b, 1 if a > b.
+func bytesCompare(a, b []byte) int {
+	minLen := len(a)
+	if len(b) < minLen {
+		minLen = len(b)
+	}
+	for i := 0; i < minLen; i++ {
+		if a[i] < b[i] {
+			return -1
+		}
+		if a[i] > b[i] {
+			return 1
+		}
+	}
+	if len(a) < len(b) {
+		return -1
+	}
+	if len(a) > len(b) {
+		return 1
+	}
+	return 0
+}
+
 func readDictHeader(b []byte) ([]string, int, error) {
 	if len(b) < 2 {
 		return nil, 0, fmt.Errorf("unexpected end of data for dictionary header")
@@ -869,7 +957,6 @@ func LookupKeys(b []byte, path ...any) (any, bool, error) {
 			}
 			pos = newPos
 		case int:
-			// For the last step, typed arrays can be accessed directly.
 			if isLast {
 				tag := b[pos]
 				if tag == TagIntArray {
@@ -928,24 +1015,24 @@ func ExistsPath(b []byte, p *json_path.Path) bool {
 		return len(b) > 0
 	}
 
-	dict, bodyPos, err := readDictHeader(b)
+	dictOffsets, bodyPos, err := readDictOffsets(b)
 	if err != nil {
 		return false
 	}
 
-	// Pre-resolve all StepMember keys to dictionary indices.
+	// Pre-resolve all StepMember keys to dictionary indices using byte comparison.
 	type resolvedStep struct {
 		isIndex  bool
-		dictIdx  int // for StepMember
-		arrayIdx int // for StepIndex
+		dictIdx  int
+		arrayIdx int
 	}
 	steps := make([]resolvedStep, len(p.Steps))
 	for i, step := range p.Steps {
 		switch step.Kind {
 		case json_path.StepMember:
-			idx := searchDict(dict, step.Key)
+			idx := searchDictBytes(b, dictOffsets, step.Key)
 			if idx < 0 {
-				return false // key not in dictionary at all
+				return false
 			}
 			steps[i] = resolvedStep{isIndex: false, dictIdx: idx}
 		case json_path.StepIndex:
@@ -971,7 +1058,7 @@ func ExistsPath(b []byte, p *json_path.Path) bool {
 					return found
 				}
 			}
-			newPos, found, err := lookupIndexPos(b, pos, step.arrayIdx, dict)
+			newPos, found, err := lookupIndexPos(b, pos, step.arrayIdx, nil)
 			if err != nil || !found {
 				return false
 			}

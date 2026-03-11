@@ -16,98 +16,130 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 
 // executeSelectWithPlan executes a SELECT statement according to the given plan.
 func (e *Executor) executeSelectWithPlan(stmt *ast.SelectStmt, plan *SelectPlan) (*Result, error) {
-	switch plan.Type {
-	case PlanNoTable:
-		return e.executeSelectWithoutTable(stmt)
-
-	case PlanIndexOrderScan:
-		return e.executeSelectWithIndexOrder(stmt, plan.db, plan.info, plan.IndexOrder)
-
-	case PlanGroupByIndex:
-		return e.executeGroupByIndex(stmt, plan.db, plan.info)
-
-	case PlanCountStar:
-		return e.executeCountStar(stmt, plan.db)
-
-	case PlanMinMax:
-		return e.executeMinMax(stmt, plan.db, plan.info)
-
-	case PlanStreamingIndex:
-		earlyLimit := computeEarlyLimit(stmt)
-		return e.executeIndexScanStreaming(stmt, plan.db, plan.info, plan.streamingParams, earlyLimit, stmt.Distinct)
-
-	case PlanStreamingBatch:
-		earlyLimit := computeEarlyLimit(stmt)
-		return e.executeForEachByKeysStreaming(stmt, plan.db, plan.info, plan.batchKeys, earlyLimit, stmt.Distinct)
-
-	case PlanStreamingFullScan:
-		earlyLimit := computeEarlyLimit(stmt)
-		return e.executeScanEachStreaming(stmt, plan.db, plan.info, earlyLimit, stmt.Distinct)
+	// Dispatch specialized plan types
+	if result, ok, err := e.dispatchSpecialPlan(stmt, plan); ok || err != nil {
+		return result, err
 	}
 
-	// PlanSubquery, PlanBatchIndex, PlanFullScan — general batch path
-	canEarlyLimit := stmt.Limit != nil &&
-		len(stmt.OrderBy) == 0 &&
-		len(stmt.GroupBy) == 0 &&
-		!hasAggregate(stmt.Columns) &&
-		!hasWindowFunction(stmt.Columns)
-
+	// General batch path (PlanSubquery, PlanBatchIndex, PlanFullScan)
+	canEarlyLimit := canBatchEarlyLimit(stmt)
 	var earlyLimit int
 	if canEarlyLimit {
 		earlyLimit = computeEarlyLimit(stmt)
 	}
 
 	// Phase 1: Source rows + evaluator
-	// For DISTINCT, don't pass earlyLimit to scanSource (JOIN needs all rows for dedup)
+	rows, eval, err := e.fetchSourceRows(stmt, plan, earlyLimit)
+	if err != nil {
+		return nil, err
+	}
+
+	colTypes := resolveColumnTypes(stmt.Columns, eval)
+
+	// Fast path: DISTINCT + LIMIT
+	if canEarlyLimit && stmt.Distinct {
+		return e.executeDistinctLimitFastPath(stmt, rows, eval, colTypes, earlyLimit)
+	}
+
+	// Phases 2-8: standard pipeline
+	return e.executeBatchPipeline(stmt, rows, eval, colTypes, canEarlyLimit, earlyLimit)
+}
+
+// dispatchSpecialPlan handles specialized plan types that don't need the general pipeline.
+// Returns (result, true, nil) on success, (nil, false, nil) if not applicable, or (nil, false, err) on error.
+func (e *Executor) dispatchSpecialPlan(stmt *ast.SelectStmt, plan *SelectPlan) (*Result, bool, error) {
+	switch plan.Type {
+	case PlanNoTable:
+		r, err := e.executeSelectWithoutTable(stmt)
+		return r, true, err
+	case PlanIndexOrderScan:
+		r, err := e.executeSelectWithIndexOrder(stmt, plan.db, plan.info, plan.IndexOrder)
+		return r, true, err
+	case PlanGroupByIndex:
+		r, err := e.executeGroupByIndex(stmt, plan.db, plan.info)
+		return r, true, err
+	case PlanCountStar:
+		r, err := e.executeCountStar(stmt, plan.db)
+		return r, true, err
+	case PlanMinMax:
+		r, err := e.executeMinMax(stmt, plan.db, plan.info)
+		return r, true, err
+	case PlanStreamingIndex:
+		earlyLimit := computeEarlyLimit(stmt)
+		r, err := e.executeIndexScanStreaming(stmt, plan.db, plan.info, plan.streamingParams, earlyLimit, stmt.Distinct)
+		return r, true, err
+	case PlanStreamingBatch:
+		earlyLimit := computeEarlyLimit(stmt)
+		r, err := e.executeForEachByKeysStreaming(stmt, plan.db, plan.info, plan.batchKeys, earlyLimit, stmt.Distinct)
+		return r, true, err
+	case PlanStreamingFullScan:
+		earlyLimit := computeEarlyLimit(stmt)
+		r, err := e.executeScanEachStreaming(stmt, plan.db, plan.info, earlyLimit, stmt.Distinct)
+		return r, true, err
+	}
+	return nil, false, nil
+}
+
+// canBatchEarlyLimit returns true if the query shape allows early LIMIT in batch path.
+func canBatchEarlyLimit(stmt *ast.SelectStmt) bool {
+	return stmt.Limit != nil &&
+		len(stmt.OrderBy) == 0 &&
+		len(stmt.GroupBy) == 0 &&
+		!hasAggregate(stmt.Columns) &&
+		!hasWindowFunction(stmt.Columns)
+}
+
+// fetchSourceRows retrieves source rows, using pre-computed batch keys when possible.
+func (e *Executor) fetchSourceRows(stmt *ast.SelectStmt, plan *SelectPlan, earlyLimit int) ([]Row, ExprEvaluator, error) {
 	scanLimit := earlyLimit
 	if stmt.Distinct {
 		scanLimit = 0
 	}
-	var rows []Row
-	var eval ExprEvaluator
-	var err error
-	// Use pre-computed batch keys from the plan for single-table queries only.
-	// JOIN, subquery, alias, and CTE paths must go through scanSource.
+
+	// Use pre-computed batch keys for single-table queries
 	if plan.Type == PlanBatchIndex && plan.batchKeys != nil && plan.db != nil && plan.info != nil &&
 		len(stmt.Joins) == 0 && stmt.FromSubquery == nil && stmt.TableAlias == "" {
-		rows, err = plan.db.storage.GetByKeys(plan.info.Name, plan.batchKeys)
+		rows, err := plan.db.storage.GetByKeys(plan.info.Name, plan.batchKeys)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		eval = newTableEvaluator(e, plan.info)
-	} else {
-		rows, eval, err = e.scanSource(stmt, scanLimit)
-		if err != nil {
-			return nil, err
-		}
+		return rows, newTableEvaluator(e, plan.info), nil
 	}
 
-	// Resolve column types early (before GROUP BY may replace eval)
-	colTypes := resolveColumnTypes(stmt.Columns, eval)
+	return e.scanSource(stmt, scanLimit)
+}
 
-	// Fast path: DISTINCT + LIMIT without ORDER BY/GROUP BY/aggregate
-	// Combines WHERE, projection, dedup, and early termination in one pass
-	if canEarlyLimit && stmt.Distinct {
-		colNames, colExprs, isStar, err := resolveSelectColumns(stmt.Columns, eval)
-		if err != nil {
-			return nil, err
-		}
-		// For single-table / subquery-without-join path, apply WHERE + project + dedup in one loop
-		// For JOIN path, WHERE is already applied in scanSource; pass nil
-		var whereExpr ast.Expr
-		if !e.usedJoinPath(stmt) {
-			whereExpr = stmt.Where
-		}
-		rows, err = filterProjectDedupLimit(rows, whereExpr, colExprs, isStar, eval, earlyLimit)
-		if err != nil {
-			return nil, err
-		}
-		rows = applyOffset(rows, stmt.Offset)
-		rows = applyLimit(rows, stmt.Limit)
-		return &Result{Columns: colNames, ColumnTypes: colTypes, Rows: rows}, nil
+// executeDistinctLimitFastPath handles DISTINCT + LIMIT by combining WHERE, projection,
+// dedup, and early termination in one pass.
+func (e *Executor) executeDistinctLimitFastPath(
+	stmt *ast.SelectStmt, rows []Row, eval ExprEvaluator, colTypes []string, earlyLimit int,
+) (*Result, error) {
+	colNames, colExprs, isStar, err := resolveSelectColumns(stmt.Columns, eval)
+	if err != nil {
+		return nil, err
 	}
+	var whereExpr ast.Expr
+	if !e.usedJoinPath(stmt) {
+		whereExpr = stmt.Where
+	}
+	rows, err = filterProjectDedupLimit(rows, whereExpr, colExprs, isStar, eval, earlyLimit)
+	if err != nil {
+		return nil, err
+	}
+	rows = applyOffset(rows, stmt.Offset)
+	rows = applyLimit(rows, stmt.Limit)
+	return &Result{Columns: colNames, ColumnTypes: colTypes, Rows: rows}, nil
+}
 
-	// Phase 2: WHERE filter (JOIN path handles WHERE internally via scanSource)
+// executeBatchPipeline runs the standard SELECT pipeline: WHERE, window, GROUP BY,
+// ORDER BY, projection, DISTINCT, OFFSET, LIMIT.
+func (e *Executor) executeBatchPipeline(
+	stmt *ast.SelectStmt, rows []Row, eval ExprEvaluator, colTypes []string,
+	canEarlyLimit bool, earlyLimit int,
+) (*Result, error) {
+	var err error
+
+	// Phase 2: WHERE filter (JOIN path handles WHERE internally)
 	if !e.usedJoinPath(stmt) {
 		if canEarlyLimit {
 			rows, err = filterWhereLimit(rows, stmt.Where, eval, rowIdentity, earlyLimit)
@@ -128,43 +160,24 @@ func (e *Executor) executeSelectWithPlan(stmt *ast.SelectStmt, plan *SelectPlan)
 	}
 
 	// Phase 3: GROUP BY / Aggregate + HAVING
-	var colNames []string
-	var colExprs []ast.Expr
-	var isStar bool
-	var projected bool
-
-	if len(stmt.GroupBy) > 0 || hasAggregate(stmt.Columns) {
+	colNames, colExprs, isStar, needGroupBy, projected, err := e.resolveGroupByOrColumns(stmt, rows, eval)
+	if err != nil {
+		return nil, err
+	}
+	if needGroupBy {
 		rows, colNames, eval, err = e.applyGroupBy(stmt, rows, eval)
 		if err != nil {
 			return nil, err
 		}
-		projected = true
-	} else {
-		colNames, colExprs, isStar, err = resolveSelectColumns(stmt.Columns, eval)
-		if err != nil {
-			return nil, err
-		}
-		// PK-only covering scan: rows are already compact Row{key}, skip projection
-		if _, isPKOnly := eval.(*pkOnlyEvaluator); isPKOnly {
-			projected = true
-		}
 	}
 
-	// Phase 4: ORDER BY (use heap-based top-K when LIMIT is present)
-	if stmt.Limit != nil && len(stmt.OrderBy) > 0 {
-		topK := int(*stmt.Limit)
-		if stmt.Offset != nil {
-			topK += int(*stmt.Offset)
-		}
-		rows, err = sortRowsTopK(rows, stmt.OrderBy, eval, rowIdentity, topK)
-	} else {
-		rows, err = sortRows(rows, stmt.OrderBy, eval, rowIdentity)
-	}
+	// Phase 4: ORDER BY
+	rows, err = e.applySortRows(stmt, rows, eval)
 	if err != nil {
 		return nil, err
 	}
 
-	// Phase 5: Projection (GROUP BY already projected)
+	// Phase 5: Projection
 	if !projected {
 		rows, err = projectRows(rows, colExprs, isStar, eval)
 		if err != nil {
@@ -172,18 +185,45 @@ func (e *Executor) executeSelectWithPlan(stmt *ast.SelectStmt, plan *SelectPlan)
 		}
 	}
 
-	// Phase 6: DISTINCT
+	// Phase 6-8: DISTINCT, OFFSET, LIMIT
 	if stmt.Distinct {
 		rows = dedup(rows)
 	}
-
-	// Phase 7: OFFSET
 	rows = applyOffset(rows, stmt.Offset)
-
-	// Phase 8: LIMIT
 	rows = applyLimit(rows, stmt.Limit)
 
 	return &Result{Columns: colNames, ColumnTypes: colTypes, Rows: rows}, nil
+}
+
+// resolveGroupByOrColumns resolves column names/exprs and determines if GROUP BY or
+// pkOnly projection applies. Returns needGroupBy=true when applyGroupBy is needed,
+// and projected=true when projection is already handled (GROUP BY or pkOnly).
+func (e *Executor) resolveGroupByOrColumns(
+	stmt *ast.SelectStmt, rows []Row, eval ExprEvaluator,
+) (colNames []string, colExprs []ast.Expr, isStar bool, needGroupBy bool, projected bool, err error) {
+	if len(stmt.GroupBy) > 0 || hasAggregate(stmt.Columns) {
+		return nil, nil, false, true, true, nil
+	}
+	colNames, colExprs, isStar, err = resolveSelectColumns(stmt.Columns, eval)
+	if err != nil {
+		return nil, nil, false, false, false, err
+	}
+	if _, isPKOnly := eval.(*pkOnlyEvaluator); isPKOnly {
+		return colNames, colExprs, isStar, false, true, nil
+	}
+	return colNames, colExprs, isStar, false, false, nil
+}
+
+// applySortRows applies ORDER BY, using heap-based top-K when LIMIT is present.
+func (e *Executor) applySortRows(stmt *ast.SelectStmt, rows []Row, eval ExprEvaluator) ([]Row, error) {
+	if stmt.Limit != nil && len(stmt.OrderBy) > 0 {
+		topK := int(*stmt.Limit)
+		if stmt.Offset != nil {
+			topK += int(*stmt.Offset)
+		}
+		return sortRowsTopK(rows, stmt.OrderBy, eval, rowIdentity, topK)
+	}
+	return sortRows(rows, stmt.OrderBy, eval, rowIdentity)
 }
 
 // usedJoinPath returns true if scanSource would route through the join path for this stmt.

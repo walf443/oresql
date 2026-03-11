@@ -196,8 +196,8 @@ func (p *Parser) parseColumnDef() (ast.ColumnDef, error) {
 	name := p.curToken.Literal
 	p.nextToken()
 
-	if p.curToken.Type != token.INT && p.curToken.Type != token.FLOAT && p.curToken.Type != token.TEXT && p.curToken.Type != token.JSON {
-		return ast.ColumnDef{}, fmt.Errorf("expected data type (INT, FLOAT, TEXT or JSON), got %s (%q)", p.curToken.Type, p.curToken.Literal)
+	if p.curToken.Type != token.INT && p.curToken.Type != token.FLOAT && p.curToken.Type != token.TEXT && p.curToken.Type != token.JSON && p.curToken.Type != token.JSONB {
+		return ast.ColumnDef{}, fmt.Errorf("expected data type (INT, FLOAT, TEXT, JSON or JSONB), got %s (%q)", p.curToken.Type, p.curToken.Literal)
 	}
 	dataType := p.curToken.Type.String()
 	p.nextToken()
@@ -1137,8 +1137,10 @@ func (p *Parser) parseJSONTableColumn() (ast.JSONTableColumn, error) {
 		dataType = "TEXT"
 	case token.JSON:
 		dataType = "JSON"
+	case token.JSONB:
+		dataType = "JSONB"
 	default:
-		return ast.JSONTableColumn{}, fmt.Errorf("JSON_TABLE COLUMNS: expected data type (INT, FLOAT, TEXT, JSON), got %s (%q)", p.curToken.Type, p.curToken.Literal)
+		return ast.JSONTableColumn{}, fmt.Errorf("JSON_TABLE COLUMNS: expected data type (INT, FLOAT, TEXT, JSON, JSONB), got %s (%q)", p.curToken.Type, p.curToken.Literal)
 	}
 	p.nextToken()
 
@@ -1469,11 +1471,11 @@ func (p *Parser) parseCastExpr() (ast.Expr, error) {
 	// Parse target type: INT, FLOAT, or TEXT
 	var targetType string
 	switch p.curToken.Type {
-	case token.INT, token.FLOAT, token.TEXT, token.JSON:
+	case token.INT, token.FLOAT, token.TEXT, token.JSON, token.JSONB:
 		targetType = p.curToken.Type.String()
 		p.nextToken()
 	default:
-		return nil, fmt.Errorf("expected type name (INT, FLOAT, TEXT, JSON) after AS, got %s (%q)", p.curToken.Type, p.curToken.Literal)
+		return nil, fmt.Errorf("expected type name (INT, FLOAT, TEXT, JSON, JSONB) after AS, got %s (%q)", p.curToken.Type, p.curToken.Literal)
 	}
 	if err := p.expectToken(token.RPAREN); err != nil {
 		return nil, err

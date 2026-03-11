@@ -746,6 +746,132 @@ func TestJSON_TABLE_ErrorCases(t *testing.T) {
 	}
 }
 
+func TestJSONBType_CreateTableAndInsert(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+
+	result := run(t, exec, "CREATE TABLE docs (id INT, data JSONB)")
+	assert.Equal(t, "table created", result.Message)
+
+	// Insert valid JSON object
+	result = run(t, exec, "INSERT INTO docs VALUES (1, '{\"name\": \"alice\"}')")
+	assert.Equal(t, "1 row inserted", result.Message)
+
+	// Insert valid JSON array
+	result = run(t, exec, "INSERT INTO docs VALUES (2, '[1, 2, 3]')")
+	assert.Equal(t, "1 row inserted", result.Message)
+
+	// Insert valid JSON string
+	result = run(t, exec, "INSERT INTO docs VALUES (3, '\"hello\"')")
+	assert.Equal(t, "1 row inserted", result.Message)
+
+	// Insert valid JSON number
+	result = run(t, exec, "INSERT INTO docs VALUES (4, '42')")
+	assert.Equal(t, "1 row inserted", result.Message)
+
+	// Insert valid JSON boolean
+	result = run(t, exec, "INSERT INTO docs VALUES (5, 'true')")
+	assert.Equal(t, "1 row inserted", result.Message)
+
+	// Insert valid JSON null
+	result = run(t, exec, "INSERT INTO docs VALUES (6, 'null')")
+	assert.Equal(t, "1 row inserted", result.Message)
+
+	// Insert invalid JSON should fail
+	_, err := runWithError(exec, "INSERT INTO docs VALUES (7, 'not json')")
+	require.Error(t, err)
+}
+
+func TestJSONBType_SelectReturnsJSON(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE docs (id INT, data JSONB)")
+	run(t, exec, `INSERT INTO docs VALUES (1, '{"name": "alice", "age": 30}')`)
+	run(t, exec, `INSERT INTO docs VALUES (2, '[1, 2, 3]')`)
+
+	// SELECT should return JSON text representation
+	result := run(t, exec, "SELECT data FROM docs WHERE id = 1")
+	require.Len(t, result.Rows, 1)
+	// JSONB output is valid JSON (key order may differ from input)
+	val, ok := result.Rows[0][0].(string)
+	require.True(t, ok, "JSONB SELECT result should be string")
+	assert.Contains(t, val, `"name"`)
+	assert.Contains(t, val, `"alice"`)
+
+	result = run(t, exec, "SELECT data FROM docs WHERE id = 2")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, `[1,2,3]`, result.Rows[0][0])
+}
+
+func TestJSONBType_InternalStorageIsMsgpack(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE docs (id INT, data JSONB)")
+	run(t, exec, `INSERT INTO docs VALUES (1, '{"key": "value"}')`)
+
+	// Internal value should be []byte (msgpack), not string
+	db, _ := exec.resolveDatabase("")
+	rows, _ := db.storage.Scan("docs")
+	require.Len(t, rows, 1)
+	_, isByteSlice := rows[0][1].([]byte)
+	assert.True(t, isByteSlice, "JSONB internal storage should be []byte (msgpack)")
+}
+
+func TestJSONBType_WithJSONFunctions(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE docs (id INT, data JSONB)")
+	run(t, exec, `INSERT INTO docs VALUES (1, '{"name": "alice", "tags": ["go", "sql"]}')`)
+
+	// JSON_VALUE should work with JSONB column
+	result := run(t, exec, "SELECT JSON_VALUE(data, '$.name') FROM docs")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, "alice", result.Rows[0][0])
+
+	// JSON_QUERY should work with JSONB column
+	result = run(t, exec, "SELECT JSON_QUERY(data, '$.tags') FROM docs")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, `["go","sql"]`, result.Rows[0][0])
+
+	// JSON_EXISTS should work with JSONB column
+	result = run(t, exec, "SELECT JSON_EXISTS(data, '$.name') FROM docs")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, true, result.Rows[0][0])
+
+	// IS JSON should work with JSONB column
+	result = run(t, exec, "SELECT data IS JSON FROM docs")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, true, result.Rows[0][0])
+}
+
+func TestJSONBType_NullHandling(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+	run(t, exec, "CREATE TABLE docs (id INT, data JSONB)")
+	run(t, exec, "INSERT INTO docs VALUES (1, NULL)")
+
+	result := run(t, exec, "SELECT data FROM docs")
+	require.Len(t, result.Rows, 1)
+	assert.Nil(t, result.Rows[0][0])
+
+	result = run(t, exec, "SELECT data IS NULL FROM docs")
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, true, result.Rows[0][0])
+}
+
+func TestJSONBType_CastBetweenJSONAndJSONB(t *testing.T) {
+	exec := NewExecutor(NewDatabase("test"))
+
+	// CAST text to JSONB
+	result := run(t, exec, `SELECT CAST('{"a": 1}' AS JSONB)`)
+	require.Len(t, result.Rows, 1)
+	assert.Contains(t, result.Rows[0][0].(string), `"a"`)
+
+	// CAST JSONB column to JSON (should produce JSON string)
+	run(t, exec, "CREATE TABLE t1 (id INT, data JSONB)")
+	run(t, exec, `INSERT INTO t1 VALUES (1, '{"x": 42}')`)
+	result = run(t, exec, "SELECT CAST(data AS JSON) FROM t1")
+	require.Len(t, result.Rows, 1)
+	val, ok := result.Rows[0][0].(string)
+	require.True(t, ok)
+	assert.Contains(t, val, `"x"`)
+}
+
 func TestJSON_OBJECT_InsertIntoJSONColumn(t *testing.T) {
 	exec := NewExecutor(NewDatabase("test"))
 	run(t, exec, "CREATE TABLE docs (id INT, data JSON)")

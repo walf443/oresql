@@ -50,6 +50,7 @@ const (
 	FLOAT       // FLOAT type keyword
 	TEXT        // TEXT type keyword
 	JSON        // JSON type keyword
+	JSONB       // JSONB type keyword
 	JSON_OBJECT // JSON_OBJECT function
 	JSON_ARRAY  // JSON_ARRAY function
 	JSON_VALUE  // JSON_VALUE function
@@ -183,6 +184,7 @@ var tokenNames = map[TokenType]string{
 	FLOAT:        "FLOAT",
 	TEXT:         "TEXT",
 	JSON:         "JSON",
+	JSONB:        "JSONB",
 	JSON_OBJECT:  "JSON_OBJECT",
 	JSON_ARRAY:   "JSON_ARRAY",
 	JSON_VALUE:   "JSON_VALUE",
@@ -301,6 +303,7 @@ var keywords = map[string]TokenType{
 	"FLOAT":       FLOAT,
 	"TEXT":        TEXT,
 	"JSON":        JSON,
+	"JSONB":       JSONB,
 	"JSON_OBJECT": JSON_OBJECT,
 	"JSON_ARRAY":  JSON_ARRAY,
 	"JSON_VALUE":  JSON_VALUE,

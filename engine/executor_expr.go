@@ -45,6 +45,21 @@ func validateAndCoerceValue(val Value, col ColumnInfo) (Value, error) {
 		if !json.Valid([]byte(s)) {
 			return nil, fmt.Errorf("column %q: invalid JSON value: %s", col.Name, s)
 		}
+	case "JSONB":
+		switch v := val.(type) {
+		case []byte:
+			// Already msgpack bytes
+			return v, nil
+		case string:
+			// Convert JSON string to msgpack
+			b, err := jsonToMsgpack(v)
+			if err != nil {
+				return nil, fmt.Errorf("column %q: %w", col.Name, err)
+			}
+			return b, nil
+		default:
+			return nil, fmt.Errorf("column %q expects JSONB, got %T", col.Name, val)
+		}
 	}
 	return val, nil
 }
@@ -1221,8 +1236,28 @@ func evalCast(cast *ast.CastExpr, row Row, eval ExprEvaluator) (Value, error) {
 				return nil, fmt.Errorf("cannot cast %q to JSON: invalid JSON", v)
 			}
 			return v, nil
+		case []byte:
+			// JSONB to JSON: decode msgpack to JSON string
+			s, err := msgpackToJSON(v)
+			if err != nil {
+				return nil, fmt.Errorf("cannot cast JSONB to JSON: %w", err)
+			}
+			return s, nil
 		default:
 			return nil, fmt.Errorf("cannot cast %T to JSON", val)
+		}
+	case "JSONB":
+		switch v := val.(type) {
+		case string:
+			b, err := jsonToMsgpack(v)
+			if err != nil {
+				return nil, fmt.Errorf("cannot cast %q to JSONB: %w", v, err)
+			}
+			return b, nil
+		case []byte:
+			return v, nil
+		default:
+			return nil, fmt.Errorf("cannot cast %T to JSONB", val)
 		}
 	default:
 		return nil, fmt.Errorf("unsupported CAST target type: %s", cast.TargetType)
@@ -1267,6 +1302,13 @@ func valueToJSON(val Value) ([]byte, error) {
 			return []byte(v), nil
 		}
 		return json.Marshal(v)
+	case []byte:
+		// JSONB: decode msgpack to JSON
+		s, err := msgpackToJSON(v)
+		if err != nil {
+			return nil, err
+		}
+		return []byte(s), nil
 	case int64:
 		return json.Marshal(v)
 	case float64:
@@ -1331,6 +1373,23 @@ func evalFuncJSONArray(args []Value) (Value, error) {
 
 // parseJSONAndTraverse parses JSON text, traverses it with a path, and returns the result.
 // If compiledPath is non-nil, it is used directly; otherwise pathStr is parsed on-the-fly.
+// jsonStringFromValue extracts a JSON string from a value.
+// Accepts string (JSON text) or []byte (JSONB/msgpack) values.
+func jsonStringFromValue(funcName string, val Value) (string, error) {
+	switch v := val.(type) {
+	case string:
+		return v, nil
+	case []byte:
+		s, err := msgpackToJSON(v)
+		if err != nil {
+			return "", fmt.Errorf("%s: %w", funcName, err)
+		}
+		return s, nil
+	default:
+		return "", fmt.Errorf("%s first argument must be a string, got %T", funcName, val)
+	}
+}
+
 func parseJSONAndTraverse(funcName string, jsonStr string, pathStr string, compiledPath *json_path.Path) (any, error) {
 	var raw any
 	if err := json.Unmarshal([]byte(jsonStr), &raw); err != nil {
@@ -1360,11 +1419,11 @@ func evalFuncJSONValue(args []Value, compiledPath *json_path.Path) (Value, error
 	if args[0] == nil {
 		return nil, nil
 	}
-	jsonStr, ok := args[0].(string)
-	if !ok {
-		return nil, fmt.Errorf("JSON_VALUE first argument must be a string, got %T", args[0])
+	jsonStr, err := jsonStringFromValue("JSON_VALUE", args[0])
+	if err != nil {
+		return nil, err
 	}
-	pathStr, _ := args[1].(string)
+	pathStr, ok := args[1].(string)
 	if compiledPath == nil && !ok {
 		return nil, fmt.Errorf("JSON_VALUE second argument (path) must be a string, got %T", args[1])
 	}
@@ -1412,11 +1471,11 @@ func evalFuncJSONQuery(args []Value, compiledPath *json_path.Path) (Value, error
 	if args[0] == nil {
 		return nil, nil
 	}
-	jsonStr, ok := args[0].(string)
-	if !ok {
-		return nil, fmt.Errorf("JSON_QUERY first argument must be a string, got %T", args[0])
+	jsonStr, err := jsonStringFromValue("JSON_QUERY", args[0])
+	if err != nil {
+		return nil, err
 	}
-	pathStr, _ := args[1].(string)
+	pathStr, ok := args[1].(string)
 	if compiledPath == nil && !ok {
 		return nil, fmt.Errorf("JSON_QUERY second argument (path) must be a string, got %T", args[1])
 	}
@@ -1453,9 +1512,9 @@ func evalFuncJSONExists(args []Value, compiledPath *json_path.Path) (Value, erro
 	if args[0] == nil {
 		return nil, nil
 	}
-	jsonStr, ok := args[0].(string)
-	if !ok {
-		return nil, fmt.Errorf("JSON_EXISTS first argument must be a string, got %T", args[0])
+	jsonStr, err := jsonStringFromValue("JSON_EXISTS", args[0])
+	if err != nil {
+		return nil, err
 	}
 	pathStr, ok := args[1].(string)
 	if compiledPath == nil && !ok {
@@ -1481,11 +1540,15 @@ func evalFuncJSONExists(args []Value, compiledPath *json_path.Path) (Value, erro
 // isValidJSON returns true if val is a string containing valid JSON.
 // Non-string types and nil return false.
 func isValidJSON(val Value) bool {
-	s, ok := val.(string)
-	if !ok {
+	switch v := val.(type) {
+	case string:
+		return json.Valid([]byte(v))
+	case []byte:
+		// JSONB values are always valid JSON (validated on insert)
+		return true
+	default:
 		return false
 	}
-	return json.Valid([]byte(s))
 }
 
 // tryCompileJSONPath checks if the second argument of a JSON_VALUE/JSON_QUERY call

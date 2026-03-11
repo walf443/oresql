@@ -96,6 +96,14 @@ func (c *Catalog) CreateTable(name string, columnDefs []ast.ColumnDef, tablePK [
 					if !json.Valid([]byte(s)) {
 						return nil, fmt.Errorf("column %q: invalid JSON DEFAULT value: %s", cd.Name, s)
 					}
+				case "JSONB":
+					s, ok := val.(string)
+					if !ok {
+						return nil, fmt.Errorf("column %q expects JSONB, DEFAULT value is %T", cd.Name, val)
+					}
+					if !json.Valid([]byte(s)) {
+						return nil, fmt.Errorf("column %q: invalid JSONB DEFAULT value: %s", cd.Name, s)
+					}
 				}
 			}
 			col.Default = val
@@ -214,6 +222,14 @@ func (c *Catalog) AddColumn(tableName string, colDef ast.ColumnDef) (*TableInfo,
 				}
 				if !json.Valid([]byte(s)) {
 					return nil, fmt.Errorf("column %q: invalid JSON DEFAULT value: %s", colDef.Name, s)
+				}
+			case "JSONB":
+				s, ok := val.(string)
+				if !ok {
+					return nil, fmt.Errorf("column %q expects JSONB, DEFAULT value is %T", colDef.Name, val)
+				}
+				if !json.Valid([]byte(s)) {
+					return nil, fmt.Errorf("column %q: invalid JSONB DEFAULT value: %s", colDef.Name, s)
 				}
 			}
 		}

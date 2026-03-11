@@ -1260,7 +1260,7 @@ func (e *Executor) executeSelectWithoutTable(stmt *ast.SelectStmt) (*Result, err
 		} else {
 			colNames = append(colNames, formatExpr(inner))
 		}
-		row = append(row, val)
+		row = append(row, finalizeValue(val))
 	}
 
 	colTypes := resolveColumnTypes(stmt.Columns, eval)

@@ -456,7 +456,7 @@ func projectRows(rows []Row, colExprs []ast.Expr, isStar bool, eval ExprEvaluato
 		for _, row := range rows {
 			projected := make(Row, len(cols))
 			for i, col := range cols {
-				projected[i] = row[col.Index]
+				projected[i] = finalizeValue(row[col.Index])
 			}
 			resultRows = append(resultRows, projected)
 		}
@@ -468,10 +468,23 @@ func projectRows(rows []Row, colExprs []ast.Expr, isStar bool, eval ExprEvaluato
 				if err != nil {
 					return nil, err
 				}
-				projected[i] = val
+				projected[i] = finalizeValue(val)
 			}
 			resultRows = append(resultRows, projected)
 		}
 	}
 	return resultRows, nil
+}
+
+// finalizeValue converts internal representations to output-friendly values.
+// JSONB ([]byte msgpack) is converted to JSON string for display.
+func finalizeValue(val Value) Value {
+	if b, ok := val.([]byte); ok {
+		s, err := msgpackToJSON(b)
+		if err != nil {
+			return val // fallback: return raw bytes
+		}
+		return s
+	}
+	return val
 }

@@ -802,7 +802,7 @@ func LookupKey(b []byte, key string) (any, bool, error) {
 	if count == 0 {
 		return nil, false, nil
 	}
-
+	
 	// Binary search entry table for targetIdx.
 	// Entry table: [keyIndex: keyIdxW, valOffset: valOffW] × count.
 	entrySize := int(keyIdxW) + int(valOffW)

@@ -288,6 +288,227 @@ func (pe *pkOnlyEvaluator) ColumnList() []ColumnInfo {
 	return []ColumnInfo{pe.col}
 }
 
+// evalInExpr evaluates an IN expression (with value list or subquery).
+func evalInExpr(e *ast.InExpr, row Row, eval ExprEvaluator) (Value, error) {
+	left, err := eval.Eval(e.Left, row)
+	if err != nil {
+		return nil, err
+	}
+	if left == nil {
+		return false, nil
+	}
+	if e.Subquery != nil {
+		return evalInSubquery(e, left, row, eval)
+	}
+	for _, valExpr := range e.Values {
+		val, err := eval.Eval(valExpr, row)
+		if err != nil {
+			return nil, err
+		}
+		match, err := evalComparison(left, "=", val)
+		if err != nil {
+			return nil, err
+		}
+		if match {
+			return !e.Not, nil
+		}
+	}
+	return e.Not, nil
+}
+
+// evalInSubquery evaluates an IN expression with a subquery.
+func evalInSubquery(e *ast.InExpr, left Value, row Row, eval ExprEvaluator) (Value, error) {
+	exec := eval.GetExecutor()
+	if exec == nil {
+		return nil, fmt.Errorf("IN subquery not supported in this context")
+	}
+	result, err := exec.executeSelectMaybeCorrelated(e.Subquery, eval, row)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range result.Rows {
+		if len(r) == 0 {
+			continue
+		}
+		match, err := evalComparison(left, "=", r[0])
+		if err != nil {
+			return nil, err
+		}
+		if match {
+			return !e.Not, nil
+		}
+	}
+	return e.Not, nil
+}
+
+// evalBetweenExpr evaluates a BETWEEN expression.
+func evalBetweenExpr(e *ast.BetweenExpr, row Row, eval ExprEvaluator) (Value, error) {
+	left, err := eval.Eval(e.Left, row)
+	if err != nil {
+		return nil, err
+	}
+	if left == nil {
+		return false, nil
+	}
+	low, err := eval.Eval(e.Low, row)
+	if err != nil {
+		return nil, err
+	}
+	high, err := eval.Eval(e.High, row)
+	if err != nil {
+		return nil, err
+	}
+	geq, err := evalComparison(left, ">=", low)
+	if err != nil {
+		return nil, err
+	}
+	leq, err := evalComparison(left, "<=", high)
+	if err != nil {
+		return nil, err
+	}
+	result := geq && leq
+	if e.Not {
+		return !result, nil
+	}
+	return result, nil
+}
+
+// evalLikeExpr evaluates a LIKE expression.
+func evalLikeExpr(e *ast.LikeExpr, row Row, eval ExprEvaluator) (Value, error) {
+	left, err := eval.Eval(e.Left, row)
+	if err != nil {
+		return nil, err
+	}
+	pattern, err := eval.Eval(e.Pattern, row)
+	if err != nil {
+		return nil, err
+	}
+	if left == nil || pattern == nil {
+		return false, nil
+	}
+	leftStr, ok := left.(string)
+	if !ok {
+		return nil, fmt.Errorf("LIKE requires string operand, got %T", left)
+	}
+	patternStr, ok := pattern.(string)
+	if !ok {
+		return nil, fmt.Errorf("LIKE requires string pattern, got %T", pattern)
+	}
+	result := matchLike(leftStr, patternStr)
+	if e.Not {
+		return !result, nil
+	}
+	return result, nil
+}
+
+// evalLogicalExpr evaluates a logical expression (AND/OR) with short-circuit.
+func evalLogicalExpr(e *ast.LogicalExpr, row Row, eval ExprEvaluator) (Value, error) {
+	left, err := eval.Eval(e.Left, row)
+	if err != nil {
+		return nil, err
+	}
+	leftBool, ok := left.(bool)
+	if !ok {
+		return nil, fmt.Errorf("expected boolean in %s expression, got %T", e.Op, left)
+	}
+	// Short-circuit evaluation
+	if e.Op == "AND" && !leftBool {
+		return false, nil
+	}
+	if e.Op == "OR" && leftBool {
+		return true, nil
+	}
+	right, err := eval.Eval(e.Right, row)
+	if err != nil {
+		return nil, err
+	}
+	rightBool, ok := right.(bool)
+	if !ok {
+		return nil, fmt.Errorf("expected boolean in %s expression, got %T", e.Op, right)
+	}
+	return evalLogicalOp(leftBool, e.Op, rightBool)
+}
+
+// evalCaseExpr evaluates a CASE expression (simple or searched).
+func evalCaseExpr(e *ast.CaseExpr, row Row, eval ExprEvaluator) (Value, error) {
+	if e.Operand != nil {
+		// Simple CASE: compare operand with each WHEN value
+		operandVal, err := eval.Eval(e.Operand, row)
+		if err != nil {
+			return nil, err
+		}
+		for _, w := range e.Whens {
+			whenVal, err := eval.Eval(w.When, row)
+			if err != nil {
+				return nil, err
+			}
+			match, err := evalComparison(operandVal, "=", whenVal)
+			if err != nil {
+				return nil, err
+			}
+			if match {
+				return eval.Eval(w.Then, row)
+			}
+		}
+	} else {
+		// Searched CASE: evaluate each WHEN condition as boolean
+		for _, w := range e.Whens {
+			whenVal, err := eval.Eval(w.When, row)
+			if err != nil {
+				return nil, err
+			}
+			b, ok := whenVal.(bool)
+			if !ok {
+				// NULL or non-boolean treated as false (SQL standard)
+				continue
+			}
+			if b {
+				return eval.Eval(w.Then, row)
+			}
+		}
+	}
+	if e.Else != nil {
+		return eval.Eval(e.Else, row)
+	}
+	return nil, nil
+}
+
+// evalScalarSubquery evaluates a scalar subquery expression.
+func evalScalarSubquery(e *ast.ScalarExpr, row Row, eval ExprEvaluator) (Value, error) {
+	exec := eval.GetExecutor()
+	if exec == nil {
+		return nil, fmt.Errorf("scalar subquery not supported in this context")
+	}
+	result, err := exec.executeSelectMaybeCorrelated(e.Subquery, eval, row)
+	if err != nil {
+		return nil, err
+	}
+	if len(result.Rows) == 0 {
+		return nil, nil
+	}
+	if len(result.Rows) > 1 {
+		return nil, fmt.Errorf("scalar subquery must return at most one row, got %d", len(result.Rows))
+	}
+	return result.Rows[0][0], nil
+}
+
+// evalExistsExpr evaluates an EXISTS subquery expression.
+func evalExistsExpr(e *ast.ExistsExpr, row Row, eval ExprEvaluator) (Value, error) {
+	exec := eval.GetExecutor()
+	if exec == nil {
+		return nil, fmt.Errorf("EXISTS subquery not supported in this context")
+	}
+	result, err := exec.executeSelectMaybeCorrelated(e.Subquery, eval, row)
+	if err != nil {
+		return nil, err
+	}
+	hasRows := len(result.Rows) > 0
+	if e.Not {
+		return !hasRows, nil
+	}
+	return hasRows, nil
+}
+
 // evalExprGeneric is the unified expression evaluator that delegates column resolution
 // to the ExprEvaluator interface.
 func evalExprGeneric(expr ast.Expr, row Row, eval ExprEvaluator) (Value, error) {
@@ -328,104 +549,11 @@ func evalExprGeneric(expr ast.Expr, row Row, eval ExprEvaluator) (Value, error) 
 		}
 		return result, nil
 	case *ast.InExpr:
-		left, err := eval.Eval(e.Left, row)
-		if err != nil {
-			return nil, err
-		}
-		if left == nil {
-			return false, nil
-		}
-		if e.Subquery != nil {
-			exec := eval.GetExecutor()
-			if exec == nil {
-				return nil, fmt.Errorf("IN subquery not supported in this context")
-			}
-			result, err := exec.executeSelectMaybeCorrelated(e.Subquery, eval, row)
-			if err != nil {
-				return nil, err
-			}
-			for _, r := range result.Rows {
-				if len(r) == 0 {
-					continue
-				}
-				match, err := evalComparison(left, "=", r[0])
-				if err != nil {
-					return nil, err
-				}
-				if match {
-					return !e.Not, nil
-				}
-			}
-			return e.Not, nil
-		}
-		for _, valExpr := range e.Values {
-			val, err := eval.Eval(valExpr, row)
-			if err != nil {
-				return nil, err
-			}
-			match, err := evalComparison(left, "=", val)
-			if err != nil {
-				return nil, err
-			}
-			if match {
-				return !e.Not, nil
-			}
-		}
-		return e.Not, nil
+		return evalInExpr(e, row, eval)
 	case *ast.BetweenExpr:
-		left, err := eval.Eval(e.Left, row)
-		if err != nil {
-			return nil, err
-		}
-		if left == nil {
-			return false, nil
-		}
-		low, err := eval.Eval(e.Low, row)
-		if err != nil {
-			return nil, err
-		}
-		high, err := eval.Eval(e.High, row)
-		if err != nil {
-			return nil, err
-		}
-		geq, err := evalComparison(left, ">=", low)
-		if err != nil {
-			return nil, err
-		}
-		leq, err := evalComparison(left, "<=", high)
-		if err != nil {
-			return nil, err
-		}
-		result := geq && leq
-		if e.Not {
-			return !result, nil
-		}
-		return result, nil
+		return evalBetweenExpr(e, row, eval)
 	case *ast.LikeExpr:
-		left, err := eval.Eval(e.Left, row)
-		if err != nil {
-			return nil, err
-		}
-		pattern, err := eval.Eval(e.Pattern, row)
-		if err != nil {
-			return nil, err
-		}
-		if left == nil || pattern == nil {
-			return false, nil
-		}
-		leftStr, ok := left.(string)
-		if !ok {
-			return nil, fmt.Errorf("LIKE requires string operand, got %T", left)
-		}
-		patternStr, ok := pattern.(string)
-		if !ok {
-			return nil, fmt.Errorf("LIKE requires string pattern, got %T", pattern)
-		}
-		result := matchLike(leftStr, patternStr)
-		if e.Not {
-			return !result, nil
-		}
-		return result, nil
+		return evalLikeExpr(e, row, eval)
 	case *ast.MatchExpr:
 		val, err := eval.Eval(e.Expr, row)
 		if err != nil {
@@ -460,30 +588,7 @@ func evalExprGeneric(expr ast.Expr, row Row, eval ExprEvaluator) (Value, error) 
 		}
 		return evalComparison(left, e.Op, right)
 	case *ast.LogicalExpr:
-		left, err := eval.Eval(e.Left, row)
-		if err != nil {
-			return nil, err
-		}
-		leftBool, ok := left.(bool)
-		if !ok {
-			return nil, fmt.Errorf("expected boolean in %s expression, got %T", e.Op, left)
-		}
-		// Short-circuit evaluation
-		if e.Op == "AND" && !leftBool {
-			return false, nil
-		}
-		if e.Op == "OR" && leftBool {
-			return true, nil
-		}
-		right, err := eval.Eval(e.Right, row)
-		if err != nil {
-			return nil, err
-		}
-		rightBool, ok := right.(bool)
-		if !ok {
-			return nil, fmt.Errorf("expected boolean in %s expression, got %T", e.Op, right)
-		}
-		return evalLogicalOp(leftBool, e.Op, rightBool)
+		return evalLogicalExpr(e, row, eval)
 	case *ast.NotExpr:
 		val, err := eval.Eval(e.Expr, row)
 		if err != nil {
@@ -495,76 +600,11 @@ func evalExprGeneric(expr ast.Expr, row Row, eval ExprEvaluator) (Value, error) 
 		}
 		return !b, nil
 	case *ast.CaseExpr:
-		if e.Operand != nil {
-			// Simple CASE: compare operand with each WHEN value
-			operandVal, err := eval.Eval(e.Operand, row)
-			if err != nil {
-				return nil, err
-			}
-			for _, w := range e.Whens {
-				whenVal, err := eval.Eval(w.When, row)
-				if err != nil {
-					return nil, err
-				}
-				match, err := evalComparison(operandVal, "=", whenVal)
-				if err != nil {
-					return nil, err
-				}
-				if match {
-					return eval.Eval(w.Then, row)
-				}
-			}
-		} else {
-			// Searched CASE: evaluate each WHEN condition as boolean
-			for _, w := range e.Whens {
-				whenVal, err := eval.Eval(w.When, row)
-				if err != nil {
-					return nil, err
-				}
-				b, ok := whenVal.(bool)
-				if !ok {
-					// NULL or non-boolean treated as false (SQL standard)
-					continue
-				}
-				if b {
-					return eval.Eval(w.Then, row)
-				}
-			}
-		}
-		if e.Else != nil {
-			return eval.Eval(e.Else, row)
-		}
-		return nil, nil
+		return evalCaseExpr(e, row, eval)
 	case *ast.ScalarExpr:
-		exec := eval.GetExecutor()
-		if exec == nil {
-			return nil, fmt.Errorf("scalar subquery not supported in this context")
-		}
-		result, err := exec.executeSelectMaybeCorrelated(e.Subquery, eval, row)
-		if err != nil {
-			return nil, err
-		}
-		if len(result.Rows) == 0 {
-			return nil, nil
-		}
-		if len(result.Rows) > 1 {
-			return nil, fmt.Errorf("scalar subquery must return at most one row, got %d", len(result.Rows))
-		}
-		return result.Rows[0][0], nil
+		return evalScalarSubquery(e, row, eval)
 	case *ast.ExistsExpr:
-		exec := eval.GetExecutor()
-		if exec == nil {
-			return nil, fmt.Errorf("EXISTS subquery not supported in this context")
-		}
-		result, err := exec.executeSelectMaybeCorrelated(e.Subquery, eval, row)
-		if err != nil {
-			return nil, err
-		}
-		hasRows := len(result.Rows) > 0
-		if e.Not {
-			return !hasRows, nil
-		}
-		return hasRows, nil
+		return evalExistsExpr(e, row, eval)
 	case *ast.WindowExpr:
 		return nil, fmt.Errorf("window function %s not allowed in this context", e.Name)
 	case *ast.CastExpr:

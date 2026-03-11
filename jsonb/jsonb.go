@@ -14,18 +14,22 @@ import (
 
 // Type tags for the custom binary format.
 const (
-	TagInvalid    byte = 0x00
-	TagNull       byte = 0x01
-	TagBool       byte = 0x02 // legacy, decode only
-	TagInt        byte = 0x03
-	TagFloat      byte = 0x04
-	TagString     byte = 0x05
-	TagArray      byte = 0x06
-	TagObject     byte = 0x07
-	TagIntArray   byte = 0x08
-	TagFloatArray byte = 0x09
-	TagTrue       byte = 0x0A
-	TagFalse      byte = 0x0B
+	TagInvalid         byte = 0x00
+	TagNull            byte = 0x01
+	TagBool            byte = 0x02 // legacy, decode only
+	TagInt             byte = 0x03
+	TagFloat           byte = 0x04
+	TagString          byte = 0x05
+	TagArray           byte = 0x06
+	TagObject          byte = 0x07
+	TagIntArray        byte = 0x08
+	TagFloatArray      byte = 0x09
+	TagTrue            byte = 0x0A
+	TagFalse           byte = 0x0B
+	TagLargeObject     byte = 0x0C // count as uint16 (>255 fields)
+	TagLargeArray      byte = 0x0D // count as uint32 (>255 elements)
+	TagLargeIntArray   byte = 0x0E // count as uint32 (>255 elements)
+	TagLargeFloatArray byte = 0x0F // count as uint32 (>255 elements)
 
 	// Inline small integers: tags 0x80-0xFF encode values 0-127 in a single byte.
 	// Value = tag & 0x7F.
@@ -191,8 +195,7 @@ func encodeDictKey(buf []byte, v string) []byte {
 
 func encodeArray(buf []byte, arr []any, dict map[string]uint16) ([]byte, error) {
 	if len(arr) == 0 {
-		buf = append(buf, TagArray)
-		buf = binary.BigEndian.AppendUint32(buf, 0)
+		buf = append(buf, TagArray, 0)
 		return buf, nil
 	}
 
@@ -205,9 +208,13 @@ func encodeArray(buf []byte, arr []any, dict map[string]uint16) ([]byte, error) 
 	}
 
 	// Generic array encoding with offset table.
-	buf = append(buf, TagArray)
-	count := uint32(len(arr))
-	buf = binary.BigEndian.AppendUint32(buf, count)
+	count := len(arr)
+	if count <= 255 {
+		buf = append(buf, TagArray, byte(count))
+	} else {
+		buf = append(buf, TagLargeArray)
+		buf = binary.BigEndian.AppendUint32(buf, uint32(count))
+	}
 
 	// Encode each element into a temporary buffer to compute offsets.
 	elements := make([][]byte, len(arr))
@@ -255,7 +262,8 @@ func intWidth(vals []int64) uint8 {
 
 // tryEncodeIntArray attempts to encode arr as a typed int array.
 // Returns (nil, nil) if the array is not all int64.
-// Format: [TagIntArray][count: uint32][width: uint8][values: width × count]
+// Format (≤255): [TagIntArray][count: uint8][width: uint8][values: width × count]
+// Format (>255): [TagLargeIntArray][count: uint32][width: uint8][values: width × count]
 func tryEncodeIntArray(buf []byte, arr []any) ([]byte, error) {
 	vals := make([]int64, len(arr))
 	for i, v := range arr {
@@ -268,8 +276,13 @@ func tryEncodeIntArray(buf []byte, arr []any) ([]byte, error) {
 
 	width := intWidth(vals)
 
-	buf = append(buf, TagIntArray)
-	buf = binary.BigEndian.AppendUint32(buf, uint32(len(vals)))
+	count := len(vals)
+	if count <= 255 {
+		buf = append(buf, TagIntArray, byte(count))
+	} else {
+		buf = append(buf, TagLargeIntArray)
+		buf = binary.BigEndian.AppendUint32(buf, uint32(count))
+	}
 	buf = append(buf, width)
 
 	for _, v := range vals {
@@ -289,7 +302,8 @@ func tryEncodeIntArray(buf []byte, arr []any) ([]byte, error) {
 
 // tryEncodeFloatArray attempts to encode arr as a typed float array.
 // Returns (nil, nil) if the array is not all float64.
-// Format: [TagFloatArray][count: uint32][values: 8 × count]
+// Format (≤255): [TagFloatArray][count: uint8][values: 8 × count]
+// Format (>255): [TagLargeFloatArray][count: uint32][values: 8 × count]
 func tryEncodeFloatArray(buf []byte, arr []any) ([]byte, error) {
 	vals := make([]float64, len(arr))
 	for i, v := range arr {
@@ -300,8 +314,13 @@ func tryEncodeFloatArray(buf []byte, arr []any) ([]byte, error) {
 		vals[i] = f
 	}
 
-	buf = append(buf, TagFloatArray)
-	buf = binary.BigEndian.AppendUint32(buf, uint32(len(vals)))
+	count := len(vals)
+	if count <= 255 {
+		buf = append(buf, TagFloatArray, byte(count))
+	} else {
+		buf = append(buf, TagLargeFloatArray)
+		buf = binary.BigEndian.AppendUint32(buf, uint32(count))
+	}
 
 	for _, v := range vals {
 		buf = binary.BigEndian.AppendUint64(buf, math.Float64bits(v))
@@ -348,17 +367,27 @@ func readUintN(b []byte, pos int, width uint8) (uint32, int) {
 
 // encodeObject encodes a map as an object with dictionary key references.
 //
-// Format:
+// Format (≤255 fields):
 //
-//	[TagObject][count: uint16][keyIdxWidth: uint8][valOffWidth: uint8]
+//	[TagObject][count: uint8][keyIdxWidth: uint8][valOffWidth: uint8]
+//	[entry table: (keyIdx: keyIdxWidth, valOff: valOffWidth) × count]
+//	[value data]
+//
+// Format (>255 fields):
+//
+//	[TagLargeObject][count: uint16][keyIdxWidth: uint8][valOffWidth: uint8]
 //	[entry table: (keyIdx: keyIdxWidth, valOff: valOffWidth) × count]
 //	[value data]
 //
 // Keys are written in sorted order (by dictionary index, which is already sorted).
 func encodeObject(buf []byte, obj map[string]any, dict map[string]uint16) ([]byte, error) {
-	buf = append(buf, TagObject)
 	count := len(obj)
-	buf = binary.BigEndian.AppendUint16(buf, uint16(count))
+	if count <= 255 {
+		buf = append(buf, TagObject, byte(count))
+	} else {
+		buf = append(buf, TagLargeObject)
+		buf = binary.BigEndian.AppendUint16(buf, uint16(count))
+	}
 
 	if count == 0 {
 		return buf, nil
@@ -621,24 +650,47 @@ func decodeValue(b []byte, pos int, dict []string) (any, int, error) {
 		v := string(b[pos : pos+length])
 		return v, pos + length, nil
 	case TagArray:
-		return decodeArray(b, pos, dict)
+		return decodeArray(b, pos, 1, dict)
+	case TagLargeArray:
+		return decodeArray(b, pos, 4, dict)
 	case TagObject:
-		return decodeObject(b, pos, dict)
+		return decodeObject(b, pos, 1, dict)
+	case TagLargeObject:
+		return decodeObject(b, pos, 2, dict)
 	case TagIntArray:
-		return decodeIntArray(b, pos)
+		return decodeIntArray(b, pos, 1)
+	case TagLargeIntArray:
+		return decodeIntArray(b, pos, 4)
 	case TagFloatArray:
-		return decodeFloatArray(b, pos)
+		return decodeFloatArray(b, pos, 1)
+	case TagLargeFloatArray:
+		return decodeFloatArray(b, pos, 4)
 	default:
 		return nil, pos, fmt.Errorf("unknown tag: 0x%02x", tag)
 	}
 }
 
-func decodeArray(b []byte, pos int, dict []string) (any, int, error) {
-	if pos+4 > len(b) {
-		return nil, pos, fmt.Errorf("unexpected end of data for array count")
+// readCount reads a count field of the given byte width (1 or 4 for arrays, 1 or 2 for objects).
+func readCount(b []byte, pos int, width int) (int, int, error) {
+	if pos+width > len(b) {
+		return 0, pos, fmt.Errorf("unexpected end of data for count")
 	}
-	count := int(binary.BigEndian.Uint32(b[pos : pos+4]))
-	pos += 4
+	switch width {
+	case 1:
+		return int(b[pos]), pos + 1, nil
+	case 2:
+		return int(binary.BigEndian.Uint16(b[pos : pos+2])), pos + 2, nil
+	case 4:
+		return int(binary.BigEndian.Uint32(b[pos : pos+4])), pos + 4, nil
+	}
+	return 0, pos, fmt.Errorf("invalid count width: %d", width)
+}
+
+func decodeArray(b []byte, pos int, countWidth int, dict []string) (any, int, error) {
+	count, pos, err := readCount(b, pos, countWidth)
+	if err != nil {
+		return nil, pos, err
+	}
 
 	if count == 0 {
 		return []any{}, pos, nil
@@ -664,12 +716,11 @@ func decodeArray(b []byte, pos int, dict []string) (any, int, error) {
 	return result, cur, nil
 }
 
-func decodeIntArray(b []byte, pos int) (any, int, error) {
-	if pos+4 > len(b) {
-		return nil, pos, fmt.Errorf("unexpected end of data for int array count")
+func decodeIntArray(b []byte, pos int, countWidth int) (any, int, error) {
+	count, pos, err := readCount(b, pos, countWidth)
+	if err != nil {
+		return nil, pos, err
 	}
-	count := int(binary.BigEndian.Uint32(b[pos : pos+4]))
-	pos += 4
 
 	if count == 0 {
 		return []any{}, pos, nil
@@ -703,12 +754,11 @@ func decodeIntArray(b []byte, pos int) (any, int, error) {
 	return result, pos + dataSize, nil
 }
 
-func decodeFloatArray(b []byte, pos int) (any, int, error) {
-	if pos+4 > len(b) {
-		return nil, pos, fmt.Errorf("unexpected end of data for float array count")
+func decodeFloatArray(b []byte, pos int, countWidth int) (any, int, error) {
+	count, pos, err := readCount(b, pos, countWidth)
+	if err != nil {
+		return nil, pos, err
 	}
-	count := int(binary.BigEndian.Uint32(b[pos : pos+4]))
-	pos += 4
 
 	if count == 0 {
 		return []any{}, pos, nil
@@ -728,18 +778,12 @@ func decodeFloatArray(b []byte, pos int) (any, int, error) {
 }
 
 // decodeObject decodes an object with dictionary key references and adaptive-width entry table.
-//
-// Format:
-//
-//	[count: uint16][keyIdxWidth: uint8][valOffWidth: uint8]
-//	[entry table: (keyIdx: keyIdxWidth, valOff: valOffWidth) × count]
-//	[value data]
-func decodeObject(b []byte, pos int, dict []string) (any, int, error) {
-	if pos+2 > len(b) {
-		return nil, pos, fmt.Errorf("unexpected end of data for object count")
+// countWidth is 1 (TagObject, uint8 count) or 2 (TagLargeObject, uint16 count).
+func decodeObject(b []byte, pos int, countWidth int, dict []string) (any, int, error) {
+	count, pos, err := readCount(b, pos, countWidth)
+	if err != nil {
+		return nil, pos, err
 	}
-	count := int(binary.BigEndian.Uint16(b[pos : pos+2]))
-	pos += 2
 
 	if count == 0 {
 		return map[string]any{}, pos, nil
@@ -810,23 +854,36 @@ func LookupKey(b []byte, key string) (any, bool, error) {
 	}
 
 	// Check the body is an object.
-	if bodyPos >= len(b) || b[bodyPos] != TagObject {
+	if bodyPos >= len(b) {
 		return nil, false, fmt.Errorf("not an object")
 	}
+	tag := b[bodyPos]
 	pos := bodyPos + 1
 
-	if pos+4 > len(b) {
-		return nil, false, fmt.Errorf("unexpected end of data")
+	var countWidth int
+	switch tag {
+	case TagObject:
+		countWidth = 1
+	case TagLargeObject:
+		countWidth = 2
+	default:
+		return nil, false, fmt.Errorf("not an object")
 	}
-	count := int(binary.BigEndian.Uint16(b[pos : pos+2]))
-	pos += 2
-	keyIdxW := b[pos]
-	valOffW := b[pos+1]
-	pos += 2
 
+	count, pos, err := readCount(b, pos, countWidth)
+	if err != nil {
+		return nil, false, err
+	}
 	if count == 0 {
 		return nil, false, nil
 	}
+
+	if pos+2 > len(b) {
+		return nil, false, fmt.Errorf("unexpected end of data")
+	}
+	keyIdxW := b[pos]
+	valOffW := b[pos+1]
+	pos += 2
 
 	// Binary search entry table for targetIdx.
 	// Entry table: [keyIndex: keyIdxW, valOffset: valOffW] × count.
@@ -869,11 +926,11 @@ func LookupIndex(b []byte, idx int) (any, bool, error) {
 
 	tag := b[bodyPos]
 	switch tag {
-	case TagIntArray:
+	case TagIntArray, TagLargeIntArray:
 		return lookupIntArrayIndex(b, bodyPos, idx)
-	case TagFloatArray:
+	case TagFloatArray, TagLargeFloatArray:
 		return lookupFloatArrayIndex(b, bodyPos, idx)
-	case TagArray:
+	case TagArray, TagLargeArray:
 		return lookupGenericArrayIndex(b, bodyPos, idx, dict)
 	default:
 		return nil, false, fmt.Errorf("not an array")
@@ -881,12 +938,16 @@ func LookupIndex(b []byte, idx int) (any, bool, error) {
 }
 
 func lookupIntArrayIndex(b []byte, start int, idx int) (any, bool, error) {
+	tag := b[start]
 	pos := start + 1 // skip tag
-	if pos+5 > len(b) {
-		return nil, false, fmt.Errorf("unexpected end of data")
+	countWidth := 1
+	if tag == TagLargeIntArray {
+		countWidth = 4
 	}
-	count := int(binary.BigEndian.Uint32(b[pos : pos+4]))
-	pos += 4
+	count, pos, err := readCount(b, pos, countWidth)
+	if err != nil {
+		return nil, false, err
+	}
 	if idx < 0 || idx >= count {
 		return nil, false, nil
 	}
@@ -911,15 +972,19 @@ func lookupIntArrayIndex(b []byte, start int, idx int) (any, bool, error) {
 }
 
 func lookupFloatArrayIndex(b []byte, start int, idx int) (any, bool, error) {
+	tag := b[start]
 	pos := start + 1 // skip tag
-	if pos+4 > len(b) {
-		return nil, false, fmt.Errorf("unexpected end of data")
+	countWidth := 1
+	if tag == TagLargeFloatArray {
+		countWidth = 4
 	}
-	count := int(binary.BigEndian.Uint32(b[pos : pos+4]))
+	count, pos, err := readCount(b, pos, countWidth)
+	if err != nil {
+		return nil, false, err
+	}
 	if idx < 0 || idx >= count {
 		return nil, false, nil
 	}
-	pos += 4
 	off := pos + idx*8
 	if off+8 > len(b) {
 		return nil, false, fmt.Errorf("unexpected end of data")
@@ -928,12 +993,16 @@ func lookupFloatArrayIndex(b []byte, start int, idx int) (any, bool, error) {
 }
 
 func lookupGenericArrayIndex(b []byte, start int, idx int, dict []string) (any, bool, error) {
+	tag := b[start]
 	pos := start + 1 // skip tag
-	if pos+4 > len(b) {
-		return nil, false, fmt.Errorf("unexpected end of data")
+	countWidth := 1
+	if tag == TagLargeArray {
+		countWidth = 4
 	}
-	count := int(binary.BigEndian.Uint32(b[pos : pos+4]))
-	pos += 4
+	count, pos, err := readCount(b, pos, countWidth)
+	if err != nil {
+		return nil, false, err
+	}
 	if idx < 0 || idx >= count {
 		return nil, false, nil
 	}
@@ -985,10 +1054,10 @@ func LookupKeys(b []byte, path ...any) (any, bool, error) {
 		case int:
 			if isLast {
 				tag := b[pos]
-				if tag == TagIntArray {
+				if tag == TagIntArray || tag == TagLargeIntArray {
 					return lookupIntArrayIndex(b, pos, s)
 				}
-				if tag == TagFloatArray {
+				if tag == TagFloatArray || tag == TagLargeFloatArray {
 					return lookupFloatArrayIndex(b, pos, s)
 				}
 			}
@@ -1075,11 +1144,11 @@ func ExistsPath(b []byte, p *json_path.Path) bool {
 		if step.isIndex {
 			if isLast {
 				tag := b[pos]
-				if tag == TagIntArray {
+				if tag == TagIntArray || tag == TagLargeIntArray {
 					_, found, _ := lookupIntArrayIndex(b, pos, step.arrayIdx)
 					return found
 				}
-				if tag == TagFloatArray {
+				if tag == TagFloatArray || tag == TagLargeFloatArray {
 					_, found, _ := lookupFloatArrayIndex(b, pos, step.arrayIdx)
 					return found
 				}
@@ -1120,23 +1189,32 @@ func searchDict(dict []string, key string) int {
 // lookupKeyPosByIdx finds a value's byte position in an object by pre-resolved dictionary index.
 // Skips the dictionary search step for better performance.
 func lookupKeyPosByIdx(b []byte, pos int, targetIdx int) (int, bool, error) {
-	if b[pos] != TagObject {
+	tag := b[pos]
+	var countWidth int
+	switch tag {
+	case TagObject:
+		countWidth = 1
+	case TagLargeObject:
+		countWidth = 2
+	default:
 		return 0, false, fmt.Errorf("not an object")
 	}
 
 	p := pos + 1
-	if p+4 > len(b) {
-		return 0, false, fmt.Errorf("unexpected end of data")
+	count, p, err := readCount(b, p, countWidth)
+	if err != nil {
+		return 0, false, err
 	}
-	count := int(binary.BigEndian.Uint16(b[p : p+2]))
-	p += 2
-	keyIdxW := b[p]
-	valOffW := b[p+1]
-	p += 2
-
 	if count == 0 {
 		return 0, false, nil
 	}
+
+	if p+2 > len(b) {
+		return 0, false, fmt.Errorf("unexpected end of data")
+	}
+	keyIdxW := b[p]
+	valOffW := b[p+1]
+	p += 2
 
 	entrySize := int(keyIdxW) + int(valOffW)
 	entryTableStart := p
@@ -1173,16 +1251,19 @@ func lookupKeyPos(b []byte, pos int, key string, dict []string) (int, bool, erro
 func lookupIndexPos(b []byte, pos int, idx int, dict []string) (int, bool, error) {
 	tag := b[pos]
 	switch tag {
-	case TagIntArray, TagFloatArray:
+	case TagIntArray, TagFloatArray, TagLargeIntArray, TagLargeFloatArray:
 		// Typed array elements are scalars; cannot traverse further.
 		return 0, false, fmt.Errorf("cannot traverse into typed array element")
-	case TagArray:
+	case TagArray, TagLargeArray:
 		p := pos + 1
-		if p+4 > len(b) {
-			return 0, false, fmt.Errorf("unexpected end of data")
+		countWidth := 1
+		if tag == TagLargeArray {
+			countWidth = 4
 		}
-		count := int(binary.BigEndian.Uint32(b[p : p+4]))
-		p += 4
+		count, p, err := readCount(b, p, countWidth)
+		if err != nil {
+			return 0, false, err
+		}
 		if idx < 0 || idx >= count {
 			return 0, false, nil
 		}
@@ -1312,13 +1393,21 @@ func writeJSONValue(buf []byte, b []byte, pos int, dict []dictEntry) ([]byte, er
 	case TagString:
 		return writeJSONString(buf, b, pos)
 	case TagArray:
-		return writeJSONArray(buf, b, pos, dict)
+		return writeJSONArray(buf, b, pos, 1, dict)
+	case TagLargeArray:
+		return writeJSONArray(buf, b, pos, 4, dict)
 	case TagObject:
-		return writeJSONObject(buf, b, pos, dict)
+		return writeJSONObject(buf, b, pos, 1, dict)
+	case TagLargeObject:
+		return writeJSONObject(buf, b, pos, 2, dict)
 	case TagIntArray:
-		return writeJSONIntArray(buf, b, pos)
+		return writeJSONIntArray(buf, b, pos, 1)
+	case TagLargeIntArray:
+		return writeJSONIntArray(buf, b, pos, 4)
 	case TagFloatArray:
-		return writeJSONFloatArray(buf, b, pos)
+		return writeJSONFloatArray(buf, b, pos, 1)
+	case TagLargeFloatArray:
+		return writeJSONFloatArray(buf, b, pos, 4)
 	default:
 		return nil, fmt.Errorf("unknown tag: 0x%02x", tag)
 	}
@@ -1379,12 +1468,11 @@ func hexDigit(v byte) byte {
 }
 
 // writeJSONArray writes a generic JSONB array at pos as JSON.
-func writeJSONArray(buf []byte, b []byte, pos int, dict []dictEntry) ([]byte, error) {
-	if pos+4 > len(b) {
-		return nil, fmt.Errorf("unexpected end of data for array count")
+func writeJSONArray(buf []byte, b []byte, pos int, countWidth int, dict []dictEntry) ([]byte, error) {
+	count, pos, err := readCount(b, pos, countWidth)
+	if err != nil {
+		return nil, err
 	}
-	count := int(binary.BigEndian.Uint32(b[pos : pos+4]))
-	pos += 4
 
 	buf = append(buf, '[')
 	if count == 0 {
@@ -1394,7 +1482,6 @@ func writeJSONArray(buf []byte, b []byte, pos int, dict []dictEntry) ([]byte, er
 	// Skip offset table, decode sequentially.
 	dataStart := pos + count*4
 	cur := dataStart
-	var err error
 	for i := 0; i < count; i++ {
 		if i > 0 {
 			buf = append(buf, ',')
@@ -1413,12 +1500,11 @@ func writeJSONArray(buf []byte, b []byte, pos int, dict []dictEntry) ([]byte, er
 }
 
 // writeJSONIntArray writes a typed int array as JSON.
-func writeJSONIntArray(buf []byte, b []byte, pos int) ([]byte, error) {
-	if pos+4 > len(b) {
-		return nil, fmt.Errorf("unexpected end of data for int array count")
+func writeJSONIntArray(buf []byte, b []byte, pos int, countWidth int) ([]byte, error) {
+	count, pos, err := readCount(b, pos, countWidth)
+	if err != nil {
+		return nil, err
 	}
-	count := int(binary.BigEndian.Uint32(b[pos : pos+4]))
-	pos += 4
 
 	buf = append(buf, '[')
 	if count == 0 {
@@ -1453,12 +1539,11 @@ func writeJSONIntArray(buf []byte, b []byte, pos int) ([]byte, error) {
 }
 
 // writeJSONFloatArray writes a typed float array as JSON.
-func writeJSONFloatArray(buf []byte, b []byte, pos int) ([]byte, error) {
-	if pos+4 > len(b) {
-		return nil, fmt.Errorf("unexpected end of data for float array count")
+func writeJSONFloatArray(buf []byte, b []byte, pos int, countWidth int) ([]byte, error) {
+	count, pos, err := readCount(b, pos, countWidth)
+	if err != nil {
+		return nil, err
 	}
-	count := int(binary.BigEndian.Uint32(b[pos : pos+4]))
-	pos += 4
 
 	buf = append(buf, '[')
 	for i := 0; i < count; i++ {
@@ -1473,12 +1558,11 @@ func writeJSONFloatArray(buf []byte, b []byte, pos int) ([]byte, error) {
 }
 
 // writeJSONObject writes a JSONB object at pos as JSON.
-func writeJSONObject(buf []byte, b []byte, pos int, dict []dictEntry) ([]byte, error) {
-	if pos+2 > len(b) {
-		return nil, fmt.Errorf("unexpected end of data for object count")
+func writeJSONObject(buf []byte, b []byte, pos int, countWidth int, dict []dictEntry) ([]byte, error) {
+	count, pos, err := readCount(b, pos, countWidth)
+	if err != nil {
+		return nil, err
 	}
-	count := int(binary.BigEndian.Uint16(b[pos : pos+2]))
-	pos += 2
 
 	buf = append(buf, '{')
 	if count == 0 {
@@ -1572,9 +1656,16 @@ func skipValue(b []byte, pos int) (byte, int, error) {
 			pos += 4
 		}
 		return tag, pos + length, nil
-	case TagArray:
-		count := int(binary.BigEndian.Uint32(b[pos : pos+4]))
-		pos += 4
+	case TagArray, TagLargeArray:
+		countWidth := 1
+		if tag == TagLargeArray {
+			countWidth = 4
+		}
+		count, newPos, err := readCount(b, pos, countWidth)
+		if err != nil {
+			return 0, 0, err
+		}
+		pos = newPos
 		// Skip offset table.
 		dataStart := pos + count*4
 		cur := dataStart
@@ -1586,9 +1677,16 @@ func skipValue(b []byte, pos int) (byte, int, error) {
 			cur = next
 		}
 		return tag, cur, nil
-	case TagObject:
-		count := int(binary.BigEndian.Uint16(b[pos : pos+2]))
-		pos += 2
+	case TagObject, TagLargeObject:
+		countWidth := 1
+		if tag == TagLargeObject {
+			countWidth = 2
+		}
+		count, newPos, err := readCount(b, pos, countWidth)
+		if err != nil {
+			return 0, 0, err
+		}
+		pos = newPos
 		if count == 0 {
 			return tag, pos, nil
 		}
@@ -1606,15 +1704,29 @@ func skipValue(b []byte, pos int) (byte, int, error) {
 			cur = next
 		}
 		return tag, cur, nil
-	case TagIntArray:
-		count := int(binary.BigEndian.Uint32(b[pos : pos+4]))
-		pos += 4
+	case TagIntArray, TagLargeIntArray:
+		countWidth := 1
+		if tag == TagLargeIntArray {
+			countWidth = 4
+		}
+		count, newPos, err := readCount(b, pos, countWidth)
+		if err != nil {
+			return 0, 0, err
+		}
+		pos = newPos
 		width := int(b[pos])
 		pos++
 		return tag, pos + count*width, nil
-	case TagFloatArray:
-		count := int(binary.BigEndian.Uint32(b[pos : pos+4]))
-		pos += 4
+	case TagFloatArray, TagLargeFloatArray:
+		countWidth := 1
+		if tag == TagLargeFloatArray {
+			countWidth = 4
+		}
+		count, newPos, err := readCount(b, pos, countWidth)
+		if err != nil {
+			return 0, 0, err
+		}
+		pos = newPos
 		return tag, pos + count*8, nil
 	default:
 		return 0, 0, fmt.Errorf("unknown tag: 0x%02x", tag)

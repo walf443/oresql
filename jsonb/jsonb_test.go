@@ -323,7 +323,7 @@ func TestIntArrayWidth8(t *testing.T) {
 }
 
 func TestIntArraySpaceEfficiency(t *testing.T) {
-	// 100 small ints: header(2) + tag(1) + count(4) + width(1) + 100*1 = 108 bytes
+	// 100 small ints: header(2) + tag(1) + count(1, uint8) + width(1) + 100*1 = 105 bytes
 	arr := make([]any, 100)
 	for i := range arr {
 		arr[i] = int64(i)
@@ -331,7 +331,7 @@ func TestIntArraySpaceEfficiency(t *testing.T) {
 	b, err := Encode(arr)
 	require.NoError(t, err)
 	assert.Equal(t, byte(TagIntArray), BodyTag(b))
-	assert.Equal(t, 108, len(b), "100 small ints should be 108 bytes (including 2-byte dict header)")
+	assert.Equal(t, 105, len(b), "100 small ints should be 105 bytes (including 2-byte dict header)")
 
 	val, err := Decode(b)
 	require.NoError(t, err)
@@ -830,11 +830,93 @@ func TestCompactEntryTableSmallObject(t *testing.T) {
 	assert.Equal(t, int64(2), v)
 }
 
+func TestCompactObjectCount(t *testing.T) {
+	// Small object (≤255 fields) should use TagObject + uint8 count (1 byte).
+	obj := map[string]any{"a": int64(1), "b": int64(2)}
+	b, err := Encode(obj)
+	require.NoError(t, err)
+	// Body should start with TagObject, followed by uint8 count.
+	_, bodyPos, err := readDictHeader(b)
+	require.NoError(t, err)
+	assert.Equal(t, byte(TagObject), b[bodyPos], "small object should use TagObject")
+	assert.Equal(t, byte(2), b[bodyPos+1], "count should be uint8")
+
+	val, err := Decode(b)
+	require.NoError(t, err)
+	decoded := val.(map[string]any)
+	assert.Equal(t, int64(1), decoded["a"])
+	assert.Equal(t, int64(2), decoded["b"])
+}
+
+func TestCompactObjectCountLarge(t *testing.T) {
+	// Object with > 255 fields should use TagLargeObject + uint16 count.
+	obj := make(map[string]any)
+	for i := 0; i < 300; i++ {
+		obj[fmt.Sprintf("k%03d", i)] = int64(i)
+	}
+	b, err := Encode(obj)
+	require.NoError(t, err)
+	_, bodyPos, err := readDictHeader(b)
+	require.NoError(t, err)
+	assert.Equal(t, byte(TagLargeObject), b[bodyPos], "large object should use TagLargeObject")
+
+	val, err := Decode(b)
+	require.NoError(t, err)
+	decoded := val.(map[string]any)
+	assert.Len(t, decoded, 300)
+	assert.Equal(t, int64(0), decoded["k000"])
+	assert.Equal(t, int64(299), decoded["k299"])
+
+	// LookupKey should work
+	v, found, err := LookupKey(b, "k150")
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, int64(150), v)
+}
+
+func TestCompactArrayCount(t *testing.T) {
+	// Small array (≤255 elements) should use TagArray + uint8 count.
+	arr := []any{int64(1), "hello", true}
+	b, err := Encode(arr)
+	require.NoError(t, err)
+	_, bodyPos, err := readDictHeader(b)
+	require.NoError(t, err)
+	assert.Equal(t, byte(TagArray), b[bodyPos], "small array should use TagArray")
+	assert.Equal(t, byte(3), b[bodyPos+1], "count should be uint8")
+
+	val, err := Decode(b)
+	require.NoError(t, err)
+	decoded := val.([]any)
+	assert.Len(t, decoded, 3)
+	assert.Equal(t, int64(1), decoded[0])
+	assert.Equal(t, "hello", decoded[1])
+	assert.Equal(t, true, decoded[2])
+}
+
+func TestCompactIntArrayCount(t *testing.T) {
+	// Small int array should use TagIntArray + uint8 count.
+	arr := make([]any, 100)
+	for i := range arr {
+		arr[i] = int64(i)
+	}
+	b, err := Encode(arr)
+	require.NoError(t, err)
+	_, bodyPos, err := readDictHeader(b)
+	require.NoError(t, err)
+	assert.Equal(t, byte(TagIntArray), b[bodyPos], "small int array should use TagIntArray")
+	assert.Equal(t, byte(100), b[bodyPos+1], "count should be uint8")
+
+	val, err := Decode(b)
+	require.NoError(t, err)
+	decoded := val.([]any)
+	assert.Len(t, decoded, 100)
+}
+
 func TestCompactEntryTableSizeReduction(t *testing.T) {
 	// 3-key object: {"a":1, "b":2, "c":3}
-	// Dict header: 2 + 3*(tag+len+1) = 2 + 9 = 11
-	// Object: tag(1) + count(1, <256 keys) + keyIdxW(1) + valOffW(1) + entries(3 * 2) + values(3 * 3) = 19
-	// Total = 11 + 19 = 30
+	// Dict header: 2 + 3*(len+1) = 2 + 6 = 8
+	// Object: tag(1) + count(1, uint8) + keyIdxW(1) + valOffW(1) + entries(3 * 2) + values(3 * 1) = 13
+	// Total = 8 + 13 = 21
 	obj := map[string]any{
 		"a": int64(1),
 		"b": int64(2),

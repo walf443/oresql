@@ -6,6 +6,357 @@ import (
 	"github.com/walf443/oresql/ast"
 )
 
+// filterRows applies a WHERE expression to rows, returning only matching ones.
+func filterRows(rows []Row, where ast.Expr, eval ExprEvaluator) ([]Row, error) {
+	var filtered []Row
+	for _, row := range rows {
+		match, err := evalWhereWith(where, row, eval)
+		if err != nil {
+			return nil, err
+		}
+		if match {
+			filtered = append(filtered, row)
+		}
+	}
+	return filtered, nil
+}
+
+// scanNodeRows scans rows from a JoinGraphNode, applying LocalWhere filtering.
+// Handles pre-materialized rows (subquery/CTE), index scan, and full table scan.
+func (e *Executor) scanNodeRows(node *JoinGraphNode) ([]Row, error) {
+	eval := newTableEvaluator(e, node.Info)
+
+	if node.Rows != nil {
+		// Pre-materialized rows (FROM subquery / CTE)
+		if len(node.LocalWhere) > 0 {
+			combined := combineExprsAND(node.LocalWhere)
+			stripped := stripTableQualifier(combined, node.TableName, node.Alias)
+			return filterRows(node.Rows, stripped, eval)
+		}
+		return node.Rows, nil
+	}
+
+	st := node.storageEngine(e.db)
+	var rows []Row
+	var err error
+
+	if len(node.LocalWhere) > 0 {
+		combined := combineExprsAND(node.LocalWhere)
+		stripped := stripTableQualifier(combined, node.TableName, node.Alias)
+		if keys, ok := e.tryIndexScan(stripped, node.Info); ok {
+			rows, err = st.GetByKeys(node.Info.Name, keys)
+		} else {
+			rows, err = st.Scan(node.Info.Name)
+		}
+		if err != nil {
+			return nil, err
+		}
+		return filterRows(rows, stripped, eval)
+	}
+
+	return st.Scan(node.Info.Name)
+}
+
+// lookupIndexKeys computes the row keys for an index-based join lookup.
+// Handles composite index (full lookup, range scan, prefix scan) and simple index with optional intersection.
+func lookupIndexKeys(nextIdx IndexReader, lookupVal Value, cjPlan *compositeJoinPlan, innerWhereKeys map[int64]struct{}) []int64 {
+	if cjPlan != nil {
+		prefixVals := make([]Value, 1+len(cjPlan.eqVals))
+		prefixVals[0] = lookupVal
+		copy(prefixVals[1:], cjPlan.eqVals)
+		if cjPlan.fullLookup {
+			return nextIdx.Lookup(prefixVals)
+		}
+		if cjPlan.rangeCol != nil {
+			rc := cjPlan.rangeCol
+			return nextIdx.CompositeRangeScan(prefixVals, rc.fromVal, rc.fromInclusive, rc.toVal, rc.toInclusive)
+		}
+		return nextIdx.CompositeRangeScan(prefixVals, nil, false, nil, false)
+	}
+
+	keys := nextIdx.Lookup([]Value{lookupVal})
+	if innerWhereKeys != nil {
+		intersected := make([]int64, 0, len(keys))
+		for _, k := range keys {
+			if _, ok := innerWhereKeys[k]; ok {
+				intersected = append(intersected, k)
+			}
+		}
+		return intersected
+	}
+	return keys
+}
+
+// joinStepState holds the prepared state for executing one join step.
+type joinStepState struct {
+	nextNode          *JoinGraphNode
+	nextOffset        int
+	edge              *JoinGraphEdge
+	nextIdx           IndexReader
+	cjPlan            *compositeJoinPlan
+	partnerEquiColIdx int
+	joinEval          ExprEvaluator
+	nextEval          ExprEvaluator
+	preFilteredInner  []Row
+	hashTable         *hashJoinTable
+	outerEquiColIdxs  []int
+	innerWhereExpr    ast.Expr
+	innerWhereKeys    map[int64]struct{}
+	isLeftJoin        bool
+}
+
+// findJoinEdge finds the edge connecting nextName to an already-joined table.
+// Returns the edge and the partner's effective name.
+func findJoinEdge(graph *JoinGraph, nextName string, joinedSet map[string]bool) (*JoinGraphEdge, string) {
+	for _, neighbor := range graph.Adjacency[nextName] {
+		if joinedSet[neighbor] {
+			key := edgeKey(nextName, neighbor)
+			if edge := graph.Edges[key]; edge != nil {
+				return edge, neighbor
+			}
+		}
+	}
+	return nil, ""
+}
+
+// resolveEquiJoinIndex resolves equi-join column info and finds the best index for lookup.
+// Sets s.partnerEquiColIdx, s.nextIdx, and s.cjPlan.
+func (e *Executor) resolveEquiJoinIndex(
+	s *joinStepState, graph *JoinGraph, nextName, partnerName string, tableOffset map[string]int,
+) {
+	if s.edge == nil || len(s.edge.EquiJoinPairs) == 0 {
+		return
+	}
+
+	pair := s.edge.EquiJoinPairs[0]
+	var nextEquiCol string
+	if nextName == pair.leftTable {
+		nextEquiCol = pair.leftCol
+		partnerNode := graph.Nodes[partnerName]
+		if col, err := partnerNode.Info.FindColumn(pair.rightCol); err == nil {
+			s.partnerEquiColIdx = tableOffset[partnerName] + col.Index
+		}
+	} else {
+		nextEquiCol = pair.rightCol
+		partnerNode := graph.Nodes[partnerName]
+		if col, err := partnerNode.Info.FindColumn(pair.leftCol); err == nil {
+			s.partnerEquiColIdx = tableOffset[partnerName] + col.Index
+		}
+	}
+
+	nextNode := s.nextNode
+	nextStorage := nextNode.storageEngine(e.db)
+	if col, err := nextNode.Info.FindColumn(nextEquiCol); err == nil {
+		s.nextIdx = nextStorage.LookupSingleColumnIndex(nextNode.Info.Name, col.Index)
+	}
+
+	// Try composite index (covers JOIN + LocalWhere in one B-tree scan)
+	if nextEquiCol != "" && len(nextNode.LocalWhere) > 0 {
+		if col, err := nextNode.Info.FindColumn(nextEquiCol); err == nil {
+			combined := combineExprsAND(nextNode.LocalWhere)
+			stripped := stripTableQualifier(combined, nextNode.TableName, nextNode.Alias)
+			s.cjPlan = e.findCompositeJoinIndex(col.Index, stripped, nextNode.Info, nextStorage)
+		}
+	}
+	if s.cjPlan != nil {
+		s.nextIdx = s.cjPlan.index
+	}
+}
+
+// prepareInnerScan prepares inner rows for the join step.
+// For non-index path: pre-filters rows and optionally builds a hash table.
+// For index path: prepares inner WHERE expression and key set.
+func (e *Executor) prepareInnerScan(
+	s *joinStepState, graph *JoinGraph, tableOffset map[string]int,
+) error {
+	nextNode := s.nextNode
+	if s.nextIdx == nil {
+		var err error
+		s.preFilteredInner, err = e.scanNodeRows(nextNode)
+		if err != nil {
+			return err
+		}
+		if s.edge != nil && len(s.edge.EquiJoinPairs) > 0 {
+			innerEquiColIdxs, outerColIdxs := resolveAllEquiJoinCols(
+				s.edge, nextNode, graph, tableOffset,
+			)
+			if innerEquiColIdxs != nil {
+				s.hashTable = buildHashJoinTable(s.preFilteredInner, innerEquiColIdxs)
+				s.outerEquiColIdxs = outerColIdxs
+			}
+		}
+		return nil
+	}
+
+	// Index path: prepare inner WHERE
+	if len(nextNode.LocalWhere) > 0 {
+		combined := combineExprsAND(nextNode.LocalWhere)
+		s.innerWhereExpr = stripTableQualifier(combined, nextNode.TableName, nextNode.Alias)
+		if s.cjPlan == nil {
+			if keys, ok := e.tryIndexScan(s.innerWhereExpr, nextNode.Info); ok {
+				s.innerWhereKeys = make(map[int64]struct{}, len(keys))
+				for _, k := range keys {
+					s.innerWhereKeys[k] = struct{}{}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// prepareJoinStep resolves the index strategy, pre-filters inner rows, and builds
+// hash tables for one join step. Returns the prepared state.
+func (e *Executor) prepareJoinStep(
+	graph *JoinGraph, nextName string, joinedSet map[string]bool,
+	tableOffset map[string]int,
+) (*joinStepState, error) {
+	nextNode := graph.Nodes[nextName]
+	s := &joinStepState{
+		nextNode:          nextNode,
+		nextOffset:        tableOffset[nextName],
+		partnerEquiColIdx: -1,
+		nextEval:          newTableEvaluator(e, nextNode.Info),
+	}
+
+	edge, partnerName := findJoinEdge(graph, nextName, joinedSet)
+	s.edge = edge
+
+	e.resolveEquiJoinIndex(s, graph, nextName, partnerName, tableOffset)
+
+	jc := buildJoinContextFromGraph(graph)
+	s.joinEval = newJoinEvaluator(e, jc)
+
+	if err := e.prepareInnerScan(s, graph, tableOffset); err != nil {
+		return nil, err
+	}
+
+	s.isLeftJoin = s.edge != nil && s.edge.JoinType == ast.JoinLeft
+	return s, nil
+}
+
+// findInnerCandidates resolves the inner row candidates for a single outer row.
+// Returns the candidates and whether the inner side should be skipped (no match possible).
+func (e *Executor) findInnerCandidates(s *joinStepState, outerRow Row) ([]Row, bool, error) {
+	if s.nextIdx != nil && s.partnerEquiColIdx >= 0 {
+		lookupVal := outerRow[s.partnerEquiColIdx]
+		if lookupVal == nil {
+			return nil, true, nil
+		}
+		keys := lookupIndexKeys(s.nextIdx, lookupVal, s.cjPlan, s.innerWhereKeys)
+		if len(keys) == 0 {
+			return nil, true, nil
+		}
+		candidates, err := s.nextNode.storageEngine(e.db).GetByKeys(s.nextNode.Info.Name, keys)
+		if err != nil {
+			return nil, false, err
+		}
+		if s.innerWhereExpr != nil {
+			candidates, err = filterRows(candidates, s.innerWhereExpr, s.nextEval)
+			if err != nil {
+				return nil, false, err
+			}
+		}
+		return candidates, false, nil
+	}
+
+	if s.hashTable != nil {
+		probeKey, hasKey := hashJoinProbeKey(outerRow, s.outerEquiColIdxs)
+		if !hasKey {
+			return nil, true, nil
+		}
+		candidates := s.hashTable.buckets[probeKey]
+		if len(candidates) == 0 {
+			return nil, true, nil
+		}
+		return candidates, false, nil
+	}
+
+	return s.preFilteredInner, false, nil
+}
+
+// evalOnCondition evaluates the ON condition for a merged row.
+// Returns true if the row passes the ON condition (or no ON condition exists).
+func evalOnCondition(s *joinStepState, mergedRow Row) (bool, error) {
+	if s.edge == nil || s.edge.OnExpr == nil {
+		return true, nil
+	}
+	if s.nextIdx != nil || s.hashTable != nil {
+		// Index or hash join: equi-join already satisfied, evaluate residual only
+		if s.edge.ResidualOn == nil {
+			return true, nil
+		}
+		return evalWhereWith(s.edge.ResidualOn, mergedRow, s.joinEval)
+	}
+	// Full nested loop: evaluate full ON condition
+	return evalWhereWith(s.edge.OnExpr, mergedRow, s.joinEval)
+}
+
+// executeJoinStep performs the nested-loop join for one step, returning the joined rows.
+func (e *Executor) executeJoinStep(s *joinStepState, currentRows []Row, totalCols, earlyLimit int) ([]Row, error) {
+	cap := 64
+	if earlyLimit > 0 {
+		cap = earlyLimit
+	}
+	joined := make([]Row, 0, cap)
+	earlyLimitReached := false
+
+	for _, outerRow := range currentRows {
+		if earlyLimitReached {
+			break
+		}
+
+		innerCandidates, skipInner, err := e.findInnerCandidates(s, outerRow)
+		if err != nil {
+			return nil, err
+		}
+
+		if skipInner {
+			if s.isLeftJoin {
+				nullPadded := make(Row, totalCols)
+				copy(nullPadded, outerRow)
+				joined = append(joined, nullPadded)
+				if earlyLimit > 0 && len(joined) >= earlyLimit {
+					earlyLimitReached = true
+				}
+			}
+			continue
+		}
+
+		matched := false
+		for _, innerRow := range innerCandidates {
+			mergedRow := make(Row, totalCols)
+			copy(mergedRow, outerRow)
+			copy(mergedRow[s.nextOffset:], innerRow)
+
+			pass, mErr := evalOnCondition(s, mergedRow)
+			if mErr != nil {
+				return nil, mErr
+			}
+			if !pass {
+				continue
+			}
+
+			matched = true
+			joined = append(joined, mergedRow)
+			if earlyLimit > 0 && len(joined) >= earlyLimit {
+				earlyLimitReached = true
+				break
+			}
+		}
+
+		if !matched && s.isLeftJoin {
+			nullPadded := make(Row, totalCols)
+			copy(nullPadded, outerRow)
+			joined = append(joined, nullPadded)
+			if earlyLimit > 0 && len(joined) >= earlyLimit {
+				earlyLimitReached = true
+			}
+		}
+	}
+
+	return joined, nil
+}
+
 // executeJoinRows performs the join operation and returns the joined rows and JoinContext.
 // This is the core join logic without post-processing (ORDER BY, projection, etc.).
 // earlyLimit > 0 enables early termination when enough rows have been collected.
@@ -24,61 +375,9 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 	drivingNode := graph.Nodes[drivingName]
 	drivingOffset := tableOffset[drivingName]
 
-	var drivingRows []Row
-	var err error
-
-	drivingEval := newTableEvaluator(e, drivingNode.Info)
-	if drivingNode.Rows != nil {
-		// Pre-materialized rows (FROM subquery)
-		drivingRows = drivingNode.Rows
-		if len(drivingNode.LocalWhere) > 0 {
-			combined := combineExprsAND(drivingNode.LocalWhere)
-			stripped := stripTableQualifier(combined, drivingNode.TableName, drivingNode.Alias)
-			var filtered []Row
-			for _, row := range drivingRows {
-				match, mErr := evalWhereWith(stripped, row, drivingEval)
-				if mErr != nil {
-					return nil, nil, mErr
-				}
-				if match {
-					filtered = append(filtered, row)
-				}
-			}
-			drivingRows = filtered
-		}
-	} else if len(drivingNode.LocalWhere) > 0 {
-		combined := combineExprsAND(drivingNode.LocalWhere)
-		stripped := stripTableQualifier(combined, drivingNode.TableName, drivingNode.Alias)
-
-		drivingStorage := drivingNode.storageEngine(e.db)
-		if keys, ok := e.tryIndexScan(stripped, drivingNode.Info); ok {
-			drivingRows, err = drivingStorage.GetByKeys(drivingNode.Info.Name, keys)
-			if err != nil {
-				return nil, nil, err
-			}
-		} else {
-			drivingRows, err = drivingStorage.Scan(drivingNode.Info.Name)
-			if err != nil {
-				return nil, nil, err
-			}
-		}
-		// Filter by WHERE
-		var filtered []Row
-		for _, row := range drivingRows {
-			match, mErr := evalWhereWith(stripped, row, drivingEval)
-			if mErr != nil {
-				return nil, nil, mErr
-			}
-			if match {
-				filtered = append(filtered, row)
-			}
-		}
-		drivingRows = filtered
-	} else {
-		drivingRows, err = drivingNode.storageEngine(e.db).Scan(drivingNode.Info.Name)
-		if err != nil {
-			return nil, nil, err
-		}
+	drivingRows, err := e.scanNodeRows(drivingNode)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	// Place driving table rows into fixed-slot merged rows
@@ -94,321 +393,16 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 
 	for step := 1; step < len(order); step++ {
 		nextName := order[step]
-		nextNode := graph.Nodes[nextName]
-		nextOffset := tableOffset[nextName]
 
-		// Find the edge connecting nextName to an already-joined table
-		var edge *JoinGraphEdge
-		var partnerName string
-		for _, neighbor := range graph.Adjacency[nextName] {
-			if joinedSet[neighbor] {
-				key := edgeKey(nextName, neighbor)
-				if e := graph.Edges[key]; e != nil {
-					edge = e
-					partnerName = neighbor
-					break
-				}
-			}
+		s, prepErr := e.prepareJoinStep(graph, nextName, joinedSet, tableOffset)
+		if prepErr != nil {
+			return nil, nil, prepErr
 		}
 
-		// Determine equi-join column info
-		var nextEquiCol string
-		var partnerEquiColIdx int = -1
-		var nextIdx IndexReader
-
-		if edge != nil && len(edge.EquiJoinPairs) > 0 {
-			pair := edge.EquiJoinPairs[0]
-			// Determine which side of the pair corresponds to which table
-			if nextName == pair.leftTable {
-				nextEquiCol = pair.leftCol
-				partnerNode := graph.Nodes[partnerName]
-				col, findErr := partnerNode.Info.FindColumn(pair.rightCol)
-				if findErr == nil {
-					partnerEquiColIdx = tableOffset[partnerName] + col.Index
-				}
-			} else {
-				nextEquiCol = pair.rightCol
-				partnerNode := graph.Nodes[partnerName]
-				col, findErr := partnerNode.Info.FindColumn(pair.leftCol)
-				if findErr == nil {
-					partnerEquiColIdx = tableOffset[partnerName] + col.Index
-				}
-			}
-
-			// Check if nextTable has an index on the equi-join column
-			nextStorage := nextNode.storageEngine(e.db)
-			col, findErr := nextNode.Info.FindColumn(nextEquiCol)
-			if findErr == nil {
-				nextIdx = nextStorage.LookupSingleColumnIndex(nextNode.Info.Name, col.Index)
-			}
+		joined, joinErr := e.executeJoinStep(s, currentRows, totalCols, earlyLimit)
+		if joinErr != nil {
+			return nil, nil, joinErr
 		}
-
-		// Try composite index (covers JOIN + LocalWhere in one B-tree scan)
-		var cjPlan *compositeJoinPlan
-		if nextEquiCol != "" && len(nextNode.LocalWhere) > 0 {
-			col, findErr := nextNode.Info.FindColumn(nextEquiCol)
-			if findErr == nil {
-				combined := combineExprsAND(nextNode.LocalWhere)
-				stripped := stripTableQualifier(combined, nextNode.TableName, nextNode.Alias)
-				cjPlan = e.findCompositeJoinIndex(col.Index, stripped, nextNode.Info, nextNode.storageEngine(e.db))
-			}
-		}
-		if cjPlan != nil {
-			nextIdx = cjPlan.index
-		}
-
-		// Build JoinContext for ON/WHERE evaluation on the merged row
-		jc := buildJoinContextFromGraph(graph)
-		joinEval := newJoinEvaluator(e, jc)
-
-		// Prepare pre-filtered inner rows for non-index path
-		nextEval := newTableEvaluator(e, nextNode.Info)
-		var preFilteredInner []Row
-		if nextIdx == nil {
-			if nextNode.Rows != nil {
-				// Pre-materialized rows (FROM subquery)
-				preFilteredInner = nextNode.Rows
-				if len(nextNode.LocalWhere) > 0 {
-					combined := combineExprsAND(nextNode.LocalWhere)
-					stripped := stripTableQualifier(combined, nextNode.TableName, nextNode.Alias)
-					var filtered []Row
-					for _, row := range preFilteredInner {
-						match, mErr := evalWhereWith(stripped, row, nextEval)
-						if mErr != nil {
-							return nil, nil, mErr
-						}
-						if match {
-							filtered = append(filtered, row)
-						}
-					}
-					preFilteredInner = filtered
-				}
-			} else if len(nextNode.LocalWhere) > 0 {
-				combined := combineExprsAND(nextNode.LocalWhere)
-				stripped := stripTableQualifier(combined, nextNode.TableName, nextNode.Alias)
-				// Try index scan for LocalWhere conditions
-				nextSt := nextNode.storageEngine(e.db)
-				if keys, ok := e.tryIndexScan(stripped, nextNode.Info); ok {
-					preFilteredInner, err = nextSt.GetByKeys(nextNode.Info.Name, keys)
-				} else {
-					preFilteredInner, err = nextSt.Scan(nextNode.Info.Name)
-				}
-				if err != nil {
-					return nil, nil, err
-				}
-				// Apply LocalWhere filter (index may cover only part of the condition)
-				var filtered []Row
-				for _, row := range preFilteredInner {
-					match, mErr := evalWhereWith(stripped, row, nextEval)
-					if mErr != nil {
-						return nil, nil, mErr
-					}
-					if match {
-						filtered = append(filtered, row)
-					}
-				}
-				preFilteredInner = filtered
-			} else {
-				preFilteredInner, err = nextNode.storageEngine(e.db).Scan(nextNode.Info.Name)
-				if err != nil {
-					return nil, nil, err
-				}
-			}
-		}
-
-		// Build hash table for non-index equi-join (Hash Join)
-		var hashTable *hashJoinTable
-		var outerEquiColIdxs []int
-		if nextIdx == nil && edge != nil && len(edge.EquiJoinPairs) > 0 {
-			innerEquiColIdxs, outerColIdxs := resolveAllEquiJoinCols(
-				edge, nextNode, graph, tableOffset,
-			)
-			if innerEquiColIdxs != nil {
-				hashTable = buildHashJoinTable(preFilteredInner, innerEquiColIdxs)
-				outerEquiColIdxs = outerColIdxs
-			}
-		}
-
-		// Prepare inner WHERE for index-looked-up rows
-		var innerWhereStripped ast.Expr
-		var innerWhereKeys map[int64]struct{}
-		if nextIdx != nil && cjPlan == nil && len(nextNode.LocalWhere) > 0 {
-			combined := combineExprsAND(nextNode.LocalWhere)
-			innerWhereStripped = stripTableQualifier(combined, nextNode.TableName, nextNode.Alias)
-			// Try index scan for LocalWhere conditions (executed once before the join loop)
-			if keys, ok := e.tryIndexScan(innerWhereStripped, nextNode.Info); ok {
-				innerWhereKeys = make(map[int64]struct{}, len(keys))
-				for _, k := range keys {
-					innerWhereKeys[k] = struct{}{}
-				}
-			}
-		}
-		// For composite join plan, prepare innerWhereStripped for residual filtering
-		if cjPlan != nil && len(nextNode.LocalWhere) > 0 {
-			combined := combineExprsAND(nextNode.LocalWhere)
-			innerWhereStripped = stripTableQualifier(combined, nextNode.TableName, nextNode.Alias)
-		}
-
-		// Nested loop join
-		isLeftJoin := edge != nil && edge.JoinType == ast.JoinLeft
-		cap := 64
-		if earlyLimit > 0 {
-			cap = earlyLimit
-		}
-		joined := make([]Row, 0, cap)
-		earlyLimitReached := false
-		for _, outerRow := range currentRows {
-			if earlyLimitReached {
-				break
-			}
-			var innerCandidates []Row
-			skipInner := false
-
-			if nextIdx != nil && partnerEquiColIdx >= 0 {
-				// Index nested loop
-				lookupVal := outerRow[partnerEquiColIdx]
-				if lookupVal == nil {
-					skipInner = true
-				} else {
-					var keys []int64
-					if cjPlan != nil {
-						// Use composite index for combined JOIN + LocalWhere lookup
-						if cjPlan.fullLookup {
-							vals := make([]Value, 1+len(cjPlan.eqVals))
-							vals[0] = lookupVal
-							copy(vals[1:], cjPlan.eqVals)
-							keys = nextIdx.Lookup(vals)
-						} else if cjPlan.rangeCol != nil {
-							prefixVals := make([]Value, 1+len(cjPlan.eqVals))
-							prefixVals[0] = lookupVal
-							copy(prefixVals[1:], cjPlan.eqVals)
-							rc := cjPlan.rangeCol
-							keys = nextIdx.CompositeRangeScan(prefixVals, rc.fromVal, rc.fromInclusive, rc.toVal, rc.toInclusive)
-						} else {
-							// Prefix-only scan
-							prefixVals := make([]Value, 1+len(cjPlan.eqVals))
-							prefixVals[0] = lookupVal
-							copy(prefixVals[1:], cjPlan.eqVals)
-							keys = nextIdx.CompositeRangeScan(prefixVals, nil, false, nil, false)
-						}
-					} else {
-						keys = nextIdx.Lookup([]Value{lookupVal})
-						// Intersect with LocalWhere index keys if available
-						if innerWhereKeys != nil {
-							intersected := make([]int64, 0, len(keys))
-							for _, k := range keys {
-								if _, ok := innerWhereKeys[k]; ok {
-									intersected = append(intersected, k)
-								}
-							}
-							keys = intersected
-						}
-					}
-					if len(keys) == 0 {
-						skipInner = true
-					} else {
-						innerCandidates, err = nextNode.storageEngine(e.db).GetByKeys(nextNode.Info.Name, keys)
-						if err != nil {
-							return nil, nil, err
-						}
-						// Apply inner WHERE filter (index may cover only part of the condition)
-						if innerWhereStripped != nil {
-							var filtered []Row
-							for _, row := range innerCandidates {
-								match, mErr := evalWhereWith(innerWhereStripped, row, nextEval)
-								if mErr != nil {
-									return nil, nil, mErr
-								}
-								if match {
-									filtered = append(filtered, row)
-								}
-							}
-							innerCandidates = filtered
-						}
-					}
-				}
-			} else {
-				if hashTable != nil {
-					// Hash Join probe
-					probeKey, hasKey := hashJoinProbeKey(outerRow, outerEquiColIdxs)
-					if !hasKey {
-						skipInner = true
-					} else {
-						innerCandidates = hashTable.buckets[probeKey]
-						if len(innerCandidates) == 0 {
-							skipInner = true
-						}
-					}
-				} else {
-					// Full nested loop fallback (no equi-join condition)
-					innerCandidates = preFilteredInner
-				}
-			}
-
-			if skipInner {
-				if isLeftJoin {
-					nullPadded := make(Row, totalCols)
-					copy(nullPadded, outerRow)
-					// inner slots remain nil (NULL)
-					joined = append(joined, nullPadded)
-					if earlyLimit > 0 && len(joined) >= earlyLimit {
-						earlyLimitReached = true
-					}
-				}
-				continue
-			}
-
-			matched := false
-			for _, innerRow := range innerCandidates {
-				// Place inner row into the correct slot
-				mergedRow := make(Row, totalCols)
-				copy(mergedRow, outerRow)
-				copy(mergedRow[nextOffset:], innerRow)
-
-				// Evaluate ON condition (skipped for CROSS JOIN where OnExpr is nil)
-				if edge != nil && edge.OnExpr != nil {
-					if nextIdx != nil || hashTable != nil {
-						// Index or hash join: equi-join already satisfied, evaluate residual only
-						if edge.ResidualOn != nil {
-							match, mErr := evalWhereWith(edge.ResidualOn, mergedRow, joinEval)
-							if mErr != nil {
-								return nil, nil, mErr
-							}
-							if !match {
-								continue
-							}
-						}
-					} else {
-						// Full nested loop: evaluate full ON condition
-						match, mErr := evalWhereWith(edge.OnExpr, mergedRow, joinEval)
-						if mErr != nil {
-							return nil, nil, mErr
-						}
-						if !match {
-							continue
-						}
-					}
-				}
-
-				matched = true
-				joined = append(joined, mergedRow)
-				if earlyLimit > 0 && len(joined) >= earlyLimit {
-					earlyLimitReached = true
-					break
-				}
-			}
-
-			if !matched && isLeftJoin {
-				nullPadded := make(Row, totalCols)
-				copy(nullPadded, outerRow)
-				// inner slots remain nil (NULL)
-				joined = append(joined, nullPadded)
-				if earlyLimit > 0 && len(joined) >= earlyLimit {
-					earlyLimitReached = true
-				}
-			}
-		}
-
 		currentRows = joined
 		joinedSet[nextName] = true
 	}

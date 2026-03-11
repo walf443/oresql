@@ -23,7 +23,11 @@ func TestEncodeDecodeBool(t *testing.T) {
 	for _, v := range []bool{true, false} {
 		b, err := Encode(v)
 		require.NoError(t, err)
-		assert.Equal(t, byte(TagBool), BodyTag(b))
+		if v {
+			assert.Equal(t, byte(TagTrue), BodyTag(b))
+		} else {
+			assert.Equal(t, byte(TagFalse), BodyTag(b))
+		}
 
 		val, err := Decode(b)
 		require.NoError(t, err)
@@ -32,10 +36,15 @@ func TestEncodeDecodeBool(t *testing.T) {
 }
 
 func TestEncodeDecodeInt(t *testing.T) {
-	for _, v := range []int64{0, 1, -1, 42, -100, 1<<31 - 1, -(1 << 31)} {
+	for _, v := range []int64{0, 1, -1, 42, -100, 127, 128, 1<<31 - 1, -(1 << 31)} {
 		b, err := Encode(v)
 		require.NoError(t, err)
-		assert.Equal(t, byte(TagInt), BodyTag(b))
+		if v >= 0 && v <= 127 {
+			// Inline small integer: tag = 0x80 | value
+			assert.Equal(t, byte(TagInlineIntBase|byte(v)), BodyTag(b))
+		} else {
+			assert.Equal(t, byte(TagInt), BodyTag(b))
+		}
 
 		val, err := Decode(b)
 		require.NoError(t, err)
@@ -626,18 +635,27 @@ func TestKeyDictScalarNoDictOverhead(t *testing.T) {
 	// Scalar values should have minimal dictionary overhead (just 2-byte keyCount=0).
 	b, err := Encode(int64(42))
 	require.NoError(t, err)
-	// 2 bytes header + 1 tag + 1 width + 1 value = 5
-	assert.Equal(t, 5, len(b))
+	// 2 bytes header + 1 inline int tag = 3
+	assert.Equal(t, 3, len(b))
 }
 
 // Compact encoding tests
 
 func TestCompactIntSmall(t *testing.T) {
-	// Small positive ints should use 1-byte width
-	for _, v := range []int64{0, 1, 42, 127, 255} {
+	// Inline small ints (0-127): header(2) + inline tag(1) = 3 bytes
+	for _, v := range []int64{0, 1, 42, 127} {
 		b, err := Encode(v)
 		require.NoError(t, err)
-		// header(2) + tag(1) + width(1) + value(1) = 5
+		assert.Equal(t, 3, len(b), "int64(%d) should be 3 bytes (inline)", v)
+
+		val, err := Decode(b)
+		require.NoError(t, err)
+		assert.Equal(t, v, val)
+	}
+	// 128-255: header(2) + tag(1) + width(1) + value(1) = 5 bytes
+	for _, v := range []int64{128, 255} {
+		b, err := Encode(v)
+		require.NoError(t, err)
 		assert.Equal(t, 5, len(b), "int64(%d) should be 5 bytes", v)
 
 		val, err := Decode(b)

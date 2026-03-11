@@ -16,7 +16,7 @@ import (
 const (
 	TagInvalid    byte = 0x00
 	TagNull       byte = 0x01
-	TagBool       byte = 0x02
+	TagBool       byte = 0x02 // legacy, decode only
 	TagInt        byte = 0x03
 	TagFloat      byte = 0x04
 	TagString     byte = 0x05
@@ -24,6 +24,12 @@ const (
 	TagObject     byte = 0x07
 	TagIntArray   byte = 0x08
 	TagFloatArray byte = 0x09
+	TagTrue       byte = 0x0A
+	TagFalse      byte = 0x0B
+
+	// Inline small integers: tags 0x80-0xFF encode values 0-127 in a single byte.
+	// Value = tag & 0x7F.
+	TagInlineIntBase byte = 0x80
 )
 
 // Encode serializes a Go value into the custom JSONB binary format.
@@ -51,10 +57,11 @@ func Encode(val any) ([]byte, error) {
 	}
 
 	// Phase 2: Write dictionary header.
+	// Dictionary keys are written without TagString prefix (all entries are known to be strings).
 	var buf []byte
 	buf = binary.BigEndian.AppendUint16(buf, uint16(len(sortedKeys)))
 	for _, k := range sortedKeys {
-		buf = encodeCompactString(buf, k)
+		buf = encodeDictKey(buf, k)
 	}
 
 	// Phase 3: Encode body.
@@ -87,13 +94,10 @@ func encodeValue(buf []byte, val any, dict map[string]uint16) ([]byte, error) {
 	}
 	switch v := val.(type) {
 	case bool:
-		buf = append(buf, TagBool)
 		if v {
-			buf = append(buf, 0x01)
-		} else {
-			buf = append(buf, 0x00)
+			return append(buf, TagTrue), nil
 		}
-		return buf, nil
+		return append(buf, TagFalse), nil
 	case int64:
 		return encodeCompactInt(buf, v), nil
 	case int:
@@ -114,8 +118,13 @@ func encodeValue(buf []byte, val any, dict map[string]uint16) ([]byte, error) {
 }
 
 // encodeCompactInt encodes an integer with minimum byte width.
-// Format: [TagInt][width: uint8][value: width bytes]
+// Small non-negative integers (0-127) are encoded as a single inline tag byte.
+// Larger values use: [TagInt][width: uint8][value: width bytes]
 func encodeCompactInt(buf []byte, v int64) []byte {
+	// Inline small integers: single byte 0x80 | value
+	if v >= 0 && v <= 127 {
+		return append(buf, TagInlineIntBase|byte(v))
+	}
 	w := intWidthScalar(v)
 	buf = append(buf, TagInt, w)
 	switch w {
@@ -154,6 +163,21 @@ func intWidthScalar(v int64) uint8 {
 //	1xxxxxxx = length is next 4 bytes (big-endian uint32), this byte is just the marker 0x80
 func encodeCompactString(buf []byte, v string) []byte {
 	buf = append(buf, TagString)
+	n := len(v)
+	if n < 128 {
+		buf = append(buf, byte(n))
+	} else {
+		buf = append(buf, 0x80)
+		buf = binary.BigEndian.AppendUint32(buf, uint32(n))
+	}
+	buf = append(buf, v...)
+	return buf
+}
+
+// encodeDictKey encodes a dictionary key without the TagString prefix.
+// Short keys (< 128 bytes): [1-byte length][data]
+// Long keys (>= 128 bytes): [0x80][4-byte length][data]
+func encodeDictKey(buf []byte, v string) []byte {
 	n := len(v)
 	if n < 128 {
 		buf = append(buf, byte(n))
@@ -410,10 +434,6 @@ func readDictOffsets(b []byte) ([]dictEntry, int, error) {
 	pos := 2
 	entries := make([]dictEntry, keyCount)
 	for i := 0; i < keyCount; i++ {
-		if pos >= len(b) || b[pos] != TagString {
-			return nil, 0, fmt.Errorf("dictionary entry must be a string")
-		}
-		pos++
 		if pos >= len(b) {
 			return nil, 0, fmt.Errorf("unexpected end of data for dictionary string length")
 		}
@@ -490,10 +510,6 @@ func readDictHeader(b []byte) ([]string, int, error) {
 	pos := 2
 	dict := make([]string, keyCount)
 	for i := 0; i < keyCount; i++ {
-		if pos >= len(b) || b[pos] != TagString {
-			return nil, 0, fmt.Errorf("dictionary entry must be a string")
-		}
-		pos++ // skip TagString
 		if pos >= len(b) {
 			return nil, 0, fmt.Errorf("unexpected end of data for dictionary string length")
 		}
@@ -534,10 +550,19 @@ func decodeValue(b []byte, pos int, dict []string) (any, int, error) {
 	}
 	tag := b[pos]
 	pos++
+	// Inline small integer: 0x80-0xFF → value 0-127
+	if tag >= TagInlineIntBase {
+		return int64(tag & 0x7F), pos, nil
+	}
 	switch tag {
 	case TagNull:
 		return nil, pos, nil
+	case TagTrue:
+		return true, pos, nil
+	case TagFalse:
+		return false, pos, nil
 	case TagBool:
+		// Legacy format support
 		if pos >= len(b) {
 			return nil, pos, fmt.Errorf("unexpected end of data for bool")
 		}
@@ -802,7 +827,7 @@ func LookupKey(b []byte, key string) (any, bool, error) {
 	if count == 0 {
 		return nil, false, nil
 	}
-	
+
 	// Binary search entry table for targetIdx.
 	// Entry table: [keyIndex: keyIdxW, valOffset: valOffW] × count.
 	entrySize := int(keyIdxW) + int(valOffW)
@@ -1237,10 +1262,19 @@ func writeJSONValue(buf []byte, b []byte, pos int, dict []dictEntry) ([]byte, er
 	}
 	tag := b[pos]
 	pos++
+	// Inline small integer: 0x80-0xFF → value 0-127
+	if tag >= TagInlineIntBase {
+		return strconv.AppendInt(buf, int64(tag&0x7F), 10), nil
+	}
 	switch tag {
 	case TagNull:
 		return append(buf, "null"...), nil
+	case TagTrue:
+		return append(buf, "true"...), nil
+	case TagFalse:
+		return append(buf, "false"...), nil
 	case TagBool:
+		// Legacy format support
 		if pos >= len(b) {
 			return nil, fmt.Errorf("unexpected end of data for bool")
 		}
@@ -1513,8 +1547,12 @@ func skipValue(b []byte, pos int) (byte, int, error) {
 	}
 	tag := b[pos]
 	pos++
+	// Inline small integer: single byte, already consumed
+	if tag >= TagInlineIntBase {
+		return tag, pos, nil
+	}
 	switch tag {
-	case TagNull:
+	case TagNull, TagTrue, TagFalse:
 		return tag, pos, nil
 	case TagBool:
 		return tag, pos + 1, nil

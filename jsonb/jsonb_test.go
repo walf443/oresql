@@ -68,7 +68,13 @@ func TestEncodeDecodeString(t *testing.T) {
 	for _, v := range []string{"", "hello", "日本語", "a longer string with spaces"} {
 		b, err := Encode(v)
 		require.NoError(t, err)
-		assert.Equal(t, byte(TagString), BodyTag(b))
+		tag := BodyTag(b)
+		if len(v) < 32 {
+			assert.True(t, tag >= TagShortStringBase && tag < TagShortStringBase+32,
+				"short string %q should use inline tag, got 0x%02x", v, tag)
+		} else {
+			assert.Equal(t, byte(TagString), tag)
+		}
 
 		val, err := Decode(b)
 		require.NoError(t, err)
@@ -703,19 +709,57 @@ func TestCompactInt64(t *testing.T) {
 	}
 }
 
-func TestCompactStringShort(t *testing.T) {
-	// Short strings (< 128 bytes) should use 1-byte length
-	for _, v := range []string{"", "hi", "hello", "日本語"} {
+func TestInlineShortString(t *testing.T) {
+	// Strings with byte length ≤ 31 should use inline tag (TagShortString | len).
+	// Format: header(2) + inlineTag(1) + data = 3 + len(data)
+	for _, v := range []string{"", "hi", "hello", "alice"} {
 		b, err := Encode(v)
 		require.NoError(t, err)
-		// header(2) + tag(1) + len(1) + data
-		expected := 2 + 1 + 1 + len(v)
-		assert.Equal(t, expected, len(b), "string %q should be %d bytes", v, expected)
+		expected := 2 + 1 + len(v)
+		assert.Equal(t, expected, len(b), "string %q should be %d bytes (inline)", v, expected)
+
+		_, bodyPos, err := readDictHeader(b)
+		require.NoError(t, err)
+		tag := b[bodyPos]
+		assert.True(t, tag >= TagShortStringBase && tag < TagShortStringBase+32,
+			"string %q should use inline short string tag, got 0x%02x", v, tag)
+		assert.Equal(t, byte(len(v)), tag-TagShortStringBase,
+			"inline tag should encode length %d", len(v))
 
 		val, err := Decode(b)
 		require.NoError(t, err)
 		assert.Equal(t, v, val)
 	}
+}
+
+func TestNonInlineString(t *testing.T) {
+	// Strings with byte length 32-127 should still use TagString + 1-byte length.
+	v := "abcdefghijklmnopqrstuvwxyz-abcdef" // 33 bytes
+	b, err := Encode(v)
+	require.NoError(t, err)
+	// header(2) + TagString(1) + len(1) + data(33) = 37
+	assert.Equal(t, 2+1+1+len(v), len(b))
+
+	_, bodyPos, err := readDictHeader(b)
+	require.NoError(t, err)
+	assert.Equal(t, byte(TagString), b[bodyPos])
+
+	val, err := Decode(b)
+	require.NoError(t, err)
+	assert.Equal(t, v, val)
+}
+
+func TestInlineShortStringMultibyte(t *testing.T) {
+	// "日本語" is 9 bytes in UTF-8, so it should use inline tag.
+	v := "日本語"
+	b, err := Encode(v)
+	require.NoError(t, err)
+	expected := 2 + 1 + len(v) // header + inline tag + data
+	assert.Equal(t, expected, len(b))
+
+	val, err := Decode(b)
+	require.NoError(t, err)
+	assert.Equal(t, v, val)
 }
 
 func TestCompactStringLong(t *testing.T) {

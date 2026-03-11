@@ -33,6 +33,10 @@ const (
 	TagEmptyObject     byte = 0x10 // empty object {} in a single byte
 	TagEmptyArray      byte = 0x11 // empty array [] in a single byte
 
+	// Inline short strings: tags 0x20-0x3F encode string length 0-31 in the tag.
+	// Length = tag - TagShortStringBase. Data follows immediately (no separate length byte).
+	TagShortStringBase byte = 0x20
+
 	// Inline small integers: tags 0x80-0xFF encode values 0-127 in a single byte.
 	// Value = tag & 0x7F.
 	TagInlineIntBase byte = 0x80
@@ -161,15 +165,17 @@ func intWidthScalar(v int64) uint8 {
 }
 
 // encodeCompactString encodes a string with compact length.
-// Short strings (< 128 bytes): [TagString][1-byte length][data]
-// Long strings (>= 128 bytes): [TagString][0x80 | high byte][low 3 bytes as uint24] — actually simpler:
-// We use the high bit of the first length byte as a flag:
-//
-//	0xxxxxxx = length is this byte (0-127)
-//	1xxxxxxx = length is next 4 bytes (big-endian uint32), this byte is just the marker 0x80
+// Inline short strings (≤ 31 bytes): [TagShortStringBase | len][data]
+// Medium strings (32-127 bytes): [TagString][1-byte length][data]
+// Long strings (≥ 128 bytes): [TagString][0x80][4-byte length][data]
 func encodeCompactString(buf []byte, v string) []byte {
-	buf = append(buf, TagString)
 	n := len(v)
+	if n < 32 {
+		buf = append(buf, TagShortStringBase|byte(n))
+		buf = append(buf, v...)
+		return buf
+	}
+	buf = append(buf, TagString)
 	if n < 128 {
 		buf = append(buf, byte(n))
 	} else {
@@ -582,6 +588,14 @@ func decodeValue(b []byte, pos int, dict []string) (any, int, error) {
 	// Inline small integer: 0x80-0xFF → value 0-127
 	if tag >= TagInlineIntBase {
 		return int64(tag & 0x7F), pos, nil
+	}
+	// Inline short string: 0x20-0x3F → length 0-31
+	if tag >= TagShortStringBase && tag < TagShortStringBase+32 {
+		length := int(tag - TagShortStringBase)
+		if pos+length > len(b) {
+			return nil, pos, fmt.Errorf("unexpected end of data for inline short string")
+		}
+		return string(b[pos : pos+length]), pos + length, nil
 	}
 	switch tag {
 	case TagNull:
@@ -1351,6 +1365,14 @@ func writeJSONValue(buf []byte, b []byte, pos int, dict []dictEntry) ([]byte, er
 	if tag >= TagInlineIntBase {
 		return strconv.AppendInt(buf, int64(tag&0x7F), 10), nil
 	}
+	// Inline short string: 0x20-0x3F → length 0-31
+	if tag >= TagShortStringBase && tag < TagShortStringBase+32 {
+		length := int(tag - TagShortStringBase)
+		if pos+length > len(b) {
+			return nil, fmt.Errorf("unexpected end of data for inline short string")
+		}
+		return writeJSONStringBytes(buf, b[pos:pos+length]), nil
+	}
 	switch tag {
 	case TagNull:
 		return append(buf, "null"...), nil
@@ -1441,10 +1463,13 @@ func writeJSONString(buf []byte, b []byte, pos int) ([]byte, error) {
 	if pos+length > len(b) {
 		return nil, fmt.Errorf("unexpected end of data for string body")
 	}
-	// Write JSON-escaped string directly from bytes.
+	return writeJSONStringBytes(buf, b[pos:pos+length]), nil
+}
+
+// writeJSONStringBytes writes a JSON-escaped quoted string from raw bytes.
+func writeJSONStringBytes(buf []byte, data []byte) []byte {
 	buf = append(buf, '"')
-	for i := 0; i < length; i++ {
-		c := b[pos+i]
+	for _, c := range data {
 		switch c {
 		case '"':
 			buf = append(buf, '\\', '"')
@@ -1465,7 +1490,7 @@ func writeJSONString(buf []byte, b []byte, pos int) ([]byte, error) {
 		}
 	}
 	buf = append(buf, '"')
-	return buf, nil
+	return buf
 }
 
 func hexDigit(v byte) byte {
@@ -1642,6 +1667,10 @@ func skipValue(b []byte, pos int) (byte, int, error) {
 	// Inline small integer: single byte, already consumed
 	if tag >= TagInlineIntBase {
 		return tag, pos, nil
+	}
+	// Inline short string: tag encodes length
+	if tag >= TagShortStringBase && tag < TagShortStringBase+32 {
+		return tag, pos + int(tag-TagShortStringBase), nil
 	}
 	switch tag {
 	case TagNull, TagTrue, TagFalse, TagEmptyObject, TagEmptyArray:

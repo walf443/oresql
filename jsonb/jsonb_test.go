@@ -329,7 +329,7 @@ func TestIntArrayWidth8(t *testing.T) {
 }
 
 func TestIntArraySpaceEfficiency(t *testing.T) {
-	// 100 small ints: header(2) + tag(1) + count(1, uint8) + width(1) + 100*1 = 105 bytes
+	// 100 small ints: header(4) + tag(1) + count(1, uint8) + width(1) + 100*1 = 107 bytes
 	arr := make([]any, 100)
 	for i := range arr {
 		arr[i] = int64(i)
@@ -337,7 +337,7 @@ func TestIntArraySpaceEfficiency(t *testing.T) {
 	b, err := Encode(arr)
 	require.NoError(t, err)
 	assert.Equal(t, byte(TagIntArray), BodyTag(b))
-	assert.Equal(t, 105, len(b), "100 small ints should be 105 bytes (including 2-byte dict header)")
+	assert.Equal(t, 107, len(b), "100 small ints should be 107 bytes (including 4-byte header)")
 
 	val, err := Decode(b)
 	require.NoError(t, err)
@@ -641,28 +641,28 @@ func TestKeyDictScalarNoDictOverhead(t *testing.T) {
 	// Scalar values should have minimal dictionary overhead (just 2-byte keyCount=0).
 	b, err := Encode(int64(42))
 	require.NoError(t, err)
-	// 2 bytes header + 1 inline int tag = 3
-	assert.Equal(t, 3, len(b))
+	// 2 bytes keyCount + 2 bytes poolCount + 1 inline int tag = 5
+	assert.Equal(t, 5, len(b))
 }
 
 // Compact encoding tests
 
 func TestCompactIntSmall(t *testing.T) {
-	// Inline small ints (0-127): header(2) + inline tag(1) = 3 bytes
+	// Inline small ints (0-127): header(4) + inline tag(1) = 5 bytes
 	for _, v := range []int64{0, 1, 42, 127} {
 		b, err := Encode(v)
 		require.NoError(t, err)
-		assert.Equal(t, 3, len(b), "int64(%d) should be 3 bytes (inline)", v)
+		assert.Equal(t, 5, len(b), "int64(%d) should be 5 bytes (inline)", v)
 
 		val, err := Decode(b)
 		require.NoError(t, err)
 		assert.Equal(t, v, val)
 	}
-	// 128-255: header(2) + tag(1) + width(1) + value(1) = 5 bytes
+	// 128-255: header(4) + tag(1) + width(1) + value(1) = 7 bytes
 	for _, v := range []int64{128, 255} {
 		b, err := Encode(v)
 		require.NoError(t, err)
-		assert.Equal(t, 5, len(b), "int64(%d) should be 5 bytes", v)
+		assert.Equal(t, 7, len(b), "int64(%d) should be 7 bytes", v)
 
 		val, err := Decode(b)
 		require.NoError(t, err)
@@ -674,8 +674,8 @@ func TestCompactInt16(t *testing.T) {
 	for _, v := range []int64{256, 1000, 65535} {
 		b, err := Encode(v)
 		require.NoError(t, err)
-		// header(2) + tag(1) + width(1) + value(2) = 6
-		assert.Equal(t, 6, len(b), "int64(%d) should be 6 bytes", v)
+		// header(4) + tag(1) + width(1) + value(2) = 8
+		assert.Equal(t, 8, len(b), "int64(%d) should be 8 bytes", v)
 
 		val, err := Decode(b)
 		require.NoError(t, err)
@@ -687,8 +687,8 @@ func TestCompactInt32(t *testing.T) {
 	for _, v := range []int64{65536, 1<<32 - 1} {
 		b, err := Encode(v)
 		require.NoError(t, err)
-		// header(2) + tag(1) + width(1) + value(4) = 8
-		assert.Equal(t, 8, len(b), "int64(%d) should be 8 bytes", v)
+		// header(4) + tag(1) + width(1) + value(4) = 10
+		assert.Equal(t, 10, len(b), "int64(%d) should be 10 bytes", v)
 
 		val, err := Decode(b)
 		require.NoError(t, err)
@@ -700,8 +700,8 @@ func TestCompactInt64(t *testing.T) {
 	for _, v := range []int64{-1, -100, 1 << 40, -(1 << 31)} {
 		b, err := Encode(v)
 		require.NoError(t, err)
-		// header(2) + tag(1) + width(1) + value(8) = 12
-		assert.Equal(t, 12, len(b), "int64(%d) should be 12 bytes", v)
+		// header(4) + tag(1) + width(1) + value(8) = 14
+		assert.Equal(t, 14, len(b), "int64(%d) should be 14 bytes", v)
 
 		val, err := Decode(b)
 		require.NoError(t, err)
@@ -711,11 +711,11 @@ func TestCompactInt64(t *testing.T) {
 
 func TestInlineShortString(t *testing.T) {
 	// Strings with byte length ≤ 31 should use inline tag (TagShortString | len).
-	// Format: header(2) + inlineTag(1) + data = 3 + len(data)
+	// Format: header(4) + inlineTag(1) + data = 5 + len(data)
 	for _, v := range []string{"", "hi", "hello", "alice"} {
 		b, err := Encode(v)
 		require.NoError(t, err)
-		expected := 2 + 1 + len(v)
+		expected := 4 + 1 + len(v)
 		assert.Equal(t, expected, len(b), "string %q should be %d bytes (inline)", v, expected)
 
 		_, bodyPos, err := readDictHeader(b)
@@ -737,8 +737,8 @@ func TestNonInlineString(t *testing.T) {
 	v := "abcdefghijklmnopqrstuvwxyz-abcdef" // 33 bytes
 	b, err := Encode(v)
 	require.NoError(t, err)
-	// header(2) + TagString(1) + len(1) + data(33) = 37
-	assert.Equal(t, 2+1+1+len(v), len(b))
+	// header(4) + TagString(1) + len(1) + data(33) = 39
+	assert.Equal(t, 4+1+1+len(v), len(b))
 
 	_, bodyPos, err := readDictHeader(b)
 	require.NoError(t, err)
@@ -754,7 +754,7 @@ func TestInlineShortStringMultibyte(t *testing.T) {
 	v := "日本語"
 	b, err := Encode(v)
 	require.NoError(t, err)
-	expected := 2 + 1 + len(v) // header + inline tag + data
+	expected := 4 + 1 + len(v) // header + inline tag + data
 	assert.Equal(t, expected, len(b))
 
 	val, err := Decode(b)
@@ -767,8 +767,8 @@ func TestCompactStringLong(t *testing.T) {
 	long := string(make([]byte, 200))
 	b, err := Encode(long)
 	require.NoError(t, err)
-	// header(2) + tag(1) + marker(1) + len(4) + data(200) = 208
-	assert.Equal(t, 208, len(b))
+	// header(4) + tag(1) + marker(1) + len(4) + data(200) = 210
+	assert.Equal(t, 210, len(b))
 
 	val, err := Decode(b)
 	require.NoError(t, err)
@@ -963,8 +963,8 @@ func TestEmptyObjectInlineTag(t *testing.T) {
 	_, bodyPos, err := readDictHeader(b)
 	require.NoError(t, err)
 	assert.Equal(t, byte(TagEmptyObject), b[bodyPos], "empty object should use TagEmptyObject")
-	// header(2) + tag(1) = 3 bytes total
-	assert.Equal(t, 3, len(b))
+	// header(4) + tag(1) = 5 bytes total
+	assert.Equal(t, 5, len(b))
 
 	val, err := Decode(b)
 	require.NoError(t, err)
@@ -982,8 +982,8 @@ func TestEmptyArrayInlineTag(t *testing.T) {
 	_, bodyPos, err := readDictHeader(b)
 	require.NoError(t, err)
 	assert.Equal(t, byte(TagEmptyArray), b[bodyPos], "empty array should use TagEmptyArray")
-	// header(2) + tag(1) = 3 bytes total
-	assert.Equal(t, 3, len(b))
+	// header(4) + tag(1) = 5 bytes total
+	assert.Equal(t, 5, len(b))
 
 	val, err := Decode(b)
 	require.NoError(t, err)
@@ -1340,5 +1340,126 @@ func TestExistsPathRoot(t *testing.T) {
 	require.NoError(t, err)
 
 	p, _ := json_path.Parse("$")
+	assert.True(t, ExistsPath(b, p))
+}
+
+// --- String value pool tests ---
+
+func TestStringPoolRepeatedValues(t *testing.T) {
+	// Array of objects with repeated string values should use string pool.
+	data := []any{
+		map[string]any{"status": "active", "role": "admin"},
+		map[string]any{"status": "active", "role": "user"},
+		map[string]any{"status": "inactive", "role": "user"},
+	}
+	b, err := Encode(data)
+	require.NoError(t, err)
+
+	val, err := Decode(b)
+	require.NoError(t, err)
+	decoded := val.([]any)
+	require.Len(t, decoded, 3)
+	assert.Equal(t, "active", decoded[0].(map[string]any)["status"])
+	assert.Equal(t, "admin", decoded[0].(map[string]any)["role"])
+	assert.Equal(t, "active", decoded[1].(map[string]any)["status"])
+	assert.Equal(t, "user", decoded[1].(map[string]any)["role"])
+	assert.Equal(t, "inactive", decoded[2].(map[string]any)["status"])
+	assert.Equal(t, "user", decoded[2].(map[string]any)["role"])
+
+	// Verify string pool is used: "active" and "user" appear 2+ times.
+	// Encoding with pool should be smaller than without.
+	// Also verify ToJSON round-trip.
+	j, err := ToJSON(b)
+	require.NoError(t, err)
+	b2, err := FromJSON(j)
+	require.NoError(t, err)
+	val2, err := Decode(b2)
+	require.NoError(t, err)
+	decoded2 := val2.([]any)
+	assert.Equal(t, "active", decoded2[0].(map[string]any)["status"])
+}
+
+func TestStringPoolSizeSavings(t *testing.T) {
+	// "active" (6 bytes) appears 5 times.
+	// Without pool: 5 * (1 tag + 6 data) = 35 bytes for the values
+	// With pool: 1 entry (1 len + 6 data) + 5 * (1 tag + 2 index) = 22 bytes
+	data := []any{
+		map[string]any{"s": "active"},
+		map[string]any{"s": "active"},
+		map[string]any{"s": "active"},
+		map[string]any{"s": "active"},
+		map[string]any{"s": "active"},
+	}
+	bPooled, err := Encode(data)
+	require.NoError(t, err)
+
+	// Verify correctness
+	val, err := Decode(bPooled)
+	require.NoError(t, err)
+	decoded := val.([]any)
+	for i := 0; i < 5; i++ {
+		assert.Equal(t, "active", decoded[i].(map[string]any)["s"])
+	}
+
+	// Verify pool is actually used: binary should contain TagStringRef
+	_, bodyPos, err := readDictHeader(bPooled)
+	require.NoError(t, err)
+	hasStringRef := false
+	for i := bodyPos; i < len(bPooled); i++ {
+		if bPooled[i] == TagStringRef {
+			hasStringRef = true
+			break
+		}
+	}
+	assert.True(t, hasStringRef, "pooled encoding should contain TagStringRef")
+}
+
+func TestStringPoolUniqueStrings(t *testing.T) {
+	// Strings that appear only once should NOT be pooled.
+	data := map[string]any{
+		"a": "unique1",
+		"b": "unique2",
+		"c": "unique3",
+	}
+	b, err := Encode(data)
+	require.NoError(t, err)
+
+	val, err := Decode(b)
+	require.NoError(t, err)
+	decoded := val.(map[string]any)
+	assert.Equal(t, "unique1", decoded["a"])
+	assert.Equal(t, "unique2", decoded["b"])
+	assert.Equal(t, "unique3", decoded["c"])
+}
+
+func TestStringPoolLookupKey(t *testing.T) {
+	data := []any{
+		map[string]any{"status": "active", "name": "alice"},
+		map[string]any{"status": "active", "name": "bob"},
+	}
+	b, err := Encode(data)
+	require.NoError(t, err)
+
+	// LookupKeys should work through pooled values
+	val, found, err := LookupKeys(b, 0, "status")
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, "active", val)
+
+	val, found, err = LookupKeys(b, 1, "name")
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, "bob", val)
+}
+
+func TestStringPoolExistsPath(t *testing.T) {
+	data := []any{
+		map[string]any{"status": "active"},
+		map[string]any{"status": "active"},
+	}
+	b, err := Encode(data)
+	require.NoError(t, err)
+
+	p, _ := json_path.Parse("$[0].status")
 	assert.True(t, ExistsPath(b, p))
 }

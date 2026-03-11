@@ -727,6 +727,11 @@ func hasOuterReferences(stmt *ast.SelectStmt, outerEval ExprEvaluator) bool {
 
 // evalScalarFuncGeneric evaluates a scalar function call using the generic evaluator.
 func evalScalarFuncGeneric(call *ast.CallExpr, row Row, eval ExprEvaluator) (Value, error) {
+	evalFn := func(expr ast.Expr) (Value, error) {
+		return eval.Eval(expr, row)
+	}
+
+	// Special-case functions that need lazy evaluation or extra context.
 	switch call.Name {
 	case "COALESCE":
 		for _, arg := range call.Args {
@@ -762,64 +767,23 @@ func evalScalarFuncGeneric(call *ast.CallExpr, row Row, eval ExprEvaluator) (Val
 			return nil, nil
 		}
 		return val1, nil
-	case "ABS", "ROUND", "MOD", "CEIL", "FLOOR", "POWER":
-		args := make([]Value, len(call.Args))
-		for i, arg := range call.Args {
-			val, err := eval.Eval(arg, row)
-			if err != nil {
-				return nil, err
-			}
-			args[i] = val
-		}
-		return evalNumericFunc(call, args)
-	case "LENGTH", "UPPER", "LOWER", "SUBSTRING", "TRIM", "CONCAT":
-		args := make([]Value, len(call.Args))
-		for i, arg := range call.Args {
-			val, err := eval.Eval(arg, row)
-			if err != nil {
-				return nil, err
-			}
-			args[i] = val
-		}
-		return evalStringFunc(call, args)
-	case "JSON_OBJECT":
-		args := make([]Value, len(call.Args))
-		for i, arg := range call.Args {
-			val, err := eval.Eval(arg, row)
-			if err != nil {
-				return nil, err
-			}
-			args[i] = val
-		}
-		return evalFuncJSONObject(args)
-	case "JSON_ARRAY":
-		args := make([]Value, len(call.Args))
-		for i, arg := range call.Args {
-			val, err := eval.Eval(arg, row)
-			if err != nil {
-				return nil, err
-			}
-			args[i] = val
-		}
-		return evalFuncJSONArray(args)
 	case "JSON_VALUE", "JSON_QUERY", "JSON_EXISTS":
-		args := make([]Value, len(call.Args))
-		for i, arg := range call.Args {
-			val, err := eval.Eval(arg, row)
-			if err != nil {
-				return nil, err
-			}
-			args[i] = val
+		args, err := evalArgsWith(call.Args, evalFn)
+		if err != nil {
+			return nil, err
 		}
 		compiled := tryCompileJSONPath(call)
-		if call.Name == "JSON_QUERY" {
-			return evalFuncJSONQuery(args, compiled)
-		}
-		if call.Name == "JSON_EXISTS" {
-			return evalFuncJSONExists(args, compiled)
-		}
-		return evalFuncJSONValue(args, compiled)
-	default:
-		return nil, fmt.Errorf("aggregate function %s not allowed in this context", call.Name)
+		return evalJSONPathFunc(call.Name, args, compiled)
 	}
+
+	// Registry-based dispatch for standard scalar functions.
+	if fn, ok := scalarFuncRegistry[call.Name]; ok {
+		args, err := evalArgsWith(call.Args, evalFn)
+		if err != nil {
+			return nil, err
+		}
+		return fn(args)
+	}
+
+	return nil, fmt.Errorf("aggregate function %s not allowed in this context", call.Name)
 }

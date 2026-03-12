@@ -6,25 +6,6 @@ import (
 	"github.com/walf443/oresql/ast"
 )
 
-// equiJoinPair and joinTableInfo type aliases are defined in join_graph.go
-// (delegating to engine/join_graph package).
-
-// flattenAND decomposes an AND-connected expression tree into a flat slice.
-// Non-AND expressions (including OR) are returned as a single-element slice.
-func flattenAND(expr ast.Expr) []ast.Expr {
-	if expr == nil {
-		return nil
-	}
-	logical, ok := expr.(*ast.LogicalExpr)
-	if !ok || logical.Op != "AND" {
-		return []ast.Expr{expr}
-	}
-	var result []ast.Expr
-	result = append(result, flattenAND(logical.Left)...)
-	result = append(result, flattenAND(logical.Right)...)
-	return result
-}
-
 // collectTableRefs collects all table qualifiers (IdentExpr.Table) referenced in an expression.
 // Only non-empty qualifiers are included. Keys are lowercased.
 func collectTableRefs(expr ast.Expr) map[string]bool {
@@ -67,51 +48,6 @@ func collectTableRefsRecursive(expr ast.Expr, refs map[string]bool) {
 	case *ast.ArithmeticExpr:
 		collectTableRefsRecursive(e.Left, refs)
 		collectTableRefsRecursive(e.Right, refs)
-	}
-}
-
-// containsSubquery returns true if the expression contains any subquery expression
-// (ExistsExpr, ScalarExpr, or InExpr with Subquery).
-func containsSubquery(expr ast.Expr) bool {
-	if expr == nil {
-		return false
-	}
-	switch e := expr.(type) {
-	case *ast.ExistsExpr:
-		return true
-	case *ast.ScalarExpr:
-		return true
-	case *ast.InExpr:
-		if e.Subquery != nil {
-			return true
-		}
-		return false
-	case *ast.BinaryExpr:
-		return containsSubquery(e.Left) || containsSubquery(e.Right)
-	case *ast.LogicalExpr:
-		return containsSubquery(e.Left) || containsSubquery(e.Right)
-	case *ast.NotExpr:
-		return containsSubquery(e.Expr)
-	case *ast.IsNullExpr:
-		return containsSubquery(e.Expr)
-	case *ast.ArithmeticExpr:
-		return containsSubquery(e.Left) || containsSubquery(e.Right)
-	case *ast.AliasExpr:
-		return containsSubquery(e.Expr)
-	case *ast.CaseExpr:
-		if containsSubquery(e.Operand) {
-			return true
-		}
-		for _, w := range e.Whens {
-			if containsSubquery(w.When) || containsSubquery(w.Then) {
-				return true
-			}
-		}
-		return containsSubquery(e.Else)
-	case *ast.CastExpr:
-		return containsSubquery(e.Expr)
-	default:
-		return false
 	}
 }
 
@@ -219,17 +155,4 @@ func stripTableQualifier(expr ast.Expr, tableName, alias string) ast.Expr {
 	default:
 		return expr
 	}
-}
-
-// combineExprsAND combines a slice of expressions into a single AND-connected expression.
-// Returns nil for empty slice, the single element for one, or a chain of LogicalExpr for multiple.
-func combineExprsAND(exprs []ast.Expr) ast.Expr {
-	if len(exprs) == 0 {
-		return nil
-	}
-	result := exprs[0]
-	for i := 1; i < len(exprs); i++ {
-		result = &ast.LogicalExpr{Left: result, Op: "AND", Right: exprs[i]}
-	}
-	return result
 }

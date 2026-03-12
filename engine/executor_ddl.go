@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/walf443/oresql/ast"
+	"github.com/walf443/oresql/storage"
 )
 
 func (e *Executor) executeCreateTable(stmt *ast.CreateTableStmt) (*Result, error) {
@@ -26,7 +27,7 @@ func (e *Executor) executeCreateTable(stmt *ast.CreateTableStmt) (*Result, error
 				return nil, err
 			}
 			idxName := fmt.Sprintf("unique_%s_%s", info.Name, strings.ToLower(cd.Name))
-			idxInfo := &IndexInfo{
+			idxInfo := &storage.IndexInfo{
 				Name:        idxName,
 				TableName:   info.Name,
 				ColumnNames: []string{col.Name},
@@ -47,7 +48,7 @@ func (e *Executor) executeCreateTable(stmt *ast.CreateTableStmt) (*Result, error
 			colNames[i] = info.Columns[idx].Name
 		}
 		idxName := fmt.Sprintf("pk_%s", info.Name)
-		idxInfo := &IndexInfo{
+		idxInfo := &storage.IndexInfo{
 			Name:        idxName,
 			TableName:   info.Name,
 			ColumnNames: colNames,
@@ -129,7 +130,7 @@ func (e *Executor) executeCreateIndex(stmt *ast.CreateIndexStmt) (*Result, error
 			tokenizer = "word"
 		}
 	}
-	idxInfo := &IndexInfo{
+	idxInfo := &storage.IndexInfo{
 		Name:        stmt.IndexName,
 		TableName:   info.Name,
 		ColumnNames: columnNames,
@@ -180,7 +181,7 @@ func (e *Executor) executeAlterTableAddColumn(stmt *ast.AlterTableAddColumnStmt)
 	// Auto-create unique index for UNIQUE column
 	if stmt.Column.Unique && !stmt.Column.PrimaryKey {
 		idxName := fmt.Sprintf("unique_%s_%s", info.Name, strings.ToLower(newCol.Name))
-		idxInfo := &IndexInfo{
+		idxInfo := &storage.IndexInfo{
 			Name:        idxName,
 			TableName:   info.Name,
 			ColumnNames: []string{newCol.Name},

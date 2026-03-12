@@ -5,6 +5,7 @@ import (
 
 	"github.com/walf443/oresql/ast"
 	"github.com/walf443/oresql/engine/expr"
+	"github.com/walf443/oresql/storage"
 )
 
 // tryPrimaryKeyLookup attempts to use the primary key BTree for direct lookup.
@@ -777,7 +778,7 @@ func (e *Executor) tryIndexLookupCovering(where ast.Expr, info *TableInfo, neede
 		if !isIndexCovering(idx, neededCols, info.PrimaryKeyCol) {
 			continue
 		}
-		cir, ok := idx.(CoveringIndexReader)
+		cir, ok := idx.(storage.CoveringIndexReader)
 		if !ok {
 			continue
 		}

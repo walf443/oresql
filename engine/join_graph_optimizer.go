@@ -5,6 +5,7 @@ import (
 
 	"github.com/walf443/oresql/ast"
 	"github.com/walf443/oresql/engine/join_graph"
+	"github.com/walf443/oresql/storage"
 )
 
 // tableScore is used for scoring tables during join order optimization.
@@ -213,7 +214,7 @@ func (e *Executor) findCompositeJoinIndex(
 	equiJoinColIdx int,
 	localWhereStripped ast.Expr,
 	info *TableInfo,
-	st StorageEngine,
+	st storage.Engine,
 ) *compositeJoinPlan {
 	indexes := st.GetIndexes(info.Name)
 	if len(indexes) == 0 {

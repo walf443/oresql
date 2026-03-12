@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/walf443/oresql/ast"
+	"github.com/walf443/oresql/storage"
 )
 
 func (e *Executor) executeSetOp(stmt *ast.SetOpStmt) (*Result, error) {
@@ -80,7 +81,7 @@ func (e *Executor) executeSetOp(stmt *ast.SetOpStmt) (*Result, error) {
 // intersectRows returns rows common to both left and right.
 func intersectRows(left, right []Row, all bool) []Row {
 	// Build a count map from right rows
-	rightSet := make(map[KeyEncoding]int, len(right))
+	rightSet := make(map[storage.KeyEncoding]int, len(right))
 	for _, row := range right {
 		rightSet[encodeValues(row)]++
 	}
@@ -90,7 +91,7 @@ func intersectRows(left, right []Row, all bool) []Row {
 		cap = len(right)
 	}
 	result := make([]Row, 0, cap)
-	seen := make(map[KeyEncoding]int, len(left)) // for dedup when ALL is false
+	seen := make(map[storage.KeyEncoding]int, len(left)) // for dedup when ALL is false
 	for _, row := range left {
 		key := encodeValues(row)
 		if rightSet[key] > 0 {
@@ -111,13 +112,13 @@ func intersectRows(left, right []Row, all bool) []Row {
 // exceptRows returns rows from left that are not in right.
 func exceptRows(left, right []Row, all bool) []Row {
 	// Build a count map from right rows
-	rightSet := make(map[KeyEncoding]int, len(right))
+	rightSet := make(map[storage.KeyEncoding]int, len(right))
 	for _, row := range right {
 		rightSet[encodeValues(row)]++
 	}
 
 	result := make([]Row, 0, len(left))
-	seen := make(map[KeyEncoding]int, len(left)) // for dedup when ALL is false
+	seen := make(map[storage.KeyEncoding]int, len(left)) // for dedup when ALL is false
 	for _, row := range left {
 		key := encodeValues(row)
 		if all {

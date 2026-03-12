@@ -5,6 +5,7 @@ import (
 
 	"github.com/walf443/oresql/ast"
 	"github.com/walf443/oresql/engine/join_graph"
+	"github.com/walf443/oresql/storage"
 )
 
 // Type aliases for backward compatibility.
@@ -146,7 +147,7 @@ func (e *Executor) buildJoinGraph(stmt *ast.SelectStmt) (*JoinGraph, error) {
 	// 1. Create node for FROM table
 	var fromInfo *TableInfo
 	var fromRows []Row
-	var fromStorage StorageEngine
+	var fromStorage storage.Engine
 	if stmt.FromSubquery != nil {
 		var err error
 		fromInfo, fromRows, err = e.materializeSubquery(stmt.FromSubquery, stmt.TableAlias)
@@ -180,7 +181,7 @@ func (e *Executor) buildJoinGraph(stmt *ast.SelectStmt) (*JoinGraph, error) {
 
 	// 2. Create nodes for each JOIN table
 	for _, join := range stmt.Joins {
-		var joinStorage StorageEngine
+		var joinStorage storage.Engine
 		var joinInfo *TableInfo
 		var joinRows []Row
 		if cteInfo, cteRows, ok := e.lookupCTE(join.TableName); ok {

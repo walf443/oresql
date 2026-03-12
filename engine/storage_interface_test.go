@@ -12,7 +12,7 @@ import (
 // The var _ declaration in storage/memory provides compile-time verification;
 // this test documents the intent and exercises the assertion.
 func TestStorageEngineInterface(t *testing.T) {
-	var s StorageEngine = memory.NewMemoryStorage()
+	var s storage.Engine = memory.NewMemoryStorage()
 	assert.NotNil(t, s)
 }
 

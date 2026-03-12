@@ -3,6 +3,7 @@ package engine
 import (
 	"github.com/walf443/oresql/ast"
 	"github.com/walf443/oresql/engine/expr"
+	"github.com/walf443/oresql/storage"
 )
 
 // executeSelectWithIndexOrder executes a SELECT using index-ordered scan.
@@ -207,7 +208,7 @@ func (e *Executor) scanFullOrderSecondary(
 	rows := make([]Row, 0, cap)
 
 	neededCols := collectNeededColumns(stmt.Columns, stmt.Where, stmt.OrderBy, info)
-	cir, isCovering := ior.index.(CoveringIndexReader)
+	cir, isCovering := ior.index.(storage.CoveringIndexReader)
 	if isCovering && isIndexCovering(ior.index, neededCols, info.PrimaryKeyCol) {
 		cir.OrderedCoveringScan(
 			ior.fromVal, ior.fromInclusive,
@@ -315,7 +316,7 @@ func (e *Executor) scanPartialOrderSecondary(
 	stmt *ast.SelectStmt, db *Database, info *TableInfo, ior *indexOrderResult, state *partialOrderState,
 ) {
 	neededCols := collectNeededColumns(stmt.Columns, stmt.Where, stmt.OrderBy, info)
-	cir, isCovering := ior.index.(CoveringIndexReader)
+	cir, isCovering := ior.index.(storage.CoveringIndexReader)
 	if isCovering && isIndexCovering(ior.index, neededCols, info.PrimaryKeyCol) {
 		cir.OrderedCoveringScan(
 			ior.fromVal, ior.fromInclusive,

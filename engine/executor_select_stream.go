@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/walf443/oresql/ast"
+	"github.com/walf443/oresql/storage"
 )
 
 // executeScanEachStreaming uses ScanEach to stream rows inline under the
@@ -217,7 +218,7 @@ func (e *Executor) executeIndexScanStreaming(
 
 	// Check if covering index scan is possible
 	neededCols := collectNeededColumns(stmt.Columns, where, nil, info)
-	cir, isCovering := params.index.(CoveringIndexReader)
+	cir, isCovering := params.index.(storage.CoveringIndexReader)
 	if isCovering && isIndexCovering(params.index, neededCols, info.PrimaryKeyCol) {
 		cir.OrderedCoveringScan(
 			params.fromVal, params.fromInclusive,

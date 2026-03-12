@@ -15,7 +15,7 @@ type Database struct {
 	DataDir     string // empty string means in-memory only
 	StorageType string // "memory" or "disk" (default)
 	catalog     *Catalog
-	storage     StorageEngine
+	storage     storage.Engine
 }
 
 // DatabaseOption configures a Database.
@@ -29,7 +29,7 @@ func WithDataDir(dir string) DatabaseOption {
 }
 
 // WithDatabaseStorage sets the storage engine for the Database.
-func WithDatabaseStorage(s StorageEngine) DatabaseOption {
+func WithDatabaseStorage(s storage.Engine) DatabaseOption {
 	return func(db *Database) {
 		db.storage = s
 	}
@@ -101,6 +101,6 @@ func (db *Database) Catalog() *Catalog {
 }
 
 // Storage returns the database's storage engine.
-func (db *Database) Storage() StorageEngine {
+func (db *Database) Storage() storage.Engine {
 	return db.storage
 }

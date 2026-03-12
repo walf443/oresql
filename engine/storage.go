@@ -9,7 +9,6 @@ type Value = storage.Value
 type Row = storage.Row
 type ColumnInfo = storage.ColumnInfo
 type TableInfo = storage.TableInfo
-type TableLock = storage.TableLock
 
 // encodeValue is a package-level alias for storage.EncodeValue,
 // preserving backward compatibility with executor files.

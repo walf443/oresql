@@ -2,6 +2,7 @@ package engine
 
 import (
 	"github.com/walf443/oresql/ast"
+	"github.com/walf443/oresql/engine/expr"
 )
 
 // executeSelectWithIndexOrder executes a SELECT using index-ordered scan.
@@ -348,5 +349,5 @@ func valuesEqual(a, b Value) bool {
 	if a == nil || b == nil {
 		return false
 	}
-	return compareValues(a, b) == 0
+	return expr.Compare(a, b) == 0
 }

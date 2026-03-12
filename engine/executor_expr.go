@@ -6,6 +6,7 @@ import (
 
 	"github.com/walf443/oresql/ast"
 	"github.com/walf443/oresql/engine/expr"
+	"github.com/walf443/oresql/engine/scalar"
 	"github.com/walf443/oresql/jsonb"
 )
 
@@ -63,8 +64,8 @@ func validateAndCoerceValue(val Value, col ColumnInfo) (Value, error) {
 }
 
 // evalLiteral evaluates a literal expression (for INSERT VALUES and SELECT without FROM).
-func evalLiteral(expr ast.Expr) (Value, error) {
-	switch e := expr.(type) {
+func evalLiteral(e ast.Expr) (Value, error) {
+	switch e := e.(type) {
 	case *ast.IntLitExpr:
 		return e.Value, nil
 	case *ast.FloatLitExpr:
@@ -84,11 +85,11 @@ func evalLiteral(expr ast.Expr) (Value, error) {
 		if err != nil {
 			return nil, err
 		}
-		return evalArithmetic(left, e.Op, right)
+		return expr.Arithmetic(left, e.Op, right)
 	case *ast.CallExpr:
 		return evalScalarFuncLiteral(e)
 	default:
-		return nil, fmt.Errorf("expected literal value, got %T", expr)
+		return nil, fmt.Errorf("expected literal value, got %T", e)
 	}
 }
 
@@ -122,7 +123,7 @@ func evalScalarFuncLiteral(call *ast.CallExpr) (Value, error) {
 		if val1 == nil || val2 == nil {
 			return val1, nil
 		}
-		eq, err := evalComparison(val1, "=", val2)
+		eq, err := expr.Comparison(val1, "=", val2)
 		if err != nil {
 			return val1, nil
 		}
@@ -131,17 +132,17 @@ func evalScalarFuncLiteral(call *ast.CallExpr) (Value, error) {
 		}
 		return val1, nil
 	case "JSON_VALUE", "JSON_QUERY", "JSON_EXISTS":
-		args, err := evalArgsWith(call.Args, evalLiteral)
+		args, err := scalar.EvalArgsWith(call.Args, evalLiteral)
 		if err != nil {
 			return nil, err
 		}
-		compiled := tryCompileJSONPath(call)
-		return evalJSONPathFunc(call.Name, args, compiled)
+		compiled := scalar.TryCompileJSONPath(call)
+		return scalar.EvalJSONPathFunc(call.Name, args, compiled)
 	}
 
 	// Registry-based dispatch for standard scalar functions.
-	if fn, ok := scalarFuncRegistry[call.Name]; ok {
-		args, err := evalArgsWith(call.Args, evalLiteral)
+	if fn, ok := scalar.Registry[call.Name]; ok {
+		args, err := scalar.EvalArgsWith(call.Args, evalLiteral)
 		if err != nil {
 			return nil, err
 		}
@@ -151,23 +152,9 @@ func evalScalarFuncLiteral(call *ast.CallExpr) (Value, error) {
 	return nil, fmt.Errorf("function %s not supported in literal context", call.Name)
 }
 
-// Delegating functions to engine/expr package.
-
-func evalArithmetic(left Value, op string, right Value) (Value, error) {
-	return expr.Arithmetic(left, op, right)
-}
-func evalComparison(left Value, op string, right Value) (bool, error) {
-	return expr.Comparison(left, op, right)
-}
-
-// compareValues compares two values for ORDER BY sorting.
-// Returns -1 if a < b, 0 if a == b, 1 if a > b.
-// NULL values sort last (are considered greater than any non-NULL value).
-func compareValues(a, b Value) int { return expr.Compare(a, b) }
-
 // formatExpr returns a display name for an expression.
-func formatExpr(expr ast.Expr) string {
-	switch e := expr.(type) {
+func formatExpr(e ast.Expr) string {
+	switch e := e.(type) {
 	case *ast.IntLitExpr:
 		return fmt.Sprintf("%d", e.Value)
 	case *ast.FloatLitExpr:
@@ -229,8 +216,3 @@ func nextPrefix(s string) (string, bool) {
 	}
 	return "", false
 }
-
-// forEachChildExpr calls fn on each direct child expression of expr.
-// It handles all compound AST node types; leaf nodes produce no calls.
-// Subqueries (ScalarExpr, ExistsExpr) are NOT traversed.
-func forEachChildExpr(e ast.Expr, fn func(ast.Expr)) { expr.ForEachChild(e, fn) }

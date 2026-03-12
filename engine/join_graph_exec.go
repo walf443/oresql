@@ -4,13 +4,14 @@ import (
 	"fmt"
 
 	"github.com/walf443/oresql/ast"
+	"github.com/walf443/oresql/engine/eval"
 )
 
 // filterRows applies a WHERE expression to rows, returning only matching ones.
-func filterRows(rows []Row, where ast.Expr, eval ExprEvaluator) ([]Row, error) {
+func filterRows(rows []Row, where ast.Expr, ev ExprEvaluator) ([]Row, error) {
 	var filtered []Row
 	for _, row := range rows {
-		match, err := evalWhereWith(where, row, eval)
+		match, err := eval.Where(where, row, ev)
 		if err != nil {
 			return nil, err
 		}
@@ -285,10 +286,10 @@ func evalOnCondition(s *joinStepState, mergedRow Row) (bool, error) {
 		if s.edge.ResidualOn == nil {
 			return true, nil
 		}
-		return evalWhereWith(s.edge.ResidualOn, mergedRow, s.joinEval)
+		return eval.Where(s.edge.ResidualOn, mergedRow, s.joinEval)
 	}
 	// Full nested loop: evaluate full ON condition
-	return evalWhereWith(s.edge.OnExpr, mergedRow, s.joinEval)
+	return eval.Where(s.edge.OnExpr, mergedRow, s.joinEval)
 }
 
 // executeJoinStep performs the nested-loop join for one step, returning the joined rows.

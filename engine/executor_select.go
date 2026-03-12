@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/walf443/oresql/ast"
+	"github.com/walf443/oresql/engine/eval"
 	"github.com/walf443/oresql/engine/scalar"
 	"github.com/walf443/oresql/json_path"
 )
@@ -520,7 +521,7 @@ func (e *Executor) scanSourceSingle(stmt *ast.SelectStmt, earlyLimit int) ([]Row
 // and dispatches to either the regular executeSelect (non-correlated) or
 // executeSelectCorrelated (correlated).
 func (e *Executor) executeSelectMaybeCorrelated(stmt *ast.SelectStmt, outerEval ExprEvaluator, outerRow Row) (*Result, error) {
-	if hasOuterReferences(stmt, outerEval) {
+	if eval.HasOuterReferences(stmt, outerEval) {
 		return e.executeSelectCorrelated(stmt, outerEval, outerRow)
 	}
 	return e.executeSelect(stmt)
@@ -679,8 +680,6 @@ func formatCallExpr(call *ast.CallExpr) string {
 	return call.Name + "(" + strings.Join(args, ", ") + ")"
 }
 
-func isScalarFunc(name string) bool { return scalar.IsScalar(name) }
-
 // hasAggregate returns true if any column expression is an aggregate function call.
 // WindowExpr containing aggregate functions are not treated as normal aggregates.
 func hasAggregate(columns []ast.Expr) bool {
@@ -694,7 +693,7 @@ func hasAggregate(columns []ast.Expr) bool {
 			continue
 		}
 		if call, ok := inner.(*ast.CallExpr); ok {
-			if !isScalarFunc(call.Name) {
+			if !scalar.IsScalar(call.Name) {
 				return true
 			}
 		}

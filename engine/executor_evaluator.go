@@ -14,16 +14,6 @@ import (
 type ExprEvaluator = eval.ExprEvaluator
 type SubqueryRunner = eval.SubqueryRunner
 
-// evalWhereWith delegates to eval.Where.
-func evalWhereWith(e ast.Expr, row Row, ev ExprEvaluator) (bool, error) {
-	return eval.Where(e, row, ev)
-}
-
-// hasOuterReferences delegates to eval.HasOuterReferences.
-func hasOuterReferences(stmt *ast.SelectStmt, outerEval ExprEvaluator) bool {
-	return eval.HasOuterReferences(stmt, outerEval)
-}
-
 // makeSubqueryRunner creates a SubqueryRunner from an Executor.
 // Returns nil if exec is nil (e.g. in tests without subquery support).
 func makeSubqueryRunner(exec *Executor) SubqueryRunner {

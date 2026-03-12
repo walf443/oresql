@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/walf443/oresql/ast"
+	"github.com/walf443/oresql/engine/expr"
+	"github.com/walf443/oresql/engine/scalar"
 )
 
 // applyGroupBy processes GROUP BY / aggregate as a pipeline step.
@@ -183,10 +185,10 @@ func evalAggregate(call *ast.CallExpr, rows []Row, info *TableInfo) (Value, stri
 		val, err := evalAggAvg(call, rows, info)
 		return val, colName, err
 	case "MIN":
-		val, err := evalAggMinMax(call, rows, info, "MIN", func(a, b Value) bool { return compareValues(a, b) < 0 })
+		val, err := evalAggMinMax(call, rows, info, "MIN", func(a, b Value) bool { return expr.Compare(a, b) < 0 })
 		return val, colName, err
 	case "MAX":
-		val, err := evalAggMinMax(call, rows, info, "MAX", func(a, b Value) bool { return compareValues(a, b) > 0 })
+		val, err := evalAggMinMax(call, rows, info, "MAX", func(a, b Value) bool { return expr.Compare(a, b) > 0 })
 		return val, colName, err
 	default:
 		return nil, "", fmt.Errorf("unknown aggregate function: %s", call.Name)
@@ -404,7 +406,7 @@ func (a *aggAccumulator) feed(row Row) {
 		if v == nil {
 			return
 		}
-		if a.minVal == nil || compareValues(v, a.minVal) < 0 {
+		if a.minVal == nil || expr.Compare(v, a.minVal) < 0 {
 			a.minVal = v
 		}
 	case "MAX":
@@ -412,7 +414,7 @@ func (a *aggAccumulator) feed(row Row) {
 		if v == nil {
 			return
 		}
-		if a.maxVal == nil || compareValues(v, a.maxVal) > 0 {
+		if a.maxVal == nil || expr.Compare(v, a.maxVal) > 0 {
 			a.maxVal = v
 		}
 	}
@@ -589,7 +591,7 @@ func buildGroupByAccumulators(stmt *ast.SelectStmt, gbIdent *ast.IdentExpr, gbCo
 			}
 		case *ast.CallExpr:
 			fn := strings.ToUpper(inner.Name)
-			if isScalarFunc(fn) {
+			if scalar.IsScalar(fn) {
 				return nil, fmt.Errorf("scalar function %q not supported in GROUP BY index optimization", fn)
 			}
 			dispName := formatCallExpr(inner)

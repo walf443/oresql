@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"github.com/walf443/oresql/ast"
+	"github.com/walf443/oresql/engine/expr"
 	"github.com/walf443/oresql/jsonb"
 )
 
@@ -76,7 +77,7 @@ func sortRows[T any](rows []T, orderBy []ast.OrderByClause, eval ExprEvaluator, 
 			if vj == nil {
 				return true // NULL sorts last
 			}
-			cmp := compareValues(vi, vj)
+			cmp := expr.Compare(vi, vj)
 			if cmp == 0 {
 				continue
 			}
@@ -379,7 +380,7 @@ func compareSortKeys(a, b []Value, orderBy []ast.OrderByClause) int {
 		if vj == nil {
 			return -1 // NULL sorts last → b is "larger"
 		}
-		cmp := compareValues(vi, vj)
+		cmp := expr.Compare(vi, vj)
 		if cmp == 0 {
 			continue
 		}

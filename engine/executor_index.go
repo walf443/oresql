@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/walf443/oresql/ast"
+	"github.com/walf443/oresql/engine/expr"
 )
 
 // tryPrimaryKeyLookup attempts to use the primary key BTree for direct lookup.
@@ -700,13 +701,13 @@ func collectNeededColumns(columns []ast.Expr, where ast.Expr, orderBy []ast.Orde
 
 // collectColumnRefs recursively walks an AST expression and records all column
 // indexes it references into the needed map.
-func collectColumnRefs(expr ast.Expr, info *TableInfo, needed map[int]bool) {
-	if expr == nil {
+func collectColumnRefs(e ast.Expr, info *TableInfo, needed map[int]bool) {
+	if e == nil {
 		return
 	}
-	switch e := expr.(type) {
+	switch n := e.(type) {
 	case *ast.IdentExpr:
-		col, err := info.FindColumn(e.Name)
+		col, err := info.FindColumn(n.Name)
 		if err == nil {
 			needed[col.Index] = true
 		}
@@ -716,13 +717,13 @@ func collectColumnRefs(expr ast.Expr, info *TableInfo, needed map[int]bool) {
 		}
 	case *ast.CallExpr:
 		// Aggregate functions with * (e.g. COUNT(*)) don't need column data
-		for _, arg := range e.Args {
+		for _, arg := range n.Args {
 			if _, isStar := arg.(*ast.StarExpr); !isStar {
 				collectColumnRefs(arg, info, needed)
 			}
 		}
 	default:
-		forEachChildExpr(expr, func(child ast.Expr) {
+		expr.ForEachChild(e, func(child ast.Expr) {
 			collectColumnRefs(child, info, needed)
 		})
 	}

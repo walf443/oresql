@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/walf443/oresql/ast"
+	"github.com/walf443/oresql/engine/expr"
 )
 
 // hasWindowFunction returns true if any SELECT column contains a WindowExpr.
@@ -160,7 +161,7 @@ func sortWindowIndices(winExpr *ast.WindowExpr, rows []Row, eval ExprEvaluator, 
 			if vj == nil {
 				return true
 			}
-			cmp := compareValues(vi, vj)
+			cmp := expr.Compare(vi, vj)
 			if cmp != 0 {
 				return cmp < 0
 			}
@@ -186,7 +187,7 @@ func sortWindowIndices(winExpr *ast.WindowExpr, rows []Row, eval ExprEvaluator, 
 			if vj == nil {
 				return true
 			}
-			cmp := compareValues(vi, vj)
+			cmp := expr.Compare(vi, vj)
 			if cmp == 0 {
 				continue
 			}
@@ -289,7 +290,7 @@ func samePartition(rowA, rowB Row, partitionBy []ast.Expr, eval ExprEvaluator, n
 		if va == nil || vb == nil {
 			return false
 		}
-		if compareValues(va, vb) != 0 {
+		if expr.Compare(va, vb) != 0 {
 			return false
 		}
 	}
@@ -307,7 +308,7 @@ func sameOrderValues(rowA, rowB Row, orderBy []ast.OrderByClause, eval ExprEvalu
 		if va == nil || vb == nil {
 			return false
 		}
-		if compareValues(va, vb) != 0 {
+		if expr.Compare(va, vb) != 0 {
 			return false
 		}
 	}
@@ -517,7 +518,7 @@ func windowAggMinMax(vals []Value, isBetter func(int) bool) Value {
 		if v == nil {
 			continue
 		}
-		if best == nil || isBetter(compareValues(v, best)) {
+		if best == nil || isBetter(expr.Compare(v, best)) {
 			best = v
 		}
 	}

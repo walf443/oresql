@@ -37,8 +37,8 @@ type tableEvaluator struct {
 	info   *TableInfo
 }
 
-func newTableEvaluator(exec *Executor, info *TableInfo) *tableEvaluator {
-	return &tableEvaluator{runner: makeSubqueryRunner(exec), info: info}
+func newTableEvaluator(runner SubqueryRunner, info *TableInfo) *tableEvaluator {
+	return &tableEvaluator{runner: runner, info: info}
 }
 
 func (te *tableEvaluator) GetSubqueryRunner() SubqueryRunner { return te.runner }
@@ -64,8 +64,8 @@ type joinEvaluator struct {
 	jc     *JoinContext
 }
 
-func newJoinEvaluator(exec *Executor, jc *JoinContext) *joinEvaluator {
-	return &joinEvaluator{runner: makeSubqueryRunner(exec), jc: jc}
+func newJoinEvaluator(runner SubqueryRunner, jc *JoinContext) *joinEvaluator {
+	return &joinEvaluator{runner: runner, jc: jc}
 }
 
 func (je *joinEvaluator) GetSubqueryRunner() SubqueryRunner { return je.runner }
@@ -91,8 +91,8 @@ type groupEvaluator struct {
 	groupRows []Row
 }
 
-func newGroupEvaluator(exec *Executor, info *TableInfo, groupRows []Row) *groupEvaluator {
-	return &groupEvaluator{runner: makeSubqueryRunner(exec), info: info, groupRows: groupRows}
+func newGroupEvaluator(runner SubqueryRunner, info *TableInfo, groupRows []Row) *groupEvaluator {
+	return &groupEvaluator{runner: runner, info: info, groupRows: groupRows}
 }
 
 func (ge *groupEvaluator) GetSubqueryRunner() SubqueryRunner { return ge.runner }
@@ -129,8 +129,8 @@ type resultEvaluator struct {
 	colNames   []string   // resolved column names
 }
 
-func newResultEvaluator(exec *Executor, selectCols []ast.Expr, colNames []string) *resultEvaluator {
-	return &resultEvaluator{runner: makeSubqueryRunner(exec), selectCols: selectCols, colNames: colNames}
+func newResultEvaluator(runner SubqueryRunner, selectCols []ast.Expr, colNames []string) *resultEvaluator {
+	return &resultEvaluator{runner: runner, selectCols: selectCols, colNames: colNames}
 }
 
 func (re *resultEvaluator) GetSubqueryRunner() SubqueryRunner { return re.runner }
@@ -247,8 +247,8 @@ type literalEvaluator struct {
 	runner SubqueryRunner
 }
 
-func newLiteralEvaluator(exec *Executor) *literalEvaluator {
-	return &literalEvaluator{runner: makeSubqueryRunner(exec)}
+func newLiteralEvaluator(runner SubqueryRunner) *literalEvaluator {
+	return &literalEvaluator{runner: runner}
 }
 
 func (le *literalEvaluator) GetSubqueryRunner() SubqueryRunner { return le.runner }
@@ -273,10 +273,10 @@ type pkOnlyEvaluator struct {
 	col    ColumnInfo // PK column with Index remapped to 0
 }
 
-func newPKOnlyEvaluator(exec *Executor, info *TableInfo) *pkOnlyEvaluator {
+func newPKOnlyEvaluator(runner SubqueryRunner, info *TableInfo) *pkOnlyEvaluator {
 	pkCol := info.Columns[info.PrimaryKeyCol]
 	return &pkOnlyEvaluator{
-		runner: makeSubqueryRunner(exec),
+		runner: runner,
 		info:   info,
 		col:    ColumnInfo{Name: pkCol.Name, DataType: pkCol.DataType, Index: 0},
 	}
@@ -672,8 +672,8 @@ type correlatedEvaluator struct {
 	numInner int // number of inner columns (offset for outer columns)
 }
 
-func newCorrelatedEvaluator(exec *Executor, inner, outer ExprEvaluator, outerRow Row, numInner int) *correlatedEvaluator {
-	return &correlatedEvaluator{runner: makeSubqueryRunner(exec), inner: inner, outer: outer, outerRow: outerRow, numInner: numInner}
+func newCorrelatedEvaluator(runner SubqueryRunner, inner, outer ExprEvaluator, outerRow Row, numInner int) *correlatedEvaluator {
+	return &correlatedEvaluator{runner: runner, inner: inner, outer: outer, outerRow: outerRow, numInner: numInner}
 }
 
 func (ce *correlatedEvaluator) GetSubqueryRunner() SubqueryRunner { return ce.runner }

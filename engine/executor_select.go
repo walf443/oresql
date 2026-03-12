@@ -103,7 +103,7 @@ func (e *Executor) fetchSourceRows(stmt *ast.SelectStmt, plan *SelectPlan, early
 		if err != nil {
 			return nil, nil, err
 		}
-		return rows, newTableEvaluator(e, plan.info), nil
+		return rows, newTableEvaluator(makeSubqueryRunner(e), plan.info), nil
 	}
 
 	return e.scanSource(stmt, scanLimit)
@@ -287,7 +287,7 @@ func (e *Executor) scanSourceSubquery(stmt *ast.SelectStmt, earlyLimit int) ([]R
 	if err != nil {
 		return nil, nil, err
 	}
-	return rows, newTableEvaluator(e, info), nil
+	return rows, newTableEvaluator(makeSubqueryRunner(e), info), nil
 }
 
 // scanSourceJSONTable handles FROM JSON_TABLE(...).
@@ -296,7 +296,7 @@ func (e *Executor) scanSourceJSONTable(stmt *ast.SelectStmt) ([]Row, ExprEvaluat
 	if err != nil {
 		return nil, nil, err
 	}
-	return rows, newTableEvaluator(e, info), nil
+	return rows, newTableEvaluator(makeSubqueryRunner(e), info), nil
 }
 
 // materializeJSONTable evaluates a JSON_TABLE source and returns a virtual table.
@@ -455,7 +455,7 @@ func coerceJSONValue(val any, dataType string) (Value, error) {
 func (e *Executor) scanSourceSingle(stmt *ast.SelectStmt, earlyLimit int) ([]Row, ExprEvaluator, error) {
 	// Check CTE scope before resolving from catalog.
 	if cteInfo, cteRows, ok := e.lookupCTE(stmt.TableName); ok {
-		return cteRows, newTableEvaluator(e, cteInfo), nil
+		return cteRows, newTableEvaluator(makeSubqueryRunner(e), cteInfo), nil
 	}
 
 	db, info, err := e.resolveTable(stmt.DatabaseName, stmt.TableName)
@@ -468,7 +468,7 @@ func (e *Executor) scanSourceSingle(stmt *ast.SelectStmt, earlyLimit int) ([]Row
 	// Try covering index lookup (skip PK lookup entirely)
 	neededCols := collectNeededColumns(stmt.Columns, stmt.Where, stmt.OrderBy, info)
 	if coveringRows, ok := e.tryIndexLookupCovering(stmt.Where, info, neededCols); ok {
-		return coveringRows, newTableEvaluator(e, info), nil
+		return coveringRows, newTableEvaluator(makeSubqueryRunner(e), info), nil
 	}
 
 	// PK Covering: if only PK column (or no columns) are needed, skip row decoding
@@ -483,7 +483,7 @@ func (e *Executor) scanSourceSingle(stmt *ast.SelectStmt, earlyLimit int) ([]Row
 				rows = append(rows, Row{key})
 				return true
 			}, limit)
-			return rows, newPKOnlyEvaluator(e, info), nil
+			return rows, newPKOnlyEvaluator(makeSubqueryRunner(e), info), nil
 		}
 		// WHERE present: need full-width rows for eval
 		numCols := len(info.Columns)
@@ -492,7 +492,7 @@ func (e *Executor) scanSourceSingle(stmt *ast.SelectStmt, earlyLimit int) ([]Row
 			rows = append(rows, buildPKOnlyRow(key, numCols, pkIdx))
 			return true
 		}, limit)
-		return rows, newTableEvaluator(e, info), nil
+		return rows, newTableEvaluator(makeSubqueryRunner(e), info), nil
 	}
 
 	if keys, indexUsed := e.tryIndexScan(stmt.Where, info); indexUsed {
@@ -512,7 +512,7 @@ func (e *Executor) scanSourceSingle(stmt *ast.SelectStmt, earlyLimit int) ([]Row
 		}
 	}
 
-	return rows, newTableEvaluator(e, info), nil
+	return rows, newTableEvaluator(makeSubqueryRunner(e), info), nil
 }
 
 // executeSelectMaybeCorrelated checks whether a subquery references the outer query
@@ -556,14 +556,14 @@ func (e *Executor) executeSelectCorrelated(stmt *ast.SelectStmt, outerEval ExprE
 			alias string
 		}{{info: info, alias: stmt.TableAlias}}
 		jc := newJoinContext(tables, nil)
-		innerEval = newJoinEvaluator(e, jc)
+		innerEval = newJoinEvaluator(makeSubqueryRunner(e), jc)
 	} else {
-		innerEval = newTableEvaluator(e, info)
+		innerEval = newTableEvaluator(makeSubqueryRunner(e), info)
 	}
 
 	// Create correlated evaluator
 	numInner := len(innerEval.ColumnList())
-	corrEval := newCorrelatedEvaluator(e, innerEval, outerEval, outerRow, numInner)
+	corrEval := newCorrelatedEvaluator(makeSubqueryRunner(e), innerEval, outerEval, outerRow, numInner)
 
 	colTypes := resolveColumnTypes(stmt.Columns, corrEval)
 
@@ -624,7 +624,7 @@ func (e *Executor) executeSelectCorrelated(stmt *ast.SelectStmt, outerEval ExprE
 
 // executeSelectWithoutTable handles SELECT without FROM (e.g. SELECT 1, 'hello').
 func (e *Executor) executeSelectWithoutTable(stmt *ast.SelectStmt) (*Result, error) {
-	eval := newLiteralEvaluator(e)
+	eval := newLiteralEvaluator(makeSubqueryRunner(e))
 	colTypes := resolveColumnTypes(stmt.Columns, eval)
 	row := make(Row, len(stmt.Columns))
 	colNames := make([]string, len(stmt.Columns))

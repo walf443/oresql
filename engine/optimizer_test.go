@@ -243,7 +243,7 @@ func TestConstantFoldingBoolLitExprEval(t *testing.T) {
 			{Name: "val", DataType: "INT", Index: 1},
 		},
 	}
-	eval := newTableEvaluator(exec, info)
+	eval := newTableEvaluator(makeSubqueryRunner(exec), info)
 
 	boolTrue := &ast.BoolLitExpr{Value: true}
 	val, err := eval.Eval(boolTrue, Row{int64(1), int64(10)})

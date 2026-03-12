@@ -59,7 +59,7 @@ func (e *Executor) applyGroupByWithGrouping(stmt *ast.SelectStmt, rows []Row, ev
 		grp := groupMap[key]
 		representativeRow := grp.rows[0]
 
-		geval := newGroupEvaluator(e, info, grp.rows)
+		geval := newGroupEvaluator(makeSubqueryRunner(e), info, grp.rows)
 
 		row := make(Row, len(stmt.Columns))
 		for i, colExpr := range stmt.Columns {
@@ -92,7 +92,7 @@ func (e *Executor) applyGroupByWithGrouping(stmt *ast.SelectStmt, rows []Row, ev
 		resultRows = append(resultRows, row)
 	}
 
-	return resultRows, colNames, newResultEvaluator(e, stmt.Columns, colNames), nil
+	return resultRows, colNames, newResultEvaluator(makeSubqueryRunner(e), stmt.Columns, colNames), nil
 }
 
 // applyAggregateOnly handles aggregate functions without GROUP BY.
@@ -124,7 +124,7 @@ func (e *Executor) applyAggregateOnly(stmt *ast.SelectStmt, rows []Row, eval Exp
 		}
 	}
 
-	return []Row{resultRow}, colNames, newResultEvaluator(e, stmt.Columns, colNames), nil
+	return []Row{resultRow}, colNames, newResultEvaluator(makeSubqueryRunner(e), stmt.Columns, colNames), nil
 }
 
 // extractTableInfo extracts a *TableInfo from an evaluator.
@@ -467,7 +467,7 @@ func (e *Executor) executeGroupByIndex(stmt *ast.SelectStmt, db *Database, info 
 	// Build evaluator for WHERE filter
 	var eval *tableEvaluator
 	if stmt.Where != nil {
-		eval = newTableEvaluator(e, info)
+		eval = newTableEvaluator(makeSubqueryRunner(e), info)
 	}
 
 	// Streaming aggregation

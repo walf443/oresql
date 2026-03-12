@@ -13,7 +13,7 @@ import (
 func (e *Executor) executeScanEachStreaming(
 	stmt *ast.SelectStmt, db *Database, info *TableInfo, earlyLimit int, distinct bool,
 ) (*Result, error) {
-	eval := newTableEvaluator(e, info)
+	eval := newTableEvaluator(makeSubqueryRunner(e), info)
 	colTypes := resolveColumnTypes(stmt.Columns, eval)
 	colNames, colExprs, isStar, err := resolveSelectColumns(stmt.Columns, eval)
 	if err != nil {
@@ -102,7 +102,7 @@ func (e *Executor) executeForEachByKeysStreaming(
 	stmt *ast.SelectStmt, db *Database, info *TableInfo,
 	keys []int64, earlyLimit int, distinct bool,
 ) (*Result, error) {
-	eval := newTableEvaluator(e, info)
+	eval := newTableEvaluator(makeSubqueryRunner(e), info)
 	colTypes := resolveColumnTypes(stmt.Columns, eval)
 	colNames, colExprs, isStar, err := resolveSelectColumns(stmt.Columns, eval)
 	if err != nil {
@@ -191,7 +191,7 @@ func (e *Executor) executeIndexScanStreaming(
 	stmt *ast.SelectStmt, db *Database, info *TableInfo,
 	params *indexScanParams, earlyLimit int, distinct bool,
 ) (*Result, error) {
-	eval := newTableEvaluator(e, info)
+	eval := newTableEvaluator(makeSubqueryRunner(e), info)
 	colTypes := resolveColumnTypes(stmt.Columns, eval)
 	colNames, colExprs, isStar, err := resolveSelectColumns(stmt.Columns, eval)
 	if err != nil {

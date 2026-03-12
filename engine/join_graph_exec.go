@@ -24,7 +24,7 @@ func filterRows(rows []Row, where ast.Expr, eval ExprEvaluator) ([]Row, error) {
 // scanNodeRows scans rows from a JoinGraphNode, applying LocalWhere filtering.
 // Handles pre-materialized rows (subquery/CTE), index scan, and full table scan.
 func (e *Executor) scanNodeRows(node *JoinGraphNode) ([]Row, error) {
-	eval := newTableEvaluator(e, node.Info)
+	eval := newTableEvaluator(makeSubqueryRunner(e), node.Info)
 
 	if node.Rows != nil {
 		// Pre-materialized rows (FROM subquery / CTE)
@@ -215,7 +215,7 @@ func (e *Executor) prepareJoinStep(
 		nextNode:          nextNode,
 		nextOffset:        tableOffset[nextName],
 		partnerEquiColIdx: -1,
-		nextEval:          newTableEvaluator(e, nextNode.Info),
+		nextEval:          newTableEvaluator(makeSubqueryRunner(e), nextNode.Info),
 	}
 
 	edge, partnerName := findJoinEdge(graph, nextName, joinedSet)
@@ -224,7 +224,7 @@ func (e *Executor) prepareJoinStep(
 	e.resolveEquiJoinIndex(s, graph, nextName, partnerName, tableOffset)
 
 	jc := buildJoinContextFromGraph(graph)
-	s.joinEval = newJoinEvaluator(e, jc)
+	s.joinEval = newJoinEvaluator(makeSubqueryRunner(e), jc)
 
 	if err := e.prepareInnerScan(s, graph, tableOffset); err != nil {
 		return nil, err
@@ -411,7 +411,7 @@ func (e *Executor) executeJoinRows(stmt *ast.SelectStmt, graph *JoinGraph, order
 	jc := buildJoinContextFromGraph(graph)
 	if len(graph.CrossWhere) > 0 {
 		crossFilter := combineExprsAND(graph.CrossWhere)
-		eval := newJoinEvaluator(e, jc)
+		eval := newJoinEvaluator(makeSubqueryRunner(e), jc)
 		var filtered []Row
 		for _, row := range currentRows {
 			val, mErr := eval.Eval(crossFilter, row)
@@ -449,5 +449,5 @@ func (e *Executor) scanSourceJoin(stmt *ast.SelectStmt, earlyLimit int) ([]Row, 
 	if err != nil {
 		return nil, nil, err
 	}
-	return rows, newJoinEvaluator(e, jc), nil
+	return rows, newJoinEvaluator(makeSubqueryRunner(e), jc), nil
 }

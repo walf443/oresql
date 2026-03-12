@@ -58,7 +58,7 @@ func (e *Executor) executeSelectWithIndexOrder(
 func (e *Executor) scanSourceOrderedByIndex(
 	stmt *ast.SelectStmt, db *Database, info *TableInfo, ior *indexOrderResult,
 ) ([]Row, ExprEvaluator, error) {
-	eval := newTableEvaluator(e, info)
+	eval := newTableEvaluator(makeSubqueryRunner(e), info)
 
 	needed := 0
 	if stmt.Limit != nil {
@@ -185,7 +185,7 @@ func (e *Executor) scanPKCovering(
 			return needed <= 0 || len(rows) < needed
 		}, forEachLimit)
 	} else {
-		eval = newPKOnlyEvaluator(e, info)
+		eval = newPKOnlyEvaluator(makeSubqueryRunner(e), info)
 		db.storage.ForEachRowKeyOnly(info.Name, ior.reverse, func(key int64) bool {
 			rows = append(rows, Row{key})
 			return needed <= 0 || len(rows) < needed

@@ -11,8 +11,3 @@ import (
 func tryCompileJSONPath(call *ast.CallExpr) *json_path.Path {
 	return scalar.TryCompileJSONPath(call)
 }
-
-// isValidJSON returns true if val is a string containing valid JSON.
-func isValidJSON(val Value) bool {
-	return scalar.IsValidJSON(val)
-}

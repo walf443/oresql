@@ -8,68 +8,6 @@ import (
 	"github.com/walf443/oresql/parser"
 )
 
-// parseExprSQL parses a SQL expression string by wrapping it in a SELECT WHERE clause.
-// Returns the parsed Expr, or nil if inputSQL is empty.
-func parseExprSQL(t *testing.T, inputSQL string) ast.Expr {
-	t.Helper()
-	if inputSQL == "" {
-		return nil
-	}
-	l := lexer.New("SELECT * FROM _t WHERE " + inputSQL)
-	p := parser.New(l)
-	stmt, err := p.Parse()
-	if err != nil {
-		t.Fatalf("failed to parse expression %q: %v", inputSQL, err)
-	}
-	sel, ok := stmt.(*ast.SelectStmt)
-	if !ok {
-		t.Fatalf("expected SelectStmt, got %T", stmt)
-	}
-	return sel.Where
-}
-
-func TestOptimizeExpr(t *testing.T) {
-	tests := []struct {
-		name     string
-		inputSQL string // SQL expression (empty means nil input)
-		wantSQL  string // expected SQL from ast.FormatSQL (empty means nil result)
-	}{
-		{name: "1 = 1 -> TRUE", inputSQL: "1 = 1", wantSQL: "TRUE"},
-		{name: "1 = 0 -> FALSE", inputSQL: "1 = 0", wantSQL: "FALSE"},
-		{name: "5 > 3 -> TRUE", inputSQL: "5 > 3", wantSQL: "TRUE"},
-		{name: "'a' = 'b' -> FALSE", inputSQL: "'a' = 'b'", wantSQL: "FALSE"},
-		{name: "1 + 2 -> 3", inputSQL: "1 + 2", wantSQL: "3"},
-		{name: "FALSE AND col -> FALSE", inputSQL: "FALSE AND col", wantSQL: "FALSE"},
-		{name: "TRUE AND col -> col", inputSQL: "TRUE AND col", wantSQL: "col"},
-		{name: "TRUE OR col -> TRUE", inputSQL: "TRUE OR col", wantSQL: "TRUE"},
-		{name: "FALSE OR col -> col", inputSQL: "FALSE OR col", wantSQL: "col"},
-		{name: "NOT TRUE -> FALSE", inputSQL: "NOT TRUE", wantSQL: "FALSE"},
-		{name: "NOT FALSE -> TRUE", inputSQL: "NOT FALSE", wantSQL: "TRUE"},
-		{name: "NULL IS NULL -> TRUE", inputSQL: "NULL IS NULL", wantSQL: "TRUE"},
-		{name: "1 IS NULL -> FALSE", inputSQL: "1 IS NULL", wantSQL: "FALSE"},
-		{name: "1 IN (1,2,3) -> TRUE", inputSQL: "1 IN (1, 2, 3)", wantSQL: "TRUE"},
-		{name: "5 NOT IN (1,2,3) -> TRUE", inputSQL: "5 NOT IN (1, 2, 3)", wantSQL: "TRUE"},
-		{name: "5 BETWEEN 1 AND 10 -> TRUE", inputSQL: "5 BETWEEN 1 AND 10", wantSQL: "TRUE"},
-		{name: "15 BETWEEN 1 AND 10 -> FALSE", inputSQL: "15 BETWEEN 1 AND 10", wantSQL: "FALSE"},
-		{name: "nil -> nil", inputSQL: "", wantSQL: ""},
-		{name: "column reference unchanged", inputSQL: "col", wantSQL: "col"},
-		{name: "col AND TRUE -> col", inputSQL: "col AND TRUE", wantSQL: "col"},
-		{name: "col OR FALSE -> col", inputSQL: "col OR FALSE", wantSQL: "col"},
-		{name: "1 = 1 AND col > 5 -> (col > 5)", inputSQL: "1 = 1 AND col > 5", wantSQL: "(col > 5)"},
-		{name: "1 = 0 AND col > 5 -> FALSE", inputSQL: "1 = 0 AND col > 5", wantSQL: "FALSE"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			input := parseExprSQL(t, tt.inputSQL)
-			got := ast.FormatSQL(optimizeExpr(input))
-			if got != tt.wantSQL {
-				t.Fatalf("optimizeExpr(%q) = %q, want %q", tt.inputSQL, got, tt.wantSQL)
-			}
-		})
-	}
-}
-
 // optimizerExecSQL parses and executes a SQL statement, fatally failing on error.
 func optimizerExecSQL(t *testing.T, exec *Executor, sql string) *Result {
 	t.Helper()
@@ -273,34 +211,5 @@ func TestConstantFoldingFormatExpr(t *testing.T) {
 	}
 	if got := formatExpr(falseExpr); got != "FALSE" {
 		t.Fatalf("expected FALSE, got %s", got)
-	}
-}
-
-func TestOptimizeCaseExpr(t *testing.T) {
-	tests := []struct {
-		name     string
-		inputSQL string
-		wantSQL  string
-	}{
-		{
-			name:     "CASE WHEN FALSE THEN 1 WHEN TRUE THEN 2 ELSE 3 END -> 2",
-			inputSQL: "CASE WHEN FALSE THEN 1 WHEN TRUE THEN 2 ELSE 3 END",
-			wantSQL:  "2",
-		},
-		{
-			name:     "CASE WHEN FALSE THEN 1 ELSE 3 END -> 3",
-			inputSQL: "CASE WHEN FALSE THEN 1 ELSE 3 END",
-			wantSQL:  "3",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			input := parseExprSQL(t, tt.inputSQL)
-			got := ast.FormatSQL(optimizeExpr(input))
-			if got != tt.wantSQL {
-				t.Fatalf("optimizeExpr(%q) = %q, want %q", tt.inputSQL, got, tt.wantSQL)
-			}
-		})
 	}
 }

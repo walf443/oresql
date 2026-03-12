@@ -14,11 +14,6 @@ import (
 type ExprEvaluator = eval.ExprEvaluator
 type SubqueryRunner = eval.SubqueryRunner
 
-// evalExprGeneric delegates to eval.Generic.
-func evalExprGeneric(e ast.Expr, row Row, ev ExprEvaluator) (Value, error) {
-	return eval.Generic(e, row, ev)
-}
-
 // evalWhereWith delegates to eval.Where.
 func evalWhereWith(e ast.Expr, row Row, ev ExprEvaluator) (bool, error) {
 	return eval.Where(e, row, ev)
@@ -27,11 +22,6 @@ func evalWhereWith(e ast.Expr, row Row, ev ExprEvaluator) (bool, error) {
 // hasOuterReferences delegates to eval.HasOuterReferences.
 func hasOuterReferences(stmt *ast.SelectStmt, outerEval ExprEvaluator) bool {
 	return eval.HasOuterReferences(stmt, outerEval)
-}
-
-// collectInnerTableNames delegates to eval.CollectInnerTableNames.
-func collectInnerTableNames(stmt *ast.SelectStmt) map[string]bool {
-	return eval.CollectInnerTableNames(stmt)
 }
 
 // makeSubqueryRunner creates a SubqueryRunner from an Executor.

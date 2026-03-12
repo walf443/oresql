@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/walf443/oresql/ast"
-	"github.com/walf443/oresql/engine/eval"
 	"github.com/walf443/oresql/engine/expr"
 	"github.com/walf443/oresql/jsonb"
 )
@@ -154,27 +153,17 @@ func evalScalarFuncLiteral(call *ast.CallExpr) (Value, error) {
 
 // Delegating functions to engine/expr package.
 
-func toFloat64(v Value) (float64, bool) { return expr.ToFloat64(v) }
 func evalArithmetic(left Value, op string, right Value) (Value, error) {
 	return expr.Arithmetic(left, op, right)
 }
 func evalComparison(left Value, op string, right Value) (bool, error) {
 	return expr.Comparison(left, op, right)
 }
-func applyCmpOp(cmp int, op string) (bool, error) { return expr.ApplyCmpOp(cmp, op) }
-
-func evalLogicalOp(leftBool bool, op string, rightBool bool) (Value, error) {
-	return expr.LogicalOp(leftBool, op, rightBool)
-}
 
 // compareValues compares two values for ORDER BY sorting.
 // Returns -1 if a < b, 0 if a == b, 1 if a > b.
 // NULL values sort last (are considered greater than any non-NULL value).
 func compareValues(a, b Value) int { return expr.Compare(a, b) }
-
-func validateTableRef(tableRef, targetTable string) error {
-	return expr.ValidateTableRef(tableRef, targetTable)
-}
 
 // formatExpr returns a display name for an expression.
 func formatExpr(expr ast.Expr) string {
@@ -239,16 +228,6 @@ func nextPrefix(s string) (string, bool) {
 		b = b[:len(b)-1]
 	}
 	return "", false
-}
-
-func matchLike(str, pattern string) bool { return expr.MatchLike(str, pattern) }
-
-func evalCast(cast *ast.CastExpr, row Row, ev ExprEvaluator) (Value, error) {
-	return eval.Cast(cast, row, ev)
-}
-
-func matchFullText(text, searchTerm, tokenizer string) bool {
-	return expr.MatchFullText(text, searchTerm, tokenizer)
 }
 
 // forEachChildExpr calls fn on each direct child expression of expr.

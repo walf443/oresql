@@ -5,6 +5,7 @@ import (
 
 	"github.com/walf443/oresql/ast"
 	"github.com/walf443/oresql/engine/eval"
+	"github.com/walf443/oresql/engine/join_graph"
 )
 
 // filterRows applies a WHERE expression to rows, returning only matching ones.
@@ -111,7 +112,7 @@ type joinStepState struct {
 func findJoinEdge(graph *JoinGraph, nextName string, joinedSet map[string]bool) (*JoinGraphEdge, string) {
 	for _, neighbor := range graph.Adjacency[nextName] {
 		if joinedSet[neighbor] {
-			key := edgeKey(nextName, neighbor)
+			key := join_graph.EdgeKey(nextName, neighbor)
 			if edge := graph.Edges[key]; edge != nil {
 				return edge, neighbor
 			}

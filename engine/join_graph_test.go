@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/walf443/oresql/ast"
+	"github.com/walf443/oresql/engine/join_graph"
 )
 
 func TestExtractAllEquiJoinPairs(t *testing.T) {
@@ -131,24 +132,24 @@ func TestResolveUnqualifiedTableN(t *testing.T) {
 
 	t.Run("unique column", func(t *testing.T) {
 		// "status" only in users
-		got := resolveUnqualifiedTableN("status", nodes)
+		got := join_graph.ResolveUnqualifiedTableN("status", nodes)
 		assert.Equal(t, "users", got)
 	})
 
 	t.Run("unique column user_id", func(t *testing.T) {
 		// "user_id" only in orders
-		got := resolveUnqualifiedTableN("user_id", nodes)
+		got := join_graph.ResolveUnqualifiedTableN("user_id", nodes)
 		assert.Equal(t, "orders", got)
 	})
 
 	t.Run("ambiguous column", func(t *testing.T) {
 		// "id" in all three
-		got := resolveUnqualifiedTableN("id", nodes)
+		got := join_graph.ResolveUnqualifiedTableN("id", nodes)
 		assert.Equal(t, "", got, "expected empty (ambiguous)")
 	})
 
 	t.Run("not found column", func(t *testing.T) {
-		got := resolveUnqualifiedTableN("nonexistent", nodes)
+		got := join_graph.ResolveUnqualifiedTableN("nonexistent", nodes)
 		assert.Equal(t, "", got, "expected empty (not found)")
 	})
 }
@@ -183,7 +184,7 @@ func TestBuildJoinGraph_TwoTables(t *testing.T) {
 	assert.Len(t, graph.Edges, 1, "expected 1 edge")
 
 	// Check edge
-	key := edgeKey("u", "o")
+	key := join_graph.EdgeKey("u", "o")
 	edge, ok := graph.Edges[key]
 	require.True(t, ok, "edge u-o not found")
 	assert.Len(t, edge.EquiJoinPairs, 1, "expected 1 equi-join pair")
@@ -323,7 +324,7 @@ func TestBuildJoinGraph_IndexAnnotation(t *testing.T) {
 	graph, err := exec.buildJoinGraph(stmt)
 	require.NoError(t, err, "buildJoinGraph error")
 
-	key := edgeKey("u", "o")
+	key := join_graph.EdgeKey("u", "o")
 	edge := graph.Edges[key]
 	require.NotNil(t, edge, "edge u-o not found")
 	// users.id has no index, orders.user_id has index

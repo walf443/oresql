@@ -14,17 +14,6 @@ type JoinGraph = join_graph.Graph
 type equiJoinPair = join_graph.EquiJoinPair
 type joinTableInfo = join_graph.TableInfo
 
-// edgeKey delegates to join_graph.EdgeKey.
-func edgeKey(a, b string) string { return join_graph.EdgeKey(a, b) }
-
-// effectiveNameForJoin delegates to join_graph.EffectiveNameForJoin.
-func effectiveNameForJoin(join ast.JoinClause) string { return join_graph.EffectiveNameForJoin(join) }
-
-// resolveUnqualifiedTableN delegates to join_graph.ResolveUnqualifiedTableN.
-func resolveUnqualifiedTableN(colName string, nodes map[string]*JoinGraphNode) string {
-	return join_graph.ResolveUnqualifiedTableN(colName, nodes)
-}
-
 // extractAllEquiJoinPairs extracts all equi-join pairs from an ON condition
 // between two tables identified by their joinTableInfo.
 // Returns the list of pairs and any residual ON conditions.
@@ -125,7 +114,7 @@ func classifyWhereConditionsN(
 
 		// Resolve unqualified references
 		for _, name := range unqualified {
-			target := resolveUnqualifiedTableN(name, graph.Nodes)
+			target := join_graph.ResolveUnqualifiedTableN(name, graph.Nodes)
 			if target == "" {
 				ambiguous = true
 			} else {
@@ -223,16 +212,16 @@ func (e *Executor) buildJoinGraph(stmt *ast.SelectStmt) (*JoinGraph, error) {
 
 	// 3. Create edges from ON clauses
 	for _, join := range stmt.Joins {
-		joinNode := graph.Nodes[effectiveNameForJoin(join)]
+		joinNode := graph.Nodes[join_graph.EffectiveNameForJoin(join)]
 
 		// Determine which tables the ON clause references
 		var tableAName, tableBName string
 		if join.On != nil {
-			tableAName, tableBName = findOnTables(join.On, graph, effectiveNameForJoin(join))
+			tableAName, tableBName = findOnTables(join.On, graph, join_graph.EffectiveNameForJoin(join))
 		} else {
 			// CROSS JOIN: no ON clause, connect to FROM table
 			tableAName = graph.FromTable
-			tableBName = effectiveNameForJoin(join)
+			tableBName = join_graph.EffectiveNameForJoin(join)
 		}
 
 		if tableAName == "" || tableBName == "" {
@@ -295,7 +284,7 @@ func (e *Executor) buildJoinGraph(stmt *ast.SelectStmt) (*JoinGraph, error) {
 			}
 		}
 
-		key := edgeKey(tableAName, tableBName)
+		key := join_graph.EdgeKey(tableAName, tableBName)
 		graph.Edges[key] = edge
 		graph.Adjacency[tableAName] = append(graph.Adjacency[tableAName], tableBName)
 		graph.Adjacency[tableBName] = append(graph.Adjacency[tableBName], tableAName)
@@ -346,7 +335,7 @@ func findOnTables(on ast.Expr, graph *JoinGraph, joinEffName string) (string, st
 
 	unqualified := collectUnqualifiedIdents(on)
 	for _, colName := range unqualified {
-		target := resolveUnqualifiedTableN(colName, graph.Nodes)
+		target := join_graph.ResolveUnqualifiedTableN(colName, graph.Nodes)
 		if target != "" {
 			referencedEffNames[target] = true
 		}

@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/walf443/oresql/ast"
+	"github.com/walf443/oresql/engine/join_graph"
 )
 
 // tableScore is used for scoring tables during join order optimization.
@@ -100,7 +101,7 @@ func canAddLeftJoinInner(effName string, graph *JoinGraph, joined map[string]boo
 		if !joined[neighbor] {
 			continue
 		}
-		key := edgeKey(effName, neighbor)
+		key := join_graph.EdgeKey(effName, neighbor)
 		edge := graph.Edges[key]
 		if edge != nil && edge.JoinType == ast.JoinLeft && edge.TableB == effName {
 			return true
@@ -116,7 +117,7 @@ func (e *Executor) scoreJoinEdge(effName string, node *JoinGraphNode, graph *Joi
 		if !joined[neighbor] {
 			continue
 		}
-		key := edgeKey(effName, neighbor)
+		key := join_graph.EdgeKey(effName, neighbor)
 		edge := graph.Edges[key]
 		if edge != nil && len(edge.EquiJoinPairs) > 0 {
 			pair := edge.EquiJoinPairs[0]

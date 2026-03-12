@@ -7,10 +7,8 @@ import (
 // Type aliases for backward compatibility with existing executor code.
 type Value = storage.Value
 type Row = storage.Row
-type KeyRow = storage.KeyRow
 type ColumnInfo = storage.ColumnInfo
 type TableInfo = storage.TableInfo
-type IndexReader = storage.IndexReader
 type TableLock = storage.TableLock
 
 // encodeValue is a package-level alias for storage.EncodeValue,

@@ -16,9 +16,9 @@ func TestStorageEngineInterface(t *testing.T) {
 	assert.NotNil(t, s)
 }
 
-// TestIndexReaderInterface verifies that *SecondaryIndex satisfies IndexReader at compile time.
+// TestIndexReaderInterface verifies that *SecondaryIndex satisfies storage.IndexReader at compile time.
 func TestIndexReaderInterface(t *testing.T) {
-	var idx IndexReader = &memory.SecondaryIndex{
+	var idx storage.IndexReader = &memory.SecondaryIndex{
 		Info: &storage.IndexInfo{Name: "test_idx"},
 	}
 	assert.NotNil(t, idx)

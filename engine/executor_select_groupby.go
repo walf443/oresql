@@ -7,6 +7,7 @@ import (
 	"github.com/walf443/oresql/ast"
 	"github.com/walf443/oresql/engine/expr"
 	"github.com/walf443/oresql/engine/scalar"
+	"github.com/walf443/oresql/storage"
 )
 
 // applyGroupBy processes GROUP BY / aggregate as a pipeline step.
@@ -455,7 +456,7 @@ func (e *Executor) executeGroupByIndex(stmt *ast.SelectStmt, db *Database, info 
 	gbColIdx := gbCol.Index
 
 	isPK := gbColIdx == info.PrimaryKeyCol
-	var idxReader IndexReader
+	var idxReader storage.IndexReader
 	if !isPK {
 		idxReader = db.storage.LookupSingleColumnIndex(info.Name, gbColIdx)
 	}

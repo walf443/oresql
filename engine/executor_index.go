@@ -461,10 +461,10 @@ func (e *Executor) tryIndexRangeScan(where ast.Expr, info *TableInfo) ([]int64, 
 
 // indexOrderResult describes how an index can satisfy ORDER BY.
 type indexOrderResult struct {
-	index     IndexReader // nil if PK ordering
-	reverse   bool        // true for DESC (first ORDER BY column direction)
-	usePK     bool        // true if ORDER BY on PK column
-	fullOrder bool        // true: no sort needed, false: only first column ordered
+	index     storage.IndexReader // nil if PK ordering
+	reverse   bool                // true for DESC (first ORDER BY column direction)
+	usePK     bool                // true if ORDER BY on PK column
+	fullOrder bool                // true: no sort needed, false: only first column ordered
 	// WHERE range conditions combinable with this index
 	fromVal       *Value
 	fromInclusive bool
@@ -547,7 +547,7 @@ func (e *Executor) tryIndexOrder(
 // indexScanParams describes parameters for a streaming index scan via OrderedRangeScan.
 // Used for single-column index equality/range lookups with LIMIT optimization.
 type indexScanParams struct {
-	index         IndexReader
+	index         storage.IndexReader
 	fromVal       *Value
 	fromInclusive bool
 	toVal         *Value
@@ -731,7 +731,7 @@ func collectColumnRefs(e ast.Expr, info *TableInfo, needed map[int]bool) {
 }
 
 // isIndexCovering returns true if all needed columns are covered by the index columns + PK.
-func isIndexCovering(idx IndexReader, neededCols map[int]bool, pkColIdx int) bool {
+func isIndexCovering(idx storage.IndexReader, neededCols map[int]bool, pkColIdx int) bool {
 	idxInfo := idx.GetInfo()
 	covered := make(map[int]bool)
 	for _, colIdx := range idxInfo.ColumnIdxs {

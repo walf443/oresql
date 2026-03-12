@@ -8,13 +8,14 @@ import (
 	"github.com/walf443/oresql/ast"
 	"github.com/walf443/oresql/engine/expr"
 	"github.com/walf443/oresql/jsonb"
+	"github.com/walf443/oresql/storage"
 )
 
 // rowIdentity is a rowOf function for Row (identity mapping).
 func rowIdentity(r Row) Row { return r }
 
-// rowOfKeyRow is a rowOf function for KeyRow (extracts the Row field).
-func rowOfKeyRow(kr KeyRow) Row { return kr.Row }
+// rowOfKeyRow is a rowOf function for storage.KeyRow (extracts the Row field).
+func rowOfKeyRow(kr storage.KeyRow) Row { return kr.Row }
 
 // filterWhere filters rows using the WHERE expression evaluated with the given evaluator.
 // Returns all rows if where is nil.

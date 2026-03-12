@@ -6,6 +6,7 @@ import (
 	"github.com/walf443/oresql/ast"
 	"github.com/walf443/oresql/engine/eval"
 	"github.com/walf443/oresql/engine/join_graph"
+	"github.com/walf443/oresql/storage"
 )
 
 // filterRows applies a WHERE expression to rows, returning only matching ones.
@@ -61,7 +62,7 @@ func (e *Executor) scanNodeRows(node *JoinGraphNode) ([]Row, error) {
 
 // lookupIndexKeys computes the row keys for an index-based join lookup.
 // Handles composite index (full lookup, range scan, prefix scan) and simple index with optional intersection.
-func lookupIndexKeys(nextIdx IndexReader, lookupVal Value, cjPlan *compositeJoinPlan, innerWhereKeys map[int64]struct{}) []int64 {
+func lookupIndexKeys(nextIdx storage.IndexReader, lookupVal Value, cjPlan *compositeJoinPlan, innerWhereKeys map[int64]struct{}) []int64 {
 	if cjPlan != nil {
 		prefixVals := make([]Value, 1+len(cjPlan.eqVals))
 		prefixVals[0] = lookupVal
@@ -94,7 +95,7 @@ type joinStepState struct {
 	nextNode          *JoinGraphNode
 	nextOffset        int
 	edge              *JoinGraphEdge
-	nextIdx           IndexReader
+	nextIdx           storage.IndexReader
 	cjPlan            *compositeJoinPlan
 	partnerEquiColIdx int
 	joinEval          ExprEvaluator

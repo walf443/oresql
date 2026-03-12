@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/walf443/oresql/ast"
+	"github.com/walf443/oresql/storage"
 )
 
 func TestApplyOffset(t *testing.T) {
@@ -482,8 +483,8 @@ func TestSortRowsTopK(t *testing.T) {
 		assert.Equal(t, int64(3), result[0][0])
 	})
 
-	t.Run("KeyRow generic type", func(t *testing.T) {
-		krows := []KeyRow{
+	t.Run("storage.KeyRow generic type", func(t *testing.T) {
+		krows := []storage.KeyRow{
 			{Key: 10, Row: Row{int64(5), "e"}},
 			{Key: 20, Row: Row{int64(3), "c"}},
 			{Key: 30, Row: Row{int64(1), "a"}},

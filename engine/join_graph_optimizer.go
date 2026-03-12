@@ -201,7 +201,7 @@ func buildJoinContextFromGraph(graph *JoinGraph) *JoinContext {
 // compositeJoinPlan describes how to use a composite index for a JOIN lookup
 // combined with LocalWhere conditions on the inner table.
 type compositeJoinPlan struct {
-	index      IndexReader
+	index      storage.IndexReader
 	eqVals     []Value         // equality values for columns after the equi-join column
 	fullLookup bool            // all index columns covered by equality → use Lookup()
 	rangeCol   *rangeCondition // range condition on the column after equality prefix (nil if none)

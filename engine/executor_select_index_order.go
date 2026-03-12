@@ -98,7 +98,7 @@ func (e *Executor) scanFullOrder(
 }
 
 // moveNullsToEnd moves rows with NULL in the index column to the end of the slice.
-func moveNullsToEnd(rows []Row, index IndexReader, info *TableInfo) []Row {
+func moveNullsToEnd(rows []Row, index storage.IndexReader, info *TableInfo) []Row {
 	colIdx := index.GetInfo().ColumnIdxs[0]
 	col := info.Columns[colIdx]
 	if col.NotNull || col.PrimaryKey {

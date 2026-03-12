@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/walf443/oresql/ast"
+	"github.com/walf443/oresql/storage"
 )
 
 func (e *Executor) executeUpdate(stmt *ast.UpdateStmt) (*Result, error) {
@@ -13,7 +14,7 @@ func (e *Executor) executeUpdate(stmt *ast.UpdateStmt) (*Result, error) {
 	}
 	eval := newTableEvaluator(makeSubqueryRunner(e), info)
 
-	var allRows []KeyRow
+	var allRows []storage.KeyRow
 	if keys, indexUsed := e.tryIndexScan(stmt.Where, info); indexUsed {
 		allRows, err = db.storage.GetKeyRowsByKeys(info.Name, keys)
 	} else {

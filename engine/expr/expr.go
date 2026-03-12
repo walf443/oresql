@@ -4,6 +4,7 @@ package expr
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/walf443/oresql/ast"
 )
@@ -191,6 +192,105 @@ func ToFloat64(v Value) (float64, bool) {
 	default:
 		return 0, false
 	}
+}
+
+// LogicalOp dispatches a logical operator (AND/OR) on boolean operands.
+func LogicalOp(leftBool bool, op string, rightBool bool) (Value, error) {
+	switch op {
+	case "AND":
+		return leftBool && rightBool, nil
+	case "OR":
+		return leftBool || rightBool, nil
+	default:
+		return nil, fmt.Errorf("unknown logical operator: %s", op)
+	}
+}
+
+// ValidateTableRef checks that a qualified table reference matches the target table.
+// If tableRef is empty (unqualified), validation is skipped.
+func ValidateTableRef(tableRef, targetTable string) error {
+	if tableRef != "" && strings.ToLower(tableRef) != strings.ToLower(targetTable) {
+		return fmt.Errorf("unknown table %q", tableRef)
+	}
+	return nil
+}
+
+// MatchLike matches a string against a SQL LIKE pattern.
+// '%' matches any sequence of zero or more characters.
+// '_' matches exactly one character.
+// '\' escapes the next character.
+func MatchLike(str, pattern string) bool {
+	si, pi := 0, 0
+	starPI, starSI := -1, -1
+
+	for si < len(str) {
+		if pi < len(pattern) && pattern[pi] == '\\' && pi+1 < len(pattern) {
+			pi++
+			if pattern[pi] == str[si] {
+				si++
+				pi++
+			} else if starPI >= 0 {
+				starSI++
+				si = starSI
+				pi = starPI + 1
+			} else {
+				return false
+			}
+		} else if pi < len(pattern) && pattern[pi] == '_' {
+			si++
+			pi++
+		} else if pi < len(pattern) && pattern[pi] == '%' {
+			starPI = pi
+			starSI = si
+			pi++
+		} else if pi < len(pattern) && pattern[pi] == str[si] {
+			si++
+			pi++
+		} else if starPI >= 0 {
+			starSI++
+			si = starSI
+			pi = starPI + 1
+		} else {
+			return false
+		}
+	}
+
+	for pi < len(pattern) {
+		if pattern[pi] == '%' {
+			pi++
+		} else if pattern[pi] == '\\' && pi+1 < len(pattern) {
+			break
+		} else {
+			break
+		}
+	}
+	return pi == len(pattern)
+}
+
+// MatchFullText checks if text contains the given search term using the specified tokenizer.
+// For "word" (or empty) tokenizer, it checks exact word-token matching.
+// For "bigram" tokenizer, it checks substring containment.
+func MatchFullText(text, searchTerm, tokenizer string) bool {
+	lowerText := strings.ToLower(text)
+	lower := strings.ToLower(searchTerm)
+	switch tokenizer {
+	case "bigram":
+		return strings.Contains(lowerText, lower)
+	default: // "word" or empty
+		words := strings.FieldsFunc(lowerText, func(r rune) bool {
+			return !isLetterOrDigit(r)
+		})
+		for _, w := range words {
+			if w == lower {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+func isLetterOrDigit(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r >= 0x80
 }
 
 // ForEachChild calls fn on each direct child expression of expr.

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/walf443/oresql/ast"
+	"github.com/walf443/oresql/engine/scalar"
 	"github.com/walf443/oresql/json_path"
 )
 
@@ -678,18 +679,7 @@ func formatCallExpr(call *ast.CallExpr) string {
 	return call.Name + "(" + strings.Join(args, ", ") + ")"
 }
 
-// isScalarFunc returns true if the function name is a scalar (non-aggregate) function.
-func isScalarFunc(name string) bool {
-	_, ok := scalarFuncRegistry[name]
-	if ok {
-		return true
-	}
-	switch name {
-	case "COALESCE", "NULLIF", "JSON_VALUE", "JSON_QUERY", "JSON_EXISTS":
-		return true
-	}
-	return false
-}
+func isScalarFunc(name string) bool { return scalar.IsScalar(name) }
 
 // hasAggregate returns true if any column expression is an aggregate function call.
 // WindowExpr containing aggregate functions are not treated as normal aggregates.

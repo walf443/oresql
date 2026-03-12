@@ -3,10 +3,9 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
-	"strconv"
-	"strings"
 
 	"github.com/walf443/oresql/ast"
+	"github.com/walf443/oresql/engine/eval"
 	"github.com/walf443/oresql/engine/expr"
 	"github.com/walf443/oresql/jsonb"
 )
@@ -153,19 +152,6 @@ func evalScalarFuncLiteral(call *ast.CallExpr) (Value, error) {
 	return nil, fmt.Errorf("function %s not supported in literal context", call.Name)
 }
 
-// evalWhereWith evaluates a WHERE expression using the given evaluator and returns a boolean.
-func evalWhereWith(expr ast.Expr, row Row, eval ExprEvaluator) (bool, error) {
-	val, err := eval.Eval(expr, row)
-	if err != nil {
-		return false, err
-	}
-	b, ok := val.(bool)
-	if !ok {
-		return false, fmt.Errorf("WHERE expression must evaluate to boolean, got %T", val)
-	}
-	return b, nil
-}
-
 // Delegating functions to engine/expr package.
 
 func toFloat64(v Value) (float64, bool) { return expr.ToFloat64(v) }
@@ -177,16 +163,8 @@ func evalComparison(left Value, op string, right Value) (bool, error) {
 }
 func applyCmpOp(cmp int, op string) (bool, error) { return expr.ApplyCmpOp(cmp, op) }
 
-// evalLogicalOp dispatches a logical operator (AND/OR) on boolean operands.
 func evalLogicalOp(leftBool bool, op string, rightBool bool) (Value, error) {
-	switch op {
-	case "AND":
-		return leftBool && rightBool, nil
-	case "OR":
-		return leftBool || rightBool, nil
-	default:
-		return nil, fmt.Errorf("unknown logical operator: %s", op)
-	}
+	return expr.LogicalOp(leftBool, op, rightBool)
 }
 
 // compareValues compares two values for ORDER BY sorting.
@@ -194,13 +172,8 @@ func evalLogicalOp(leftBool bool, op string, rightBool bool) (Value, error) {
 // NULL values sort last (are considered greater than any non-NULL value).
 func compareValues(a, b Value) int { return expr.Compare(a, b) }
 
-// validateTableRef checks that a qualified table reference matches the target table.
-// If tableRef is empty (unqualified), validation is skipped.
 func validateTableRef(tableRef, targetTable string) error {
-	if tableRef != "" && strings.ToLower(tableRef) != strings.ToLower(targetTable) {
-		return fmt.Errorf("unknown table %q", tableRef)
-	}
-	return nil
+	return expr.ValidateTableRef(tableRef, targetTable)
 }
 
 // formatExpr returns a display name for an expression.
@@ -268,169 +241,14 @@ func nextPrefix(s string) (string, bool) {
 	return "", false
 }
 
-// matchLike matches a string against a SQL LIKE pattern.
-// '%' matches any sequence of zero or more characters.
-// '_' matches exactly one character.
-// '\' escapes the next character: '\%' matches literal '%', '\_' matches literal '_', '\\' matches literal '\'.
-func matchLike(str, pattern string) bool {
-	si, pi := 0, 0
-	starPI, starSI := -1, -1
+func matchLike(str, pattern string) bool { return expr.MatchLike(str, pattern) }
 
-	for si < len(str) {
-		if pi < len(pattern) && pattern[pi] == '\\' && pi+1 < len(pattern) {
-			// Escaped character: match literally
-			pi++
-			if pattern[pi] == str[si] {
-				si++
-				pi++
-			} else if starPI >= 0 {
-				starSI++
-				si = starSI
-				pi = starPI + 1
-			} else {
-				return false
-			}
-		} else if pi < len(pattern) && pattern[pi] == '_' {
-			si++
-			pi++
-		} else if pi < len(pattern) && pattern[pi] == '%' {
-			starPI = pi
-			starSI = si
-			pi++
-		} else if pi < len(pattern) && pattern[pi] == str[si] {
-			si++
-			pi++
-		} else if starPI >= 0 {
-			starSI++
-			si = starSI
-			pi = starPI + 1
-		} else {
-			return false
-		}
-	}
-
-	for pi < len(pattern) {
-		if pattern[pi] == '%' {
-			pi++
-		} else if pattern[pi] == '\\' && pi+1 < len(pattern) {
-			break
-		} else {
-			break
-		}
-	}
-	return pi == len(pattern)
+func evalCast(cast *ast.CastExpr, row Row, ev ExprEvaluator) (Value, error) {
+	return eval.Cast(cast, row, ev)
 }
 
-// evalCast evaluates a CAST(expr AS type) expression.
-func evalCast(cast *ast.CastExpr, row Row, eval ExprEvaluator) (Value, error) {
-	val, err := eval.Eval(cast.Expr, row)
-	if err != nil {
-		return nil, err
-	}
-	if val == nil {
-		return nil, nil
-	}
-	switch cast.TargetType {
-	case "INT":
-		switch v := val.(type) {
-		case int64:
-			return v, nil
-		case float64:
-			return int64(v), nil
-		case string:
-			n, err := strconv.ParseInt(v, 10, 64)
-			if err != nil {
-				return nil, fmt.Errorf("cannot cast %q to INT", v)
-			}
-			return n, nil
-		default:
-			return nil, fmt.Errorf("cannot cast %T to INT", val)
-		}
-	case "FLOAT":
-		switch v := val.(type) {
-		case float64:
-			return v, nil
-		case int64:
-			return float64(v), nil
-		case string:
-			f, err := strconv.ParseFloat(v, 64)
-			if err != nil {
-				return nil, fmt.Errorf("cannot cast %q to FLOAT", v)
-			}
-			return f, nil
-		default:
-			return nil, fmt.Errorf("cannot cast %T to FLOAT", val)
-		}
-	case "TEXT":
-		switch v := val.(type) {
-		case string:
-			return v, nil
-		case int64:
-			return strconv.FormatInt(v, 10), nil
-		case float64:
-			return strconv.FormatFloat(v, 'f', -1, 64), nil
-		default:
-			return nil, fmt.Errorf("cannot cast %T to TEXT", val)
-		}
-	case "JSON":
-		switch v := val.(type) {
-		case string:
-			if !json.Valid([]byte(v)) {
-				return nil, fmt.Errorf("cannot cast %q to JSON: invalid JSON", v)
-			}
-			return v, nil
-		case []byte:
-			// JSONB to JSON: decode msgpack to JSON string
-			s, err := jsonb.ToJSON(v)
-			if err != nil {
-				return nil, fmt.Errorf("cannot cast JSONB to JSON: %w", err)
-			}
-			return s, nil
-		default:
-			return nil, fmt.Errorf("cannot cast %T to JSON", val)
-		}
-	case "JSONB":
-		switch v := val.(type) {
-		case string:
-			b, err := jsonb.FromJSON(v)
-			if err != nil {
-				return nil, fmt.Errorf("cannot cast %q to JSONB: %w", v, err)
-			}
-			return b, nil
-		case []byte:
-			return v, nil
-		default:
-			return nil, fmt.Errorf("cannot cast %T to JSONB", val)
-		}
-	default:
-		return nil, fmt.Errorf("unsupported CAST target type: %s", cast.TargetType)
-	}
-}
-
-// matchFullText checks if text contains the given search term using the specified tokenizer.
-// For "word" (or empty) tokenizer, it checks exact word-token matching.
-// For "bigram" tokenizer, it checks substring containment.
 func matchFullText(text, searchTerm, tokenizer string) bool {
-	lowerText := strings.ToLower(text)
-	lower := strings.ToLower(searchTerm)
-	switch tokenizer {
-	case "bigram":
-		return strings.Contains(lowerText, lower)
-	default: // "word" or empty
-		words := strings.FieldsFunc(lowerText, func(r rune) bool {
-			return !isLetterOrDigit(r)
-		})
-		for _, w := range words {
-			if w == lower {
-				return true
-			}
-		}
-		return false
-	}
-}
-
-func isLetterOrDigit(r rune) bool {
-	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r >= 0x80
+	return expr.MatchFullText(text, searchTerm, tokenizer)
 }
 
 // forEachChildExpr calls fn on each direct child expression of expr.

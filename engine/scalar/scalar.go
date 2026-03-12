@@ -37,6 +37,19 @@ var Registry = map[string]Func{
 	"JSON_ARRAY":  evalFuncJSONArray,
 }
 
+// IsScalar returns true if the function name is a scalar (non-aggregate) function.
+func IsScalar(name string) bool {
+	_, ok := Registry[name]
+	if ok {
+		return true
+	}
+	switch name {
+	case "COALESCE", "NULLIF", "JSON_VALUE", "JSON_QUERY", "JSON_EXISTS":
+		return true
+	}
+	return false
+}
+
 // EvalArgsWith evaluates argument expressions using a custom evaluator function.
 func EvalArgsWith(args []ast.Expr, evalFn func(ast.Expr) (Value, error)) ([]Value, error) {
 	vals := make([]Value, len(args))
